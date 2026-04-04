@@ -13,6 +13,16 @@
 #include <stdlib.h> // for qsort
 #include <stdio.h>  // for GGML_ASSERT
 
+#include <intrin.h>
+
+#ifdef _MSC_VER
+static inline int ffs(int x) {
+    unsigned long idx;
+    if (_BitScanForward(&idx, x)) return (int)idx + 1;
+    return 0;
+}
+#endif
+
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
 #define GROUP_MAX_EPS_IQ2_S 1e-8f
