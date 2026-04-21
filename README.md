@@ -22,6 +22,7 @@ This repo is the runtime side only. The quantization tooling is intentionally no
 Notes:
 - `EXL3 3.0bpw` is from a local `145 x 2048` eval, not `llama-perplexity`.
 - The public runtime path here is the clean base `TQ3_1S` / `TQ3_4S` support.
+- Deployment-specific showcase material lives under [`docs/backend/CUDA-AMPERE-DEPLOYMENT.md`](docs/backend/CUDA-AMPERE-DEPLOYMENT.md), not in the main README.
 
 ## Current Runtime Speed
 
