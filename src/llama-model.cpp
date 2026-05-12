@@ -136,6 +136,8 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_gemma4(params);
         case LLM_ARCH_GEMMA4_ASSISTANT:
             return new llama_model_gemma4_assistant(params);
+        case LLM_ARCH_GEMMA4_MTP:
+            return new llama_model_gemma4_mtp(params);
         case LLM_ARCH_GEMMA_EMBEDDING:
             return new llama_model_gemma_embedding(params);
         case LLM_ARCH_STARCODER2:
@@ -280,6 +282,10 @@ static llama_model * llama_model_mapping(llm_arch arch, const llama_model_params
             return new llama_model_qwen35(params);
         case LLM_ARCH_QWEN35MOE:
             return new llama_model_qwen35moe(params);
+        case LLM_ARCH_QWEN35_MTP:
+            return new llama_model_qwen35_mtp(params);
+        case LLM_ARCH_QWEN35MOE_MTP:
+            return new llama_model_qwen35moe_mtp(params);
         case LLM_ARCH_MISTRAL3:
             return new llama_model_mistral3(params);
         case LLM_ARCH_MIMO2:
@@ -312,6 +318,15 @@ llama_model * llama_model_create(llama_model_loader & ml, const llama_model_para
     llm_arch arch = ml.get_arch();
     if (arch == LLM_ARCH_UNKNOWN) {
         throw std::runtime_error("unknown model architecture: '" + ml.get_arch_name() + "'");
+    }
+    if (params.override_arch != nullptr && params.override_arch[0] != '\0') {
+        const llm_arch override = llm_arch_from_string(params.override_arch);
+        if (override == LLM_ARCH_UNKNOWN) {
+            throw std::runtime_error(std::string("unknown override architecture: '") + params.override_arch + "'");
+        }
+        LLAMA_LOG_INFO("%s: overriding architecture %s -> %s\n",
+                __func__, llm_arch_name(arch), llm_arch_name(override));
+        arch = override;
     }
 
     return llama_model_create(arch, params);
@@ -488,7 +503,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
     };
 
     auto get_split_segments = [&](int axis, uint32_t il) -> std::vector<std::pair<int64_t, uint32_t>> {
-        if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
+        if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE ||
+            ud->model->arch == LLM_ARCH_QWEN35_MTP || ud->model->arch == LLM_ARCH_QWEN35MOE_MTP) {
             const int64_t head_k_dim = hparams.ssm_d_state;
             const int64_t head_v_dim = hparams.ssm_d_state;
             const int64_t n_k_heads  = hparams.ssm_n_group;
@@ -593,7 +609,8 @@ struct ggml_backend_meta_split_state llama_meta_device_get_split_state(const str
             if (std::regex_match(tensor_name, pattern_q_weight) || std::regex_match(tensor_name, pattern_q_bias)) {
                 GGML_ASSERT(segments.size() == 1);
                 // some models have Q gate tensors, for those cases the granularity needs to be doubled:
-                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE) {
+                if (ud->model->arch == LLM_ARCH_QWEN3NEXT || ud->model->arch == LLM_ARCH_QWEN35 || ud->model->arch == LLM_ARCH_QWEN35MOE ||
+                    ud->model->arch == LLM_ARCH_QWEN35_MTP || ud->model->arch == LLM_ARCH_QWEN35MOE_MTP) {
                     return {std::lcm(2*n_embd_q, blck_size_perf)};
                 }
                 return {granularity_q};
@@ -3077,6 +3094,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
             } break;
         case LLM_ARCH_QWEN35:
+        case LLM_ARCH_QWEN35_MTP:
             {
                 ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
                 ml.get_key_or_arr(LLM_KV_ROPE_DIMENSION_SECTIONS,    hparams.rope_sections, 4, true);
@@ -3105,6 +3123,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 }
             } break;
         case LLM_ARCH_QWEN35MOE:
+        case LLM_ARCH_QWEN35MOE_MTP:
             {
                 ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp, false);
                 ml.get_key(LLM_KV_EXPERT_SHARED_FEED_FORWARD_LENGTH, hparams.n_ff_shexp, false);
@@ -8725,6 +8744,8 @@ void llama_model::print_info() const {
         arch == LLM_ARCH_QWEN3NEXT ||
         arch == LLM_ARCH_QWEN35 ||
         arch == LLM_ARCH_QWEN35MOE ||
+        arch == LLM_ARCH_QWEN35_MTP ||
+        arch == LLM_ARCH_QWEN35MOE_MTP ||
         arch == LLM_ARCH_NEMOTRON_H ||
         arch == LLM_ARCH_NEMOTRON_H_MOE) {
         LLAMA_LOG_INFO("%s: ssm_d_conv            = %u\n",     __func__, hparams.ssm_d_conv);
@@ -9584,10 +9605,12 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
                 llm = std::make_unique<llm_build_qwen3next>(*this, params);
             } break;
         case LLM_ARCH_QWEN35:
+        case LLM_ARCH_QWEN35_MTP:
             {
                 llm = std::make_unique<llm_build_qwen35>(*this, params);
             } break;
         case LLM_ARCH_QWEN35MOE:
+        case LLM_ARCH_QWEN35MOE_MTP:
             {
                 llm = std::make_unique<llm_build_qwen35moe>(*this, params);
             } break;
@@ -9830,6 +9853,7 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_GEMMA3N:
         case LLM_ARCH_GEMMA4:
         case LLM_ARCH_GEMMA4_ASSISTANT:
+        case LLM_ARCH_GEMMA4_MTP:
         case LLM_ARCH_GEMMA_EMBEDDING:
         case LLM_ARCH_STARCODER2:
         case LLM_ARCH_OPENELM:
@@ -9869,6 +9893,8 @@ llama_rope_type llama_model_rope_type(const llama_model * model) {
         case LLM_ARCH_QWEN3VLMOE:
         case LLM_ARCH_QWEN35:
         case LLM_ARCH_QWEN35MOE:
+        case LLM_ARCH_QWEN35_MTP:
+        case LLM_ARCH_QWEN35MOE_MTP:
             return LLAMA_ROPE_TYPE_IMROPE;
 
         case LLM_ARCH_GLM4:
