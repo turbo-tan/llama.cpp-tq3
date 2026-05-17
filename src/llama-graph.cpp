@@ -13,8 +13,10 @@
 #include "llama-memory-recurrent.h"
 
 #include <cassert>
+#include <inttypes.h>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <numeric>
 #include <sstream>
 #include <unordered_set>
@@ -54,6 +56,67 @@ static bool can_reuse_kq_mask(
     res &= (kq_mask->ne[3] == n_stream);
 
     return res;
+}
+
+static uint64_t llama_trace_fnv1a(const uint8_t * data, size_t size) {
+    uint64_t h = 1469598103934665603ULL;
+    for (size_t i = 0; i < size; ++i) {
+        h ^= data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+static bool llama_trace_tensor_enabled(const char * tag) {
+    static int mode = -1; // -1 unknown, 0 disabled, 1 enabled-all, 2 enabled-filtered
+    static std::string filter;
+    if (mode == -1) {
+        const char * env = getenv("LLAMA_TRACE_TENSOR");
+        if (!env || !*env) {
+            mode = 0;
+        } else if (strcmp(env, "1") == 0) {
+            mode = 1;
+        } else {
+            mode = 2;
+            filter = env;
+        }
+    }
+
+    if (mode == 0) {
+        return false;
+    }
+    if (mode == 1) {
+        return true;
+    }
+    return tag && strstr(tag, filter.c_str()) != nullptr;
+}
+
+void llama_trace_tensor(const char * tag, int il, const ggml_tensor * t) {
+    if (!t || !llama_trace_tensor_enabled(tag)) {
+        return;
+    }
+
+    // Some graph nodes are traced before they have an allocated backing buffer.
+    // Skip those safely so profiling does not perturb model load or graph build.
+    if (t->data == nullptr && t->buffer == nullptr) {
+        return;
+    }
+
+    const size_t nbytes = ggml_nbytes(t);
+    std::vector<uint8_t> data;
+    const uint8_t * src = nullptr;
+
+    if (t->buffer == nullptr || ggml_backend_buffer_is_host(t->buffer)) {
+        src = (const uint8_t *) t->data;
+    } else {
+        data.resize(nbytes);
+        ggml_backend_tensor_get(t, data.data(), 0, nbytes);
+        src = data.data();
+    }
+
+    const uint64_t hash = llama_trace_fnv1a(src, nbytes);
+    LLAMA_LOG_INFO("trace[%s] il=%d name=%s type=%s shape=%s nbytes=%zu hash=%016" PRIx64 "\n",
+        tag, il, ggml_get_name(t), ggml_type_name(t->type), llama_format_tensor_shape(t).c_str(), nbytes, hash);
 }
 
 // impl
@@ -1540,12 +1603,15 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
         const int64_t n_ff = gate_up->ne[0] / 2;
         cur = ggml_view_3d(ctx0, gate_up, n_ff, gate_up->ne[1], gate_up->ne[2], gate_up->nb[1], gate_up->nb[2], 0);
         cb(cur, "ffn_moe_gate", il);
+        llama_trace_tensor("ffn_moe_gate", il, cur);
         up  = ggml_view_3d(ctx0, gate_up, n_ff, gate_up->ne[1], gate_up->ne[2], gate_up->nb[1], gate_up->nb[2], n_ff * gate_up->nb[0]);
         cb(up, "ffn_moe_up", il);
+        llama_trace_tensor("ffn_moe_up", il, up);
     } else {
         // separate gate and up path
         up = build_lora_mm_id(up_exps, cur, selected_experts); // [n_ff, n_expert_used, n_tokens]
         cb(up, "ffn_moe_up", il);
+        llama_trace_tensor("ffn_moe_up", il, up);
 
         if (up_exps_b) {
             up = ggml_add_id(ctx0, up, up_exps_b, selected_experts);
@@ -1654,6 +1720,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
 
     experts = build_lora_mm_id(down_exps, cur, selected_experts); // [n_embd, n_expert_used, n_tokens]
     cb(experts, "ffn_moe_down", il);
+    llama_trace_tensor("ffn_moe_down", il, experts);
 
     if (down_exps_b) {
         experts = ggml_add_id(ctx0, experts, down_exps_b, selected_experts);
@@ -1672,6 +1739,7 @@ ggml_tensor * llm_graph_context::build_moe_ffn(
     if (!weight_before_ffn) {
         experts = ggml_mul(ctx0, experts, weights);
         cb(experts, "ffn_moe_weighted", il);
+        llama_trace_tensor("ffn_moe_weighted", il, experts);
     }
 
     ggml_build_forward_expand(gf, experts);
@@ -2218,6 +2286,8 @@ ggml_tensor * llm_graph_context::build_attn(
         const auto & k_idxs = inp->get_k_idxs();
         const auto & v_idxs = inp->get_v_idxs();
 
+        llama_trace_tensor("kv.k_cur_pre_cpy", il, k_cur);
+        llama_trace_tensor("kv.v_cur_pre_cpy", il, v_cur);
         ggml_build_forward_expand(gf, mctx_cur->cpy_k(ctx0, k_cur, k_idxs, il));
         ggml_build_forward_expand(gf, mctx_cur->cpy_v(ctx0, v_cur, v_idxs, il));
     }
@@ -2227,6 +2297,8 @@ ggml_tensor * llm_graph_context::build_attn(
     ggml_tensor * q = q_cur;
     ggml_tensor * k = mctx_cur->get_k(ctx0, il);
     ggml_tensor * v = mctx_cur->get_v(ctx0, il);
+    llama_trace_tensor("kv.k_cache_view", il, k);
+    llama_trace_tensor("kv.v_cache_view", il, v);
 
     ggml_tensor * cur = build_attn_mha(q, k, v, kq_b, kq_mask, sinks, v_mla, kq_scale, il);
     cb(cur, "kqv_out", il);
