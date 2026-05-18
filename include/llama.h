@@ -208,11 +208,6 @@ extern "C" {
         LLAMA_SPLIT_MODE_TENSOR = 3,
     };
 
-    enum llama_context_type {
-        LLAMA_CONTEXT_TYPE_DEFAULT = 0,
-        LLAMA_CONTEXT_TYPE_MTP     = 1,
-    };
-
     // TODO: simplify (https://github.com/ggml-org/llama.cpp/pull/9294#pullrequestreview-2286561979)
     typedef struct llama_token_data {
         llama_token id; // token id
