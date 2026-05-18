@@ -194,6 +194,11 @@ extern "C" {
         LLAMA_FLASH_ATTN_TYPE_ENABLED  = 1,
     };
 
+    enum llama_context_type {
+        LLAMA_CONTEXT_TYPE_DEFAULT = 0,
+        LLAMA_CONTEXT_TYPE_MTP     = 1,
+    };
+
     LLAMA_API const char * llama_flash_attn_type_name(enum llama_flash_attn_type flash_attn_type);
 
     enum llama_split_mode {
