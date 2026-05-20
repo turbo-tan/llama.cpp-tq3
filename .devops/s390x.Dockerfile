@@ -38,6 +38,7 @@ RUN --mount=type=cache,target=/root/.ccache \
 
 COPY *.py             /opt/llama.cpp/bin
 COPY .devops/tools.sh /opt/llama.cpp/bin
+COPY conversion       /opt/llama.cpp/conversion
 
 COPY gguf-py          /opt/llama.cpp/gguf-py
 COPY requirements.txt /opt/llama.cpp/gguf-py
@@ -48,9 +49,10 @@ COPY requirements     /opt/llama.cpp/gguf-py/requirements
 FROM scratch AS collector
 
 # Copy llama.cpp binaries and libraries
-COPY --from=build /opt/llama.cpp/bin     /llama.cpp/bin
-COPY --from=build /opt/llama.cpp/lib     /llama.cpp/lib
-COPY --from=build /opt/llama.cpp/gguf-py /llama.cpp/gguf-py
+COPY --from=build /opt/llama.cpp/bin        /llama.cpp/bin
+COPY --from=build /opt/llama.cpp/lib        /llama.cpp/lib
+COPY --from=build /opt/llama.cpp/gguf-py    /llama.cpp/gguf-py
+COPY --from=build /opt/llama.cpp/conversion /llama.cpp/conversion
 
 
 ### Base image
@@ -108,6 +110,7 @@ RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
 
 COPY --from=collector /llama.cpp/bin /app
 COPY --from=collector /llama.cpp/gguf-py /app/gguf-py
+COPY --from=collector /llama.cpp/conversion /app/conversion
 
 RUN pip install --no-cache-dir --break-system-packages \
         -r /app/gguf-py/requirements.txt
