@@ -676,6 +676,10 @@ private:
     bool sleeping = false;
 
     void destroy() {
+        spec.reset();
+        ctx_dft.reset();
+        model_dft.reset();
+
         llama_init.reset();
 
         ctx_tgt = nullptr;
