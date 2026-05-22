@@ -170,7 +170,7 @@ void ggml_cuda_mul_mat_q(
             ne02, ne12, s02, s12, s2,
             ne03, ne13, s03, s13, s3,
             use_stream_k, ne1};
-        ggml_cuda_tq3_4s2_probe(src0, src1, dst);
+        ggml_cuda_tq3_4l2_probe(src0, src1, dst);
         ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
         return;
     }
@@ -275,7 +275,7 @@ void ggml_cuda_op_mul_mat_q(
         1, 1, 0, 0, 0,
         use_stream_k, src1_ncols};
 
-    ggml_cuda_tq3_4s2_probe(src0, src1, dst);
+    ggml_cuda_tq3_4l2_probe(src0, src1, dst);
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
 
     GGML_UNUSED_VARS(src1, dst, src1_ddf_i, src1_padded_row_size);

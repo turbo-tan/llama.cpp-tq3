@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.cuh"
+#include "tq3-native.cuh"
 
 #include <cstdint>
 
@@ -811,6 +812,13 @@ static __device__ __forceinline__ float vec_dot_q8_0_q8_1(
     return vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMVQ>(v, u, bq8_0->d, __low2half(bq8_1->ds));
 }
 
+static __device__ __forceinline__ float vec_dot_tq3_0_q8_0_native(
+    const void * __restrict__ vbq, const block_q8_0 * __restrict__ bq8_0, const int & kbx) {
+
+    const block_tq3_0 * bq = (const block_tq3_0 *) vbq + kbx;
+    return vec_dot_tq3_0_q8_0_native_block(bq, bq8_0);
+}
+
 static __device__ __forceinline__ float vec_dot_q2_K_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
@@ -1314,4 +1322,169 @@ static __device__ __forceinline__ float vec_dot_iq4_xs_q8_1(
 
     const float d = __half2float(bq4->d) * __low2float(bq8_1[iqs/4].ds);
     return d * sumi;
+}
+// TQ3_0: dequant full block via warp-shuffle WHT, then dot with q8_1
+#define VDR_TQ3_0_Q8_1_MMVQ 4
+
+static __device__ __forceinline__ float vec_dot_tq3_0_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const int g = iqs / VDR_TQ3_0_Q8_1_MMVQ; // group 0..3
+
+    const block_tq3_0 * bq = (const block_tq3_0 *) vbq + kbx;
+    const float d = __half2float(bq->d);
+
+    const float centroids[8] = {-2.1519f,-1.3439f,-0.7560f,-0.2451f,0.2451f,0.7560f,1.3439f,2.1519f};
+    const float signs[32] = {
+        +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+        -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+        -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    };
+
+    const uint8_t * qp = bq->qs + g * 3;
+    // Activations are pre-rotated into the TQ3 domain before q8_1 quantization,
+    // so the MMVQ path can dot directly against centroid values without inverse WHT.
+    float sum = 0.0f;
+    const float2 ds8 = __half22float2(bq8_1->ds);
+    GGML_UNUSED(signs);
+    sum += centroids[ qp[0]       & 7] * (float) bq8_1->qs[g*8 + 0];
+    sum += centroids[(qp[0] >> 3) & 7] * (float) bq8_1->qs[g*8 + 1];
+    sum += centroids[((qp[0]>>6)|(qp[1]<<2)) & 7] * (float) bq8_1->qs[g*8 + 2];
+    sum += centroids[(qp[1] >> 1) & 7] * (float) bq8_1->qs[g*8 + 3];
+    sum += centroids[(qp[1] >> 4) & 7] * (float) bq8_1->qs[g*8 + 4];
+    sum += centroids[((qp[1]>>7)|(qp[2]<<1)) & 7] * (float) bq8_1->qs[g*8 + 5];
+    sum += centroids[(qp[2] >> 2) & 7] * (float) bq8_1->qs[g*8 + 6];
+    sum += centroids[(qp[2] >> 5) & 7] * (float) bq8_1->qs[g*8 + 7];
+
+    return sum * d * ds8.x;
+}
+
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1200
+#define VDR_TQ3_1S_Q8_1_MMVQ 8
+#else
+#define VDR_TQ3_1S_Q8_1_MMVQ 4
+#endif
+
+static __device__ __forceinline__ float tq3_1s_dot_subgroup_q8_1(
+    const block_tq3_1s * bq, const block_q8_1 * bq8_1, const int g) {
+
+    static constexpr int8_t levels[8] = {-127, -79, -45, -14, 14, 45, 79, 127};
+
+    const uint8_t * qp = bq->qs + g * 3;
+    const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
+
+    const int8_t w0 = levels[(packed >>  0) & 7];
+    const int8_t w1 = levels[(packed >>  3) & 7];
+    const int8_t w2 = levels[(packed >>  6) & 7];
+    const int8_t w3 = levels[(packed >>  9) & 7];
+    const int8_t w4 = levels[(packed >> 12) & 7];
+    const int8_t w5 = levels[(packed >> 15) & 7];
+    const int8_t w6 = levels[(packed >> 18) & 7];
+    const int8_t w7 = levels[(packed >> 21) & 7];
+
+    const int w_lo = (uint8_t)w0 | ((uint8_t)w1 << 8) | ((uint8_t)w2 << 16) | ((uint8_t)w3 << 24);
+    const int w_hi = (uint8_t)w4 | ((uint8_t)w5 << 8) | ((uint8_t)w6 << 16) | ((uint8_t)w7 << 24);
+
+    const int q8 = g * 8;
+    const int a_lo = *(const int *)&bq8_1->qs[q8 + 0];
+    const int a_hi = *(const int *)&bq8_1->qs[q8 + 4];
+
+    int sumi = ggml_cuda_dp4a(w_lo, a_lo, 0);
+    sumi     = ggml_cuda_dp4a(w_hi, a_hi, sumi);
+
+    const float d = (g < 2) ? __half2float(bq->d0) : __half2float(bq->d1);
+    const float2 ds8 = __half22float2(bq8_1->ds);
+
+    return (float)sumi * d * (2.1519f / 127.0f) * ds8.x;
+}
+
+static __device__ __forceinline__ float vec_dot_tq3_1s_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_tq3_1s * bq = (const block_tq3_1s *) vbq + kbx;
+    const int subgroup0 = iqs / 4;
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int s = 0; s < VDR_TQ3_1S_Q8_1_MMVQ / 4; ++s) {
+        sum += tq3_1s_dot_subgroup_q8_1(bq, bq8_1, subgroup0 + s);
+    }
+
+    return sum;
+}
+
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+#define VDR_TQ3_4S_Q8_1_MMVQ 8
+#else
+#define VDR_TQ3_4S_Q8_1_MMVQ 4
+#endif
+
+static __device__ __forceinline__ float tq3_4s_ratio4s(const uint8_t byte) {
+    if (byte == 0) {
+        return 0.0f;
+    }
+
+    // d encodes (1 + mant/32) * 2^(exp - 9), with exp in the high 3 bits.
+    // Build the exact FP32 representation directly and avoid ldexpf in the hot loop.
+    const uint32_t bits = (((uint32_t) (byte >> 5) + 118u) << 23) | ((uint32_t) (byte & 31u) << 18);
+    return __uint_as_float(bits);
+}
+
+static __device__ __forceinline__ float tq3_4s_dot_subgroup_q8_1(
+    const block_tq3_4s * __restrict__ bq,
+    const block_q8_1 * __restrict__ bq8_1,
+    const int subgroup) {
+
+    // Int8 centroid levels matching the float centroids scaled to [-127,127]
+    static constexpr int8_t levels[8] = {-127, -79, -45, -14, 14, 45, 79, 127};
+
+    const uint8_t * qp = bq->qs + subgroup * 3;
+    const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
+    const float d = tq3_4s_ratio4s(bq->d[subgroup]);
+
+    // Unpack 8 3-bit indices into 8 int8 weight values
+    const int8_t w0 = levels[(packed >>  0) & 7];
+    const int8_t w1 = levels[(packed >>  3) & 7];
+    const int8_t w2 = levels[(packed >>  6) & 7];
+    const int8_t w3 = levels[(packed >>  9) & 7];
+    const int8_t w4 = levels[(packed >> 12) & 7];
+    const int8_t w5 = levels[(packed >> 15) & 7];
+    const int8_t w6 = levels[(packed >> 18) & 7];
+    const int8_t w7 = levels[(packed >> 21) & 7];
+
+    // Pack into two int32 for dp4a
+    const int w_lo = (uint8_t)w0 | ((uint8_t)w1 << 8) | ((uint8_t)w2 << 16) | ((uint8_t)w3 << 24);
+    const int w_hi = (uint8_t)w4 | ((uint8_t)w5 << 8) | ((uint8_t)w6 << 16) | ((uint8_t)w7 << 24);
+
+    // Pack activation q8 values (already int8 in bq8_1->qs)
+    const int q8 = subgroup * 8;
+    const int a_lo = *(const int *)&bq8_1->qs[q8 + 0];
+    const int a_hi = *(const int *)&bq8_1->qs[q8 + 4];
+
+    // dp4a: each does 4 int8 multiply-adds
+    int sumi = ggml_cuda_dp4a(w_lo, a_lo, 0);
+    sumi     = ggml_cuda_dp4a(w_hi, a_hi, sumi);
+
+    // Scale: d_weight * (centroid_scale / 127) * d_activation
+    // centroids range [-2.1519, 2.1519], levels range [-127, 127]
+    // so levels[i] = centroids[i] * (127 / 2.1519)
+    // dot = sumi * d_weight * (2.1519 / 127) * d_activation
+    const float2 ds8 = __half22float2(bq8_1->ds);
+    return (float)sumi * d * (2.1519f / 127.0f) * ds8.x;
+}
+
+static __device__ __forceinline__ float vec_dot_tq3_4s_q8_1(
+    const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
+
+    const block_tq3_4s * bq = (const block_tq3_4s *) vbq + kbx;
+    const int subgroup0 = iqs / 4;
+    float sum = 0.0f;
+
+#pragma unroll
+    for (int s = 0; s < VDR_TQ3_4S_Q8_1_MMVQ / 4; ++s) {
+        sum += tq3_4s_dot_subgroup_q8_1(bq, bq8_1, subgroup0 + s);
+    }
+
+    return sum;
 }
