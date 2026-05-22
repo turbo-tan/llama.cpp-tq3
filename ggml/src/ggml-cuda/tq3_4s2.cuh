@@ -49,3 +49,9 @@ static inline void ggml_cuda_tq3_4s2_log_candidate(const ggml_tensor * src0, con
 }
 
 void ggml_cuda_tq3_4s2_probe(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst);
+void ggml_cuda_tq3_4s2_launch_dot(
+        const block_tq3_4s * in,
+        const block_q8_1    * act,
+        float               * out,
+        int nblocks,
+        cudaStream_t         stream);
