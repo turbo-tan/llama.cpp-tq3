@@ -819,21 +819,25 @@ static __global__ void dequantize_block_tq3_4s(const void * __restrict__ vx, dst
     if (i >= nb) return;
 
     const block_tq3_4s * x = (const block_tq3_4s *)vx + i;
-    const float ds[4] = {
-        tq3_4s_decode_scale_cuda(x->d[0]),
-        tq3_4s_decode_scale_cuda(x->d[1]),
-        tq3_4s_decode_scale_cuda(x->d[2]),
-        tq3_4s_decode_scale_cuda(x->d[3]),
-    };
 
     dst_t * y = yy + i * QK_TQ3_0;
     const int j = threadIdx.x;
     const int g = j / 8;
     const int r = j % 8;
-    const uint8_t * qp = x->qs + g * 3;
-    const uint8_t idx = tq3_idx_from_packed_cuda(qp, r);
+    uint32_t packed = 0;
+    float d = 0.0f;
 
-    float val = tq3_0_centroids_cuda[idx] * ds[g];
+    if (j < 4) {
+        const uint8_t * qp = x->qs + j * 3;
+        packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
+        d = tq3_4s_decode_scale_cuda(x->d[j]);
+    }
+
+    packed = __shfl_sync(0xFFFFFFFF, packed, g);
+    d      = __shfl_sync(0xFFFFFFFF, d, g);
+    const uint8_t idx = (packed >> (3 * r)) & 7u;
+
+    float val = tq3_0_centroids_cuda[idx] * d;
     for (int step = 1; step < 32; step <<= 1) {
         float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         if (j & step) {
