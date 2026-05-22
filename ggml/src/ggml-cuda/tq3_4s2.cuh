@@ -3,13 +3,13 @@
 #include "common.cuh"
 #include "ggml-cuda/tq3_4s2_layout.h"
 
-static inline bool ggml_cuda_tq3_4s2_enabled() {
-    static bool env_enabled = getenv("GGML_CUDA_TQ3_4S2") != nullptr;
-    return env_enabled || ggml_cuda_tq3_4s2_layout_enabled();
+static inline bool ggml_cuda_tq3_4l2_enabled() {
+    static bool env_enabled = getenv("GGML_CUDA_TQ3_4L2") != nullptr;
+    return env_enabled || ggml_cuda_tq3_4l2_layout_enabled();
 }
 
-static inline bool ggml_cuda_tq3_4s2_is_decode_shape(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst) {
-    if (!ggml_cuda_tq3_4s2_enabled()) {
+static inline bool ggml_cuda_tq3_4l2_is_decode_shape(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst) {
+    if (!ggml_cuda_tq3_4l2_enabled()) {
         return false;
     }
 
@@ -40,17 +40,17 @@ static inline bool ggml_cuda_tq3_4s2_is_decode_shape(const ggml_tensor * src0, c
 }
 
 static inline void ggml_cuda_tq3_4s2_log_candidate(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst) {
-    if (!ggml_cuda_tq3_4s2_is_decode_shape(src0, src1, dst)) {
+    if (!ggml_cuda_tq3_4l2_is_decode_shape(src0, src1, dst)) {
         return;
     }
 
-    GGML_LOG_INFO("TQ3_4S2 candidate: %s x %s -> %s (%lld x %lld)\n",
+    GGML_LOG_INFO("TQ3_4L2 candidate: %s x %s -> %s (%lld x %lld)\n",
         ggml_type_name(src0->type), ggml_type_name(src1->type), ggml_type_name(dst->type),
         (long long) src0->ne[0], (long long) src0->ne[1]);
 }
 
-void ggml_cuda_tq3_4s2_probe(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst);
-void ggml_cuda_tq3_4s2_launch_dot(
+void ggml_cuda_tq3_4l2_probe(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst);
+void ggml_cuda_tq3_4l2_launch_dot(
         const block_tq3_4s * in,
         const block_q8_1    * act,
         float               * out,
