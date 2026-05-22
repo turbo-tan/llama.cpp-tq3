@@ -18,7 +18,7 @@ static const size_t MiB = 1024*kiB;
 static const size_t GiB = 1024*MiB;
 static const char * const LLAMA_KV_GENERAL_QUANTIZATION_ALIAS = "general.quantization_alias";
 
-extern void ggml_cuda_tq3_4s2_set_layout(const char * layout);
+extern void ggml_cuda_tq3_4l2_set_layout(const char * layout);
 
 const char * llama_file_version_name(llama_fver version) {
     switch (version) {
@@ -558,7 +558,7 @@ llama_model_loader::llama_model_loader(
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         get_key(llm_kv(LLM_KV_TENSOR_DATA_LAYOUT), tensor_data_layout, false);
         if (!tensor_data_layout.empty()) {
-            ggml_cuda_tq3_4s2_set_layout(tensor_data_layout.c_str());
+            ggml_cuda_tq3_4l2_set_layout(tensor_data_layout.c_str());
         }
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
@@ -688,7 +688,7 @@ llama_model_loader::llama_model_loader(
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         get_key(llm_kv(LLM_KV_TENSOR_DATA_LAYOUT), tensor_data_layout, false);
         if (!tensor_data_layout.empty()) {
-            ggml_cuda_tq3_4s2_set_layout(tensor_data_layout.c_str());
+            ggml_cuda_tq3_4l2_set_layout(tensor_data_layout.c_str());
         }
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
@@ -710,7 +710,7 @@ llama_model_loader::llama_model_loader(
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         get_key(llm_kv(LLM_KV_TENSOR_DATA_LAYOUT), tensor_data_layout, false);
         if (!tensor_data_layout.empty()) {
-            ggml_cuda_tq3_4s2_set_layout(tensor_data_layout.c_str());
+            ggml_cuda_tq3_4l2_set_layout(tensor_data_layout.c_str());
         }
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
     }
