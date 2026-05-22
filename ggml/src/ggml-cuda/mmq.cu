@@ -144,20 +144,15 @@ void ggml_cuda_mul_mat_q(
             const int64_t s11 = src1->nb[1] / ts_src1;
             const int64_t s12 = src1->nb[2] / ts_src1;
             const int64_t s13 = src1->nb[3] / ts_src1;
-            const float * src1_quant = src1_d;
-            ggml_cuda_pool_alloc<float> src1_rot(ctx.pool());
-            if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
-                const int64_t n_act = ne13 * ne12 * ne11 * ne10;
-                src1_rot.alloc(n_act);
-                ggml_cuda_tq3_rotate_act_copy(src1_rot.get(), src1_d, n_act, stream);
-                src1_quant = src1_rot.get();
-            }
             if (use_native_fp4) {
                 static_assert(sizeof(block_fp4_mmq) == 4 * sizeof(block_q8_1));
-                quantize_mmq_fp4_cuda(src1_quant, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                quantize_mmq_fp4_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
                                       ne11, ne12, ne13, stream);
+            } else if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
+                quantize_mmq_q8_1_tq3_cuda(src1_d, nullptr, src1_q8_1.get(), ne10, s11, s12, s13, ne10_padded,
+                                           ne11, ne12, ne13, stream);
             } else {
-                quantize_mmq_q8_1_cuda(src1_quant, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                quantize_mmq_q8_1_cuda(src1_d, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
                                        ne11, ne12, ne13, stream);
             }
             CUDA_CHECK(cudaGetLastError());
@@ -214,20 +209,14 @@ void ggml_cuda_mul_mat_q(
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[3] / ts_src1;
-        const float * src1_quant = src1_d;
-        ggml_cuda_pool_alloc<float> src1_rot(ctx.pool());
-        if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
-            const int64_t n_act = ne13 * ne12 * ne11 * ne10;
-            src1_rot.alloc(n_act);
-            ggml_cuda_tq3_rotate_act_copy(src1_rot.get(), src1_d, n_act, stream);
-            src1_quant = src1_rot.get();
-        }
-
         if (use_native_fp4) {
-            quantize_mmq_fp4_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
+            quantize_mmq_fp4_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                     ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
+        } else if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
+            quantize_mmq_q8_1_tq3_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), ne10, s11, s12, s13,
+                                       ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         } else {
-            quantize_mmq_q8_1_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
+            quantize_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         }
         CUDA_CHECK(cudaGetLastError());
