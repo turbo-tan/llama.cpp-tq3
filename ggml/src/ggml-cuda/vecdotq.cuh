@@ -1414,7 +1414,7 @@ static __device__ __forceinline__ float vec_dot_tq3_1s_q8_1(
     return sum;
 }
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 1200
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
 #define VDR_TQ3_4S_Q8_1_MMVQ 8
 #else
 #define VDR_TQ3_4S_Q8_1_MMVQ 4

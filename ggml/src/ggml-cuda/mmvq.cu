@@ -1320,12 +1320,14 @@ void ggml_cuda_mul_mat_vec_q(
 
     const int64_t ids_stride = ids ? ids->nb[1] / ggml_type_size(ids->type) : 0;
 
-    if (!ids && fusion == nullptr && ncols_dst == 1 &&
-        try_mul_mat_vec_tq3_4s_q8_1_ncols1(
-            src0->data, src0->type, src1_q8_1.get(), nullptr, nullptr, dst_d, ne00, ne01, s01, stride_col_y, stride_col_dst,
-            ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
-            ne03, ne3, s03, s13, s3, stream)) {
-        return;
+    if (!ids && fusion == nullptr) {
+        if (ncols_dst == 1 &&
+            try_mul_mat_vec_tq3_4s_q8_1_ncols1(
+                src0->data, src0->type, src1_q8_1.get(), nullptr, nullptr, dst_d, ne00, ne01, s01, stride_col_y, stride_col_dst,
+                ne02, nchannels_y, nchannels_dst, s02, stride_channel_y, stride_channel_dst,
+                ne03, ne3, s03, s13, s3, stream)) {
+            return;
+        }
     }
 
     mul_mat_vec_q_switch_type(
