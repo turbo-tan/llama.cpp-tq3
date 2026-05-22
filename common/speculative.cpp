@@ -2,6 +2,10 @@
 
 #include "common.h"
 #include "ggml.h"
+#include "../ggml/include/ggml-backend.h"
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#include "../ggml/include/ggml-cuda.h"
+#endif
 #include "llama.h"
 #include "../src/llama-ext.h" // staging API: llama_set_embeddings_pre_norm / llama_get_embeddings_pre_norm_ith (used by MTP)
 #include "log.h"
@@ -372,6 +376,7 @@ struct common_speculative_state_mtp : public common_speculative_impl {
     common_params_speculative_draft params; // reuses the draft-model params slot (ctx_tgt/ctx_dft)
 
     llama_batch batch;
+    ggml_backend_buffer_t batch_embd_buffer = nullptr;
     std::vector<llama_token> token_buf;
     common_sampler_ptr smpl;
     int32_t n_embd = 0;
@@ -395,6 +400,20 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         smpl.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
 
         batch = llama_batch_init(/*n_tokens=*/ 1, /*embd=*/ n_embd, /*n_seq_max=*/ 1);
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+        if (batch.embd != nullptr) {
+            const size_t embd_bytes = sizeof(float) * (size_t) n_embd;
+            if (ggml_backend_buffer_t pinned = ggml_backend_buft_alloc_buffer(ggml_backend_cuda_host_buffer_type(), embd_bytes)) {
+                if (void * pinned_base = ggml_backend_buffer_get_base(pinned)) {
+                    free(batch.embd);
+                    batch.embd = (float *) pinned_base;
+                    batch_embd_buffer = pinned;
+                } else {
+                    ggml_backend_buffer_free(pinned);
+                }
+            }
+        }
+#endif
         token_buf.assign(1, LLAMA_TOKEN_NULL);
         batch.token = token_buf.data();
         batch.n_tokens     = 1;
@@ -406,8 +425,16 @@ struct common_speculative_state_mtp : public common_speculative_impl {
     }
 
     ~common_speculative_state_mtp() override {
+        if (batch_embd_buffer != nullptr) {
+            batch.embd = nullptr;
+        }
         batch.token = nullptr;
         llama_batch_free(batch);
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+        if (batch_embd_buffer != nullptr) {
+            ggml_backend_buffer_free(batch_embd_buffer);
+        }
+#endif
     }
 
     void begin(llama_seq_id seq_id, const llama_tokens & prompt) override {

@@ -370,26 +370,23 @@ static __global__ void k_get_rows_tq3_4s(
     const block_tq3_4s * x = (const block_tq3_4s *) src0_row + block;
     dst_t * dst_row = dst + i10*s1 + i11*s2 + i12*s3;
 
-    auto ratio4s = [] __device__ (uint8_t byte) -> float {
-        if (byte == 0) return 0.0f;
-        const int exp = (byte >> 5) - 9;
-        const float mantissa = 1.0f + (float)(byte & 31) / 32.0f;
-        return ldexpf(mantissa, exp);
-    };
-
-    const float ds[4] = {
-        ratio4s(x->d[0]),
-        ratio4s(x->d[1]),
-        ratio4s(x->d[2]),
-        ratio4s(x->d[3]),
-    };
-
     const int g = lane / 8;
     const int r = lane % 8;
-    const uint8_t * qp = x->qs + g * 3;
-    const uint8_t idx = tq3_idx_from_packed_getrows_cuda(qp, r);
+    uint32_t packed = 0;
+    float d = 0.0f;
 
-    float val = tq3_0_centroids_getrows_cuda[idx] * ds[g];
+    if (lane < 4) {
+        const uint8_t byte = x->d[lane];
+        const uint8_t * qp = x->qs + lane * 3;
+        packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
+        d = byte == 0 ? 0.0f : __uint_as_float((((uint32_t) (byte >> 5) + 118u) << 23) | ((uint32_t) (byte & 31u) << 18));
+    }
+
+    packed = __shfl_sync(0xFFFFFFFF, packed, g);
+    d      = __shfl_sync(0xFFFFFFFF, d, g);
+    const uint8_t idx = (packed >> (3 * r)) & 7u;
+
+    float val = tq3_0_centroids_getrows_cuda[idx] * d;
     for (int step = 1; step < 32; step <<= 1) {
         const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
         val = (lane & step) ? (other - val) : (other + val);

@@ -1,6 +1,10 @@
 #include "llama-context.h"
 
 #include "ggml.h"
+#include "../ggml/include/ggml-backend.h"
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#include "../ggml/include/ggml-cuda.h"
+#endif
 #include "llama-arch.h"
 #include "llama-impl.h"
 #include "llama-batch.h"
@@ -3674,8 +3678,15 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
     }
 
     if (mtp.hook_batch.pos != nullptr) {
+        if (mtp.hook_batch_embd_buffer != nullptr) {
+            mtp.hook_batch.embd = nullptr;
+        }
         mtp.hook_batch.token = nullptr;
         llama_batch_free(mtp.hook_batch);
+        if (mtp.hook_batch_embd_buffer != nullptr) {
+            ggml_backend_buffer_free(mtp.hook_batch_embd_buffer);
+            mtp.hook_batch_embd_buffer = nullptr;
+        }
         mtp.hook_batch = llama_batch{};
         mtp.hook_tokens.clear();
     }
@@ -3687,6 +3698,20 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
         const int32_t n_ub   = (int32_t) cparams.n_ubatch;
         const int32_t n_embd = (int32_t) model.hparams.n_embd;
         mtp.hook_batch       = llama_batch_init(n_ub, n_embd, 1);
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+        if (mtp.hook_batch.embd != nullptr) {
+            const size_t embd_bytes = sizeof(float) * (size_t) n_ub * (size_t) n_embd;
+            if (ggml_backend_buffer_t pinned = ggml_backend_buft_alloc_buffer(ggml_backend_cuda_host_buffer_type(), embd_bytes)) {
+                if (void * pinned_base = ggml_backend_buffer_get_base(pinned)) {
+                    free(mtp.hook_batch.embd);
+                    mtp.hook_batch.embd = (float *) pinned_base;
+                    mtp.hook_batch_embd_buffer = pinned;
+                } else {
+                    ggml_backend_buffer_free(pinned);
+                }
+            }
+        }
+#endif
         mtp.hook_tokens.assign(n_ub, LLAMA_TOKEN_NULL);
         mtp.hook_batch.token = mtp.hook_tokens.data();
         mtp.pending_h.assign(n_embd, 0.0f);
@@ -3783,8 +3808,15 @@ void llama_context::handle_mtp_for_ubatch(
         }
     }
 
-    ggml_backend_tensor_get(t, mtp.pending_h.data(),
-        (size_t) (n_rows - 1) * row_bytes, row_bytes);
+    ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
+    GGML_ASSERT(backend_t != nullptr);
+
+    ggml_backend_tensor_get_async(
+        backend_t,
+        t,
+        mtp.pending_h.data(),
+        (size_t) (n_rows - 1) * row_bytes,
+        row_bytes);
     mtp.pending_pos = pos_start + n_rows - 1;
 }
 
