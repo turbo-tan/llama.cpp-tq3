@@ -1121,15 +1121,10 @@ void ggml_cuda_mul_mat_vec_q(
     const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1);
     if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
-        const int64_t n_act = ne13 * ne12 * ne11 * ne10;
-        ggml_cuda_pool_alloc<float> src1_rot(ctx.pool(), n_act);
-        CUDA_CHECK(cudaMemcpyAsync(src1_rot.get(), src1_d, n_act*sizeof(float), cudaMemcpyDeviceToDevice, stream));
-        ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
-
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[3] / ts_src1;
-        quantize_row_q8_1_cuda(src1_rot.get(), nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
+        quantize_row_q8_1_tq3_cuda(src1_d, src1_q8_1.get(), ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
     } else {
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
@@ -1187,13 +1182,8 @@ void ggml_cuda_op_mul_mat_vec_q(
     const int64_t nrows_dst = id == ctx.device ? ne0 : row_diff;
 
     if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
-        const int64_t n_act = src1_ncols * ne10;
-        ggml_cuda_pool_alloc<float> src1_rot(ctx.pool(id), n_act);
-        CUDA_CHECK(cudaMemcpyAsync(src1_rot.get(), src1_ddf_i, n_act*sizeof(float), cudaMemcpyDeviceToDevice, stream));
-        ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
-
         ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(id), src1_ncols * src1_padded_row_size * sizeof(block_q8_1)/QK8_1);
-        quantize_row_q8_1_cuda(src1_rot.get(), nullptr, src1_q8_1.get(), src0->type, ne10, ne10, src1_ncols*ne10, src1_ncols*ne10, src1_padded_row_size, src1_ncols, 1, 1, stream);
+        quantize_row_q8_1_tq3_cuda(src1_ddf_i, src1_q8_1.get(), ne10, ne10, src1_ncols * ne10, src1_ncols * ne10, src1_padded_row_size, src1_ncols, 1, 1, stream);
 
         const int stride_row_x = ne00 / ggml_blck_size(src0->type);
         const int stride_col_y = src1_padded_row_size / QK8_1;

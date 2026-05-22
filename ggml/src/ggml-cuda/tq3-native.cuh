@@ -102,3 +102,4 @@ __global__ void ggml_cuda_native_tq3_dot_kernel(
 
 // Rotate activations in-place (declaration — implementation in tq3-native.cu)
 void ggml_cuda_tq3_rotate_act(float * x, int64_t n, cudaStream_t stream);
+void ggml_cuda_tq3_rotate_act_copy(float * dst, const float * src, int64_t n, cudaStream_t stream);

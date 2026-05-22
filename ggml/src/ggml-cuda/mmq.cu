@@ -149,8 +149,7 @@ void ggml_cuda_mul_mat_q(
             if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
                 const int64_t n_act = ne13 * ne12 * ne11 * ne10;
                 src1_rot.alloc(n_act);
-                CUDA_CHECK(cudaMemcpyAsync(src1_rot.get(), src1_d, n_act*sizeof(float), cudaMemcpyDeviceToDevice, stream));
-                ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
+                ggml_cuda_tq3_rotate_act_copy(src1_rot.get(), src1_d, n_act, stream);
                 src1_quant = src1_rot.get();
             }
             if (use_native_fp4) {
@@ -220,8 +219,7 @@ void ggml_cuda_mul_mat_q(
         if (src0->type == GGML_TYPE_TQ3_0 || src0->type == GGML_TYPE_TQ3_1S || src0->type == GGML_TYPE_TQ3_4S) {
             const int64_t n_act = ne13 * ne12 * ne11 * ne10;
             src1_rot.alloc(n_act);
-            CUDA_CHECK(cudaMemcpyAsync(src1_rot.get(), src1_d, n_act*sizeof(float), cudaMemcpyDeviceToDevice, stream));
-            ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
+            ggml_cuda_tq3_rotate_act_copy(src1_rot.get(), src1_d, n_act, stream);
             src1_quant = src1_rot.get();
         }
 

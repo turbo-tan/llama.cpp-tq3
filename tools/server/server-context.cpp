@@ -2740,6 +2740,9 @@ private:
                     // make checkpoints only for completion tasks
                     do_checkpoint = do_checkpoint && slot.task->type == SERVER_TASK_TYPE_COMPLETION;
 
+                    // if prompt caching is disabled, checkpoints cannot be reused and only add overhead
+                    do_checkpoint = do_checkpoint && slot.task->params.cache_prompt;
+
                     // make a checkpoint of the parts of the memory that cannot be rolled back.
                     // checkpoints are created only if:
                     // - the model does not support partial sequence removal
