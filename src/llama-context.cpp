@@ -982,6 +982,23 @@ llama_token llama_context::get_sampled_token_ith(int32_t idx) {
     }
 }
 
+llama_token llama_context::get_sampled_token_ith_nosync(int32_t idx) {
+    output_reorder();
+
+    if (!sampling.sampled.has_data()) {
+        return LLAMA_TOKEN_NULL;
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        GGML_ASSERT(row < (int64_t) sampling.sampled.size);
+        return sampling.sampled.data[row];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled token id %d, reason: %s\n", __func__, idx, err.what());
+        return LLAMA_TOKEN_NULL;
+    }
+}
+
 float * llama_context::get_sampled_probs_ith(int32_t idx) {
     output_reorder();
 
@@ -3710,12 +3727,12 @@ void llama_context::handle_mtp_for_ubatch(
         }
     }
 
+    synchronize();
+
     const bool pending_continues = mtp.pending_pos >= 0 && mtp.pending_pos + 1 == pos_start;
     if (mtp.pending_pos >= 0 && !pending_continues) {
         mtp.pending_pos = -1;
     }
-
-    synchronize();
 
     const size_t row_bytes = (size_t) n_embd * sizeof(float);
     const int    n_out     = (pending_continues ? 1 : 0) + (n_rows - 1);
@@ -3732,11 +3749,21 @@ void llama_context::handle_mtp_for_ubatch(
             mtp.hook_batch.logits[out_idx]    = 0;
             ++out_idx;
         }
-        for (int k = 0; k + 1 < n_rows; ++k) {
-            ggml_backend_tensor_get(t,
+        if (n_rows > 1) {
+            ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
+            GGML_ASSERT(backend_t != nullptr);
+
+            ggml_backend_tensor_get_2d_async(
+                backend_t,
+                t,
                 mtp.hook_batch.embd + (size_t) out_idx * n_embd,
-                (size_t) k * row_bytes,
+                0,
+                row_bytes,
+                (size_t) n_rows - 1,
+                row_bytes,
                 row_bytes);
+        }
+        for (int k = 0; k + 1 < n_rows; ++k) {
             mtp.hook_batch.token[out_idx]     = tokens[k + 1];
             mtp.hook_batch.pos[out_idx]       = positions[k + 1];
             mtp.hook_batch.n_seq_id[out_idx]  = 1;
@@ -3746,6 +3773,8 @@ void llama_context::handle_mtp_for_ubatch(
         }
         GGML_ASSERT(out_idx == n_out);
         mtp.hook_batch.n_tokens = n_out;
+
+        synchronize();
 
         const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
         if (rc_dec != 0) {
@@ -3767,6 +3796,10 @@ llama_token llama_get_sampled_token_ith(llama_context * ctx, int32_t i) {
     ctx->synchronize();
 
     return ctx->get_sampled_token_ith(i);
+}
+
+llama_token llama_get_sampled_token_ith_nosync(llama_context * ctx, int32_t i) {
+    return ctx ? ctx->get_sampled_token_ith_nosync(i) : LLAMA_TOKEN_NULL;
 }
 
 float * llama_get_sampled_probs_ith(llama_context * ctx, int32_t i) {

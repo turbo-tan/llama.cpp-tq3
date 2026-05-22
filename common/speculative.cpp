@@ -472,11 +472,12 @@ struct common_speculative_state_mtp : public common_speculative_impl {
                 } else {
                     src_row = last_n_accepted;
                 }
-                llama_synchronize(ctx_tgt);
             } else {
                 src = llama_context_get_t_mtp_out(ctx_dft);
+                if (src == nullptr) {
+                    src = llama_context_get_t_h_pre_norm(ctx_dft);
+                }
                 src_row = src ? (int32_t) src->ne[1] - 1 : 0;
-                llama_synchronize(ctx_dft);
             }
             if (!src) {
                 break;
@@ -492,8 +493,8 @@ struct common_speculative_state_mtp : public common_speculative_impl {
             }
 
             const llama_token id = common_sampler_sample(smpl.get(), ctx_dft, 0, false);
-            const auto * cur_p = common_sampler_get_candidates(smpl.get(), true);
-            if (cur_p == nullptr || cur_p->size == 0 || cur_p->data[0].p < params.p_min) {
+            const float selected_p = common_sampler_selected_p(smpl.get());
+            if (selected_p < params.p_min) {
                 break;
             }
 
