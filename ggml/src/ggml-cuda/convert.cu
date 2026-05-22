@@ -709,6 +709,162 @@ to_bf16_cuda_t ggml_get_to_bf16_cuda(ggml_type type) {
     }
 }
 
+// TQ3_0 CUDA dequantize: unpack indices, centroid lookup, inverse WHT, scale
+__constant__ static const float tq3_0_centroids_cuda[8] = {
+    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+     0.230106f,  0.725222f,  1.277503f,  1.988943f
+};
+__constant__ static const float tq3_0_signs_cuda[32] = {
+    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+};
+
+static __device__ __forceinline__ uint8_t tq3_idx_from_packed_cuda(const uint8_t * qp, int r);
+
+template<typename dst_t>
+static __global__ void dequantize_block_tq3_0(const void * __restrict__ vx, dst_t * __restrict__ yy, int nb) {
+    const int i = blockIdx.x;
+    if (i >= nb) return;
+
+    const block_tq3_0 * x = (const block_tq3_0 *)vx + i;
+    const float d = __half2float(x->d);
+    dst_t * y = yy + i * QK_TQ3_0;
+    const int j = threadIdx.x; // 0..31
+
+    // No-WHT: direct centroid * d (V-only KV cache, stored without rotation)
+    const int g = j / 8;
+    const int r = j % 8;
+    const uint8_t * qp = x->qs + g * 3;
+    uint8_t idx;
+    switch (r) {
+        case 0: idx =  qp[0]       & 7; break;
+        case 1: idx = (qp[0] >> 3) & 7; break;
+        case 2: idx = ((qp[0] >> 6) | (qp[1] << 2)) & 7; break;
+        case 3: idx = (qp[1] >> 1) & 7; break;
+        case 4: idx = (qp[1] >> 4) & 7; break;
+        case 5: idx = ((qp[1] >> 7) | (qp[2] << 1)) & 7; break;
+        case 6: idx = (qp[2] >> 2) & 7; break;
+        default: idx = (qp[2] >> 5) & 7; break;
+    }
+    y[j] = (dst_t)(tq3_0_centroids_cuda[idx] * d);
+}
+
+template<typename dst_t>
+static void dequantize_row_tq3_0_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
+    const int nb = k / QK_TQ3_0;
+    dequantize_block_tq3_0<<<nb, 32, 0, stream>>>(vx, y, nb);
+}
+
+template<typename dst_t>
+static __global__ void dequantize_block_tq3_1s(const void * __restrict__ vx, dst_t * __restrict__ yy, int nb) {
+    const int i = blockIdx.x;
+    if (i >= nb) return;
+
+    const block_tq3_1s * x = (const block_tq3_1s *)vx + i;
+    const float d0 = __half2float(x->d0);
+    const float d1 = __half2float(x->d1);
+    dst_t * y = yy + i * QK_TQ3_0;
+    const int j = threadIdx.x;
+
+    const int g = j / 8;
+    const int r = j % 8;
+    const uint8_t * qp = x->qs + g * 3;
+    uint8_t idx;
+    switch (r) {
+        case 0: idx =  qp[0]       & 7; break;
+        case 1: idx = (qp[0] >> 3) & 7; break;
+        case 2: idx = ((qp[0] >> 6) | (qp[1] << 2)) & 7; break;
+        case 3: idx = (qp[1] >> 1) & 7; break;
+        case 4: idx = (qp[1] >> 4) & 7; break;
+        case 5: idx = ((qp[1] >> 7) | (qp[2] << 1)) & 7; break;
+        case 6: idx = (qp[2] >> 2) & 7; break;
+        default: idx = (qp[2] >> 5) & 7; break;
+    }
+
+    float val = tq3_0_centroids_cuda[idx] * (j < 16 ? d0 : d1);
+    for (int step = 1; step < 32; step <<= 1) {
+        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
+        if (j & step) {
+            val = other - val;
+        } else {
+            val = other + val;
+        }
+    }
+
+    y[j] = (dst_t)(val * (tq3_0_signs_cuda[j] / sqrtf(32.0f)));
+}
+
+template<typename dst_t>
+static void dequantize_row_tq3_1s_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
+    const int nb = k / QK_TQ3_0;
+    dequantize_block_tq3_1s<<<nb, 32, 0, stream>>>(vx, y, nb);
+}
+
+__device__ static inline float tq3_4s_decode_scale_cuda(uint8_t byte) {
+    if (byte == 0) {
+        return 0.0f;
+    }
+
+    // d encodes (1 + mant/32) * 2^(exp - 9), with exp in the high 3 bits.
+    // Build the exact FP32 representation directly and avoid ldexpf in the hot kernel.
+    const uint32_t bits = (((uint32_t) (byte >> 5) + 118u) << 23) | ((uint32_t) (byte & 31u) << 18);
+    return __uint_as_float(bits);
+}
+
+template<typename dst_t>
+static __global__ void dequantize_block_tq3_4s(const void * __restrict__ vx, dst_t * __restrict__ yy, int nb) {
+    const int i = blockIdx.x;
+    if (i >= nb) return;
+
+    const block_tq3_4s * x = (const block_tq3_4s *)vx + i;
+    const float ds[4] = {
+        tq3_4s_decode_scale_cuda(x->d[0]),
+        tq3_4s_decode_scale_cuda(x->d[1]),
+        tq3_4s_decode_scale_cuda(x->d[2]),
+        tq3_4s_decode_scale_cuda(x->d[3]),
+    };
+
+    dst_t * y = yy + i * QK_TQ3_0;
+    const int j = threadIdx.x;
+    const int g = j / 8;
+    const int r = j % 8;
+    const uint8_t * qp = x->qs + g * 3;
+    const uint8_t idx = tq3_idx_from_packed_cuda(qp, r);
+
+    float val = tq3_0_centroids_cuda[idx] * ds[g];
+    for (int step = 1; step < 32; step <<= 1) {
+        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
+        if (j & step) {
+            val = other - val;
+        } else {
+            val = other + val;
+        }
+    }
+
+    y[j] = (dst_t)(val * (tq3_0_signs_cuda[j] / sqrtf(32.0f)));
+}
+
+template<typename dst_t>
+static void dequantize_row_tq3_4s_cuda(const void * vx, dst_t * y, const int64_t k, cudaStream_t stream) {
+    const int nb = k / QK_TQ3_0;
+    dequantize_block_tq3_4s<<<nb, 32, 0, stream>>>(vx, y, nb);
+}
+
+static __device__ __forceinline__ uint8_t tq3_idx_from_packed_cuda(const uint8_t * qp, int r) {
+    switch (r) {
+        case 0: return  qp[0]       & 7;
+        case 1: return (qp[0] >> 3) & 7;
+        case 2: return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+        case 3: return (qp[1] >> 1) & 7;
+        case 4: return (qp[1] >> 4) & 7;
+        case 5: return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+        case 6: return (qp[2] >> 2) & 7;
+        default: return (qp[2] >> 5) & 7;
+    }
+}
+
 to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
     switch (type) {
         case GGML_TYPE_Q1_0:
@@ -762,6 +918,12 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
             return convert_unary_cont_cuda<float>;
         case GGML_TYPE_BF16:
             return convert_unary_cont_cuda<nv_bfloat16>;
+        case GGML_TYPE_TQ3_0:
+            return dequantize_row_tq3_0_cuda;
+        case GGML_TYPE_TQ3_1S:
+            return dequantize_row_tq3_1s_cuda;
+        case GGML_TYPE_TQ3_4S:
+            return dequantize_row_tq3_4s_cuda;
         default:
             return nullptr;
     }
@@ -817,6 +979,12 @@ to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
             return convert_unary_cont_cuda<half>;
         case GGML_TYPE_BF16:
             return convert_unary_cont_cuda<nv_bfloat16>;
+        case GGML_TYPE_TQ3_0:
+            return dequantize_row_tq3_0_cuda;
+        case GGML_TYPE_TQ3_1S:
+            return dequantize_row_tq3_1s_cuda;
+        case GGML_TYPE_TQ3_4S:
+            return dequantize_row_tq3_4s_cuda;
         default:
             return nullptr;
     }

@@ -4875,6 +4875,9 @@ struct ggml_backend_cuda_device_context {
     std::string description;
     std::string pci_bus_id;
     int op_offload_min_batch_size;
+    bool memory_cached = false;
+    size_t memory_free = 0;
+    size_t memory_total = 0;
 };
 
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
@@ -4965,6 +4968,13 @@ static bool ggml_backend_cuda_get_available_uma_memory(long * available_memory_k
 
 static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t * free, size_t * total) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+
+    if (ctx->memory_cached && getenv("GGML_CUDA_MEMORY_REFRESH") == nullptr) {
+        *free = ctx->memory_free;
+        *total = ctx->memory_total;
+        return;
+    }
+
     ggml_cuda_set_device(ctx->device);
     CUDA_CHECK(cudaMemGetInfo(free, total));
 
@@ -4990,6 +5000,10 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
         }
     }
 #endif // defined(__linux__)
+
+    ctx->memory_free  = *free;
+    ctx->memory_total = *total;
+    ctx->memory_cached = true;
 
 }
 
