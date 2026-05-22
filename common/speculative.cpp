@@ -1239,6 +1239,34 @@ bool common_speculative_process(common_speculative * spec, const llama_batch & b
     return result;
 }
 
+bool common_speculative_need_embd(common_speculative * spec) {
+    if (spec == nullptr) {
+        return false;
+    }
+
+    for (const auto & impl : spec->impls) {
+        if (impl->type == COMMON_SPECULATIVE_TYPE_EAGLE3) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool common_speculative_need_embd_pre_norm(common_speculative * spec) {
+    if (spec == nullptr) {
+        return false;
+    }
+
+    for (const auto & impl : spec->impls) {
+        if (impl->type == COMMON_SPECULATIVE_TYPE_MTP) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void common_speculative_draft(common_speculative * spec) {
     if (spec == nullptr) {
         return;
