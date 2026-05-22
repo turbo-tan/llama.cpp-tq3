@@ -1,6 +1,17 @@
 #include "ggml-cuda.h"
 #include "ggml-cuda/tq3_4s2.cuh"
+#include "ggml-cuda/tq3_4s2_layout.h"
 #include "ggml-cuda/vecdotq.cuh"
+
+static std::string g_tq3_4s2_layout;
+
+bool ggml_cuda_tq3_4s2_layout_enabled() {
+    return g_tq3_4s2_layout == "tq3_4s2";
+}
+
+void ggml_cuda_tq3_4s2_set_layout(const char * layout) {
+    g_tq3_4s2_layout = layout != nullptr ? layout : "";
+}
 
 // Shape-specific TQ3_4S2 kernel: one warp computes one q8_1 dot against one TQ3_4S block.
 // This is the first fused primitive for the dedicated runtime path.

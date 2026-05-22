@@ -1,10 +1,11 @@
 #pragma once
 
 #include "common.cuh"
+#include "ggml-cuda/tq3_4s2_layout.h"
 
 static inline bool ggml_cuda_tq3_4s2_enabled() {
-    static bool enabled = getenv("GGML_CUDA_TQ3_4S2") != nullptr;
-    return enabled;
+    static bool env_enabled = getenv("GGML_CUDA_TQ3_4S2") != nullptr;
+    return env_enabled || ggml_cuda_tq3_4s2_layout_enabled();
 }
 
 static inline bool ggml_cuda_tq3_4s2_is_decode_shape(const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * dst) {
