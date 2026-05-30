@@ -8,6 +8,7 @@
 #endif
 #include "llama.h"
 #include "../src/llama-ext.h" // staging API: llama_set_embeddings_pre_norm / llama_get_embeddings_pre_norm_ith (used by MTP)
+#include "../src/llama-context.h"
 #include "log.h"
 #include "ngram-cache.h"
 #include "ngram-map.h"
@@ -471,6 +472,23 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         auto * ctx_dft = params.ctx_dft;
         const size_t row_bytes = (size_t) n_embd * sizeof(float);
 
+        ggml_backend_t batch_embd_backend = nullptr;
+
+        auto prefetch_src_row = [&](llama_context * ctx_src, ggml_tensor * src, int32_t src_row) {
+            if (!ctx_src || !src || batch.embd == nullptr) {
+                return;
+            }
+            batch_embd_backend = ggml_backend_sched_get_tensor_backend(ctx_src->get_sched(), src);
+            ggml_backend_tensor_get_async(batch_embd_backend, src, batch.embd, (size_t) src_row * row_bytes, row_bytes);
+        };
+
+        auto wait_prefetch = [&]() {
+            if (batch_embd_backend != nullptr) {
+                ggml_backend_synchronize(batch_embd_backend);
+                batch_embd_backend = nullptr;
+            }
+        };
+
         if (last_n_drafted > 0) {
             const int32_t n_to_drop = (int32_t) last_n_drafted - 1;
             if (n_to_drop > 0) {
@@ -489,7 +507,15 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         llama_token cond_tok = dp.id_last;
         llama_pos   pos      = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), 0) + 1;
 
+        ggml_tensor * next_src = nullptr;
+        llama_context * next_ctx = nullptr;
+        int32_t next_src_row = 0;
+
         for (int32_t k = 0; k < params.n_max; ++k) {
+            if (next_src != nullptr) {
+                wait_prefetch();
+            }
+
             ggml_tensor * src;
             int32_t src_row;
             if (k == 0) {
@@ -510,13 +536,30 @@ struct common_speculative_state_mtp : public common_speculative_impl {
                 break;
             }
 
-            ggml_backend_tensor_get(src, batch.embd, (size_t) src_row * row_bytes, row_bytes);
+            llama_context * src_ctx = k == 0 ? ctx_tgt : ctx_dft;
+
+            if (next_src != src || next_ctx != src_ctx || next_src_row != src_row) {
+                wait_prefetch();
+                prefetch_src_row(src_ctx, src, src_row);
+                wait_prefetch();
+            }
             batch.token[0] = cond_tok;
             batch.pos[0]   = pos;
 
             const int32_t dec_rc = llama_decode(ctx_dft, batch);
             if (dec_rc != 0) {
                 break;
+            }
+
+            next_src = llama_context_get_t_mtp_out(ctx_dft);
+            next_ctx = ctx_dft;
+            if (next_src == nullptr) {
+                next_src = llama_context_get_t_h_pre_norm(ctx_dft);
+                next_ctx = ctx_dft;
+            }
+            next_src_row = next_src ? (int32_t) next_src->ne[1] - 1 : 0;
+            if (next_src != nullptr && k + 1 < params.n_max) {
+                prefetch_src_row(next_ctx, next_src, next_src_row);
             }
 
             const llama_token id = common_sampler_sample(smpl.get(), ctx_dft, 0, false);
