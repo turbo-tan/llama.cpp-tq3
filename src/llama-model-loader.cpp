@@ -17,7 +17,6 @@ static const size_t kiB = 1024;
 static const size_t MiB = 1024*kiB;
 static const size_t GiB = 1024*MiB;
 
-extern void ggml_cuda_tq3_4l2_set_layout(const char * layout);
 
 const char * llama_file_version_name(llama_fver version) {
     switch (version) {
@@ -551,10 +550,6 @@ llama_model_loader::llama_model_loader(
         }
 
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
-        get_key(llm_kv(LLM_KV_TENSOR_DATA_LAYOUT), tensor_data_layout, false);
-        if (!tensor_data_layout.empty()) {
-            ggml_cuda_tq3_4l2_set_layout(tensor_data_layout.c_str());
-        }
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
         files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));
@@ -681,10 +676,6 @@ llama_model_loader::llama_model_loader(
         }
 
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
-        get_key(llm_kv(LLM_KV_TENSOR_DATA_LAYOUT), tensor_data_layout, false);
-        if (!tensor_data_layout.empty()) {
-            ggml_cuda_tq3_4l2_set_layout(tensor_data_layout.c_str());
-        }
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
         files.emplace_back(new llama_file(file));
@@ -703,10 +694,6 @@ llama_model_loader::llama_model_loader(
         }
     } else {
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
-        get_key(llm_kv(LLM_KV_TENSOR_DATA_LAYOUT), tensor_data_layout, false);
-        if (!tensor_data_layout.empty()) {
-            ggml_cuda_tq3_4l2_set_layout(tensor_data_layout.c_str());
-        }
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
     }
 
@@ -1708,9 +1695,6 @@ std::string llama_model_loader::ftype_name() const {
 void llama_model_loader::print_info() const {
     LLAMA_LOG_INFO("%s: file format = %s\n", __func__, llama_file_version_name(fver));
     LLAMA_LOG_INFO("%s: file type   = %s\n", __func__, ftype_name().c_str());
-    if (!tensor_data_layout.empty()) {
-        LLAMA_LOG_INFO("%s: tensor layout = %s\n", __func__, tensor_data_layout.c_str());
-    }
     if (n_bytes < GiB) {
         LLAMA_LOG_INFO("%s: file size   = %.2f MiB (%.2f BPW) \n", __func__, n_bytes/1024.0/1024.0,        n_bytes*8.0/n_elements);
     } else {
