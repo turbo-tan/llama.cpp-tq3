@@ -3,7 +3,6 @@
 #include "quantize.cuh"
 #include "mmid.cuh"
 #include "tq3-native.cuh"
-#include "tq3_4s2.cuh"
 
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
@@ -169,9 +168,7 @@ void ggml_cuda_mul_mat_q(
             ne00, ne01, ne1, s01, ne11, s1,
             ne02, ne12, s02, s12, s2,
             ne03, ne13, s03, s13, s3,
-            use_stream_k, ne1};
-        ggml_cuda_tq3_4l2_probe(src0, src1, dst);
-        ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
+            use_stream_k, ne1};        ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
         return;
     }
 
@@ -273,10 +270,7 @@ void ggml_cuda_op_mul_mat_q(
         ne00, row_diff, src1_ncols, stride01, ne11, nrows_dst,
         1, 1, 0, 0, 0,
         1, 1, 0, 0, 0,
-        use_stream_k, src1_ncols};
-
-    ggml_cuda_tq3_4l2_probe(src0, src1, dst);
-    ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
+        use_stream_k, src1_ncols};    ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
 
     GGML_UNUSED_VARS(src1, dst, src1_ddf_i, src1_padded_row_size);
 }
