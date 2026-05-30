@@ -70,20 +70,20 @@ static void test_reasoning_budget(
         llama_sampler_apply(sampler, &cur_p);
 
         // Check if forcing is active (all logits except one should be -INFINITY)
-        size_t finite_count = 0;
-        llama_token finite_token = -1;
+        size_t forced_count = 0;
+        llama_token forced_token = -1;
         for (size_t j = 0; j < cur.size(); j++) {
-            if (std::isfinite(cur[j].logit)) {
-                finite_count++;
-                finite_token = cur[j].id;
+            if (std::isinf(cur[j].logit) && cur[j].logit > 0.0f) {
+                forced_count++;
+                forced_token = cur[j].id;
             }
         }
 
         llama_sampler_accept(sampler, sequence[i]);
 
-        fprintf(stderr, "    i=%zu: token=%d, finite_count=%zu, finite_token=%d\n", i, (int)sequence[i], finite_count, (int)finite_token);
+        fprintf(stderr, "    i=%zu: token=%d, forced_count=%zu, forced_token=%d\n", i, (int)sequence[i], forced_count, (int)forced_token);
 
-        if (finite_count == 1) {
+        if (forced_count == 1) {
             if (actual_force_start == SIZE_MAX) {
                 actual_force_start = i;
             }
@@ -134,17 +134,17 @@ static llama_token get_forced_token(struct llama_sampler * sampler, llama_token 
     llama_token_data_array cur_p = { cur.data(), cur.size(), -1, false };
     llama_sampler_apply(sampler, &cur_p);
 
-    size_t finite_count = 0;
-    llama_token finite_token = LLAMA_TOKEN_NULL;
+    size_t forced_count = 0;
+    llama_token forced_token = LLAMA_TOKEN_NULL;
     for (size_t i = 0; i < cur.size(); i++) {
-        if (std::isfinite(cur[i].logit)) {
-            finite_count++;
-            finite_token = cur[i].id;
+        if (std::isinf(cur[i].logit) && cur[i].logit > 0.0f) {
+            forced_count++;
+            forced_token = cur[i].id;
         }
     }
 
-    GGML_ASSERT(finite_count == 1 && "sampler is not forcing exactly one token");
-    return finite_token;
+    GGML_ASSERT(forced_count == 1 && "sampler is not forcing exactly one token");
+    return forced_token;
 }
 
 static void test_reasoning_budget_clone_mid_counting() {
