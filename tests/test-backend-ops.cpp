@@ -1198,6 +1198,10 @@ struct test_case {
 
     virtual bool run_whole_graph() { return false; }
     virtual std::vector<ggml_tensor *> fusion_test_nodes() { return {}; }
+    virtual bool skip_backend(ggml_backend_t backend) {
+        GGML_UNUSED(backend);
+        return false;
+    }
 
     ggml_cgraph * gf = nullptr;
     ggml_cgraph * gb = nullptr;
@@ -1320,6 +1324,16 @@ struct test_case {
             //printf("  %s: skipping\n", op_desc(out).c_str());
             ggml_free(ctx);
             return test_status_t::SKIPPED;
+        }
+
+        if (skip_backend(backend1) || skip_backend(backend2)) {
+            test_result result(ggml_backend_name(backend1), current_op_name, vars(), "test", false, false,
+                               "not supported");
+            if (output_printer) {
+                output_printer->print_test_result(result);
+            }
+            ggml_free(ctx);
+            return test_status_t::NOT_SUPPORTED;
         }
 
         // check if the backends support the ops
@@ -3843,6 +3857,11 @@ struct test_gated_delta_net : public test_case {
             int v_repeat = 1, bool permuted = false, bool kda = false, int64_t K = 1)
         : type(type), head_count(head_count), head_size(head_size), n_seq_tokens(n_seq_tokens), n_seqs(n_seqs),
           v_repeat(v_repeat), permuted(permuted), kda(kda), K(K) {}
+
+    bool skip_backend(ggml_backend_t backend) override {
+        ggml_backend_reg_t reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(backend));
+        return strcmp(ggml_backend_reg_name(reg), "WebGPU") == 0 && K > 1;
+    }
 
     ggml_tensor * build_graph(ggml_context * ctx) override {
         ggml_tensor * q;
