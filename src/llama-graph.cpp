@@ -91,7 +91,7 @@ static bool llama_trace_tensor_enabled(const char * tag) {
     return tag && strstr(tag, filter.c_str()) != nullptr;
 }
 
-void llama_trace_tensor(const char * tag, int il, const ggml_tensor * t) {
+static void llama_trace_tensor(const char * tag, int il, const ggml_tensor * t) {
     if (!t || !llama_trace_tensor_enabled(tag)) {
         return;
     }
