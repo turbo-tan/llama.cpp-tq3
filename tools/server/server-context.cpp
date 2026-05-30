@@ -742,6 +742,21 @@ private:
 
         add_bos_token = llama_vocab_get_add_bos(vocab);
 
+        // Mirror the common runtime sampling init so server metadata can expose
+        // the precomputed EOG logit bias list for `ignore_eos`.
+        params_base.sampling.logit_bias_eog.clear();
+        if (params_base.sampling.ignore_eos && llama_vocab_eos(vocab) == LLAMA_TOKEN_NULL) {
+            LOG_WRN("%s: warning: vocab does not have an EOS token, ignoring --ignore-eos\n", __func__);
+            params_base.sampling.ignore_eos = false;
+        }
+
+        for (llama_token i = 0; i < llama_vocab_n_tokens(vocab); i++) {
+            if (llama_vocab_is_eog(vocab, i)) {
+                LOG_INF("%s: added %s logit bias = %f\n", __func__, common_token_to_piece(vocab, i).c_str(), -INFINITY);
+                params_base.sampling.logit_bias_eog.push_back({i, -INFINITY});
+            }
+        }
+
         if (params_base.speculative.has_dft()) {
             // TODO speculative: move to common/speculative.cpp?
             const auto & params_spec = params_base.speculative.draft;
