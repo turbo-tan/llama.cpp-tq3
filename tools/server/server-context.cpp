@@ -716,7 +716,7 @@ private:
         params_base = params;
         auto params_tgt = params_base;
         if (std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                      COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()) {
+                      COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end()) {
             string_parse_kv_override("llama.nomtp_trunk_only=bool:true", params_tgt.kv_overrides);
             if (params_tgt.kv_overrides.empty() || params_tgt.kv_overrides.back().key[0] != 0) {
                 params_tgt.kv_overrides.emplace_back();
@@ -904,7 +904,7 @@ private:
         ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS &&
             std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                      COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()) {
+                      COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end()) {
             // Qwen3.5/3.6 MTP quality is lossless with full checkpoints. The
             // bounded recurrent rollback path is still experimental and can
             // accept tokens from a stale recurrent state after partial drafts.
