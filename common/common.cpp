@@ -1283,7 +1283,7 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
             if (types[i] == COMMON_SPECULATIVE_TYPE_NONE) {
                 continue;
             }
-            if (types[i] == COMMON_SPECULATIVE_TYPE_MTP) {
+            if (types[i] == COMMON_SPECULATIVE_TYPE_DRAFT_MTP) {
                 continue;
             }
 

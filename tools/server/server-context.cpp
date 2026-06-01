@@ -892,7 +892,7 @@ private:
         slot_prompt_similarity = params_base.slot_prompt_similarity;
 
         const bool mtp_enabled = std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                                           COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end();
+                                           COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
         if (mtp_enabled && params_base.n_parallel != 1) {
             SRV_WRN("hook-driven MTP currently supports only a single sequence; clamping n_parallel from %d to 1\n",
                     params_base.n_parallel);

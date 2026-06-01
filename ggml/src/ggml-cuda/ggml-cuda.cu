@@ -2612,7 +2612,7 @@ static bool ggml_cuda_should_fuse_mul_mat_vec_q(const ggml_tensor * tensor) {
                                    src0->view_src;
 
     const bool tq3_vec_prefill_ok = (src0->type != GGML_TYPE_TQ3_0 && src0->type != GGML_TYPE_TQ3_1S) || src1->ne[1] == 1;
-    const bool use_mul_mat_vec_q = tq3_vec_prefill_ok
+    bool use_mul_mat_vec_q = tq3_vec_prefill_ok
         && ggml_cuda_can_use_mul_mat_vec_q(src0->type, src1->type, dst->type, src1->ne[1], bad_padding_clear);
     const bool use_mul_mat_vec_q_direct = use_mul_mat_vec_q
         && (src0->type != GGML_TYPE_TQ3_0 || ggml_is_contiguous(src0))
@@ -2659,7 +2659,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
     const bool tq3_vec_prefill_ok = (src0->type != GGML_TYPE_TQ3_0 && src0->type != GGML_TYPE_TQ3_1S) || src1->ne[1] == 1;
-    const bool use_mul_mat_vec_q = tq3_vec_prefill_ok
+    bool use_mul_mat_vec_q = tq3_vec_prefill_ok
         && ggml_cuda_can_use_mul_mat_vec_q(src0->type, src1->type, dst->type, src1->ne[1], bad_padding_clear);
     const bool use_mul_mat_vec_q_direct = use_mul_mat_vec_q
         && (src0->type != GGML_TYPE_TQ3_0 || ggml_is_contiguous(src0))
