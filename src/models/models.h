@@ -77,6 +77,9 @@ struct llm_build_delta_net_base : public llm_graph_context {
                 ggml_tensor * s,
                         int   il);
 
+    // true when speculative rollback is enabled and the batch fits in the rs cache
+    bool keep_rs() const;
+
     // read conv state from cache, concat with qkv_mixed, write back (single slot or per-token)
     // qkv_mixed: (qkv_dim, n_seq_tokens, n_seqs); returns conv_input: (kernel_size + n_seq_tokens - 1, channels, n_seqs)
     ggml_tensor * build_conv_state(
@@ -1873,6 +1876,19 @@ struct llama_model_qwen35_mtp : public llama_model_base {
 
 struct llama_model_qwen35moe_mtp : public llama_model_base {
     llama_model_qwen35moe_mtp(const struct llama_model_params & params) : llama_model_base(params) {}
+    void load_arch_hparams(llama_model_loader & ml) override;
+    void load_arch_tensors(llama_model_loader & ml) override;
+
+    struct graph : public llm_graph_context {
+        graph(const llama_model & model, const llm_graph_params & params);
+    };
+
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+};
+
+
+struct llama_model_qwen35_mtp : public llama_model_base {
+    llama_model_qwen35_mtp(const struct llama_model_params & params) : llama_model_base(params) {}
     void load_arch_hparams(llama_model_loader & ml) override;
     void load_arch_tensors(llama_model_loader & ml) override;
 
