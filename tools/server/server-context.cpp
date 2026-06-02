@@ -892,7 +892,7 @@ private:
         slot_prompt_similarity = params_base.slot_prompt_similarity;
 
         const bool mtp_enabled = std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                                           COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
+                                           COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end();
         if (mtp_enabled && params_base.n_parallel != 1) {
             SRV_WRN("hook-driven MTP currently supports only a single sequence; clamping n_parallel from %d to 1\n",
                     params_base.n_parallel);
@@ -3980,7 +3980,7 @@ void server_routes::init_routes() {
             { "eos_token",                   meta->eos_token_str },
             { "build_info",                  meta->build_info },
             { "is_sleeping",                 queue_tasks.is_sleeping() },
-            { "cors_proxy_enabled",          params.ui_mcp_proxy || params.webui_mcp_proxy },
+            { "cors_proxy_enabled",          params.webui_mcp_proxy },
         };
         if (params.use_jinja) {
             if (!tmpl_tools.empty()) {
