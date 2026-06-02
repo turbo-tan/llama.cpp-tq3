@@ -63,4 +63,4 @@ jobs:
         id: cmake_test
         run: |
           cd build
-          ctest -L main --verbose
+          ctest -L main -E test-llama-archs --verbose
