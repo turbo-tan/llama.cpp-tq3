@@ -941,7 +941,7 @@ void server_models_routes::init_routes() {
         if (name.empty()) {
             // main instance
             auto res = std::make_unique<server_http_res>();
-            res_ok(res, {
+            res_ok(res, json{
                 // TODO: add support for this on web UI
                 {"role",          "router"},
                 {"max_instances", params.models_max},
@@ -999,7 +999,7 @@ void server_models_routes::init_routes() {
             return res;
         }
         models.load(meta->name);
-        res_ok(res, {{"success", true}});
+        res_ok(res, json{{"success", true}});
         return res;
     };
 
@@ -1037,7 +1037,7 @@ void server_models_routes::init_routes() {
                 // TODO: add other fields, may require reading GGUF metadata
             });
         }
-        res_ok(res, {
+        res_ok(res, json{
             {"data", models_json},
             {"object", "list"},
         });
@@ -1058,7 +1058,7 @@ void server_models_routes::init_routes() {
             return res;
         }
         models.unload(model->name);
-        res_ok(res, {{"success", true}});
+        res_ok(res, json{{"success", true}});
         return res;
     };
 }
