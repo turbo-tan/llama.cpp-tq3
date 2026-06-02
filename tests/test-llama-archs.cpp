@@ -449,6 +449,13 @@ static int save_models(const llm_arch target_arch, const size_t seed, const ggml
         if (arch == LLM_ARCH_GEMMA4) {
             continue; // FIXME: ISWA KV cache initialization needs more fixture params
         }
+        if (arch == LLM_ARCH_QWEN35_MTP ||
+            arch == LLM_ARCH_QWEN35MOE_MTP ||
+            arch == LLM_ARCH_GEMMA4_MTP ||
+            arch == LLM_ARCH_DEEPSEEK32 ||
+            arch == LLM_ARCH_GROK) {
+            continue; // synthetic fixture lacks required arch-specific params
+        }
         for (bool moe : {false, true}) {
             if (moe && !moe_implemented(arch)) {
                 continue;
@@ -551,6 +558,13 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
         }
         if (arch == LLM_ARCH_GEMMA4) {
             continue; // FIXME: ISWA KV cache initialization needs more fixture params
+        }
+        if (arch == LLM_ARCH_QWEN35_MTP ||
+            arch == LLM_ARCH_QWEN35MOE_MTP ||
+            arch == LLM_ARCH_GEMMA4_MTP ||
+            arch == LLM_ARCH_DEEPSEEK32 ||
+            arch == LLM_ARCH_GROK) {
+            continue; // synthetic fixture lacks required arch-specific params
         }
 
         const bool encode = arch == LLM_ARCH_T5 || arch == LLM_ARCH_DREAM || arch == LLM_ARCH_LLADA || arch == LLM_ARCH_LLADA_MOE || arch == LLM_ARCH_RND1;
