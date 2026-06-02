@@ -313,9 +313,10 @@ void server_models::load_models() {
             /* status       */ SERVER_MODEL_STATUS_UNLOADED,
             /* last_used    */ 0,
             /* args         */ std::vector<std::string>(),
-            /* exit_code    */ 0,
-            /* stop_timeout */ DEFAULT_STOP_TIMEOUT,
-        };
+        /* exit_code    */ 0,
+        /* stop_timeout */ DEFAULT_STOP_TIMEOUT,
+        /* multimodal   */ mtmd_caps{},
+    };
         add_model(std::move(meta));
     }
 
