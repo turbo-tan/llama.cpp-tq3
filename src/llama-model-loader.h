@@ -83,6 +83,7 @@ struct llama_model_loader {
     llama_files files;
     llama_ftype ftype;
     llama_fver  fver;
+    std::string ftype_alias;
 
     llama_mmaps mappings;
 
@@ -192,6 +193,8 @@ struct llama_model_loader {
 
     // for backwards compatibility, does not support ggml-backend
     void load_data_for(struct ggml_tensor * cur) const;
+
+    void load_data_for_name(const char * name, void * dst, size_t size) const;
 
     // Returns false if cancelled by progress_callback
     bool load_all_data(
