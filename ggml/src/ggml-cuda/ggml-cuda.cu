@@ -24,6 +24,7 @@
 #include "ggml-cuda/diagmask.cuh"
 #include "ggml-cuda/diag.cuh"
 #include "ggml-cuda/fattn.cuh"
+#include "ggml-cuda/fwht.cuh"
 #include "ggml-cuda/getrows.cuh"
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmf.cuh"
@@ -2611,7 +2612,7 @@ static bool ggml_cuda_should_fuse_mul_mat_vec_q(const ggml_tensor * tensor) {
                                    src0->view_src;
 
     const bool tq3_vec_prefill_ok = (src0->type != GGML_TYPE_TQ3_0 && src0->type != GGML_TYPE_TQ3_1S) || src1->ne[1] == 1;
-    const bool use_mul_mat_vec_q = tq3_vec_prefill_ok
+    bool use_mul_mat_vec_q = tq3_vec_prefill_ok
         && ggml_cuda_can_use_mul_mat_vec_q(src0->type, src1->type, dst->type, src1->ne[1], bad_padding_clear);
     const bool use_mul_mat_vec_q_direct = use_mul_mat_vec_q
         && (src0->type != GGML_TYPE_TQ3_0 || ggml_is_contiguous(src0))
@@ -2658,7 +2659,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     bool use_mul_mat_f     = !ggml_is_quantized(src0->type)
         && src1->type == GGML_TYPE_F32 && dst->type == GGML_TYPE_F32;
     const bool tq3_vec_prefill_ok = (src0->type != GGML_TYPE_TQ3_0 && src0->type != GGML_TYPE_TQ3_1S) || src1->ne[1] == 1;
-    const bool use_mul_mat_vec_q = tq3_vec_prefill_ok
+    bool use_mul_mat_vec_q = tq3_vec_prefill_ok
         && ggml_cuda_can_use_mul_mat_vec_q(src0->type, src1->type, dst->type, src1->ne[1], bad_padding_clear);
     const bool use_mul_mat_vec_q_direct = use_mul_mat_vec_q
         && (src0->type != GGML_TYPE_TQ3_0 || ggml_is_contiguous(src0))
@@ -2689,6 +2690,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
             use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1], /*n_experts=*/0);
             use_mul_mat_f           = use_mul_mat_f             && ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, src1->ne[1], /*mul_mat_id=*/false);
             use_mul_mat_vec_f       = use_mul_mat_vec_f         && ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]);
+            use_mul_mat_vec_q       = use_mul_mat_vec_q         && ggml_cuda_should_use_mmvq(src0->type, cc, src1->ne[1]);
             any_gpus_with_slow_fp16 = any_gpus_with_slow_fp16   || !fast_fp16_hardware_available(cc);
         }
     } else {
@@ -2697,6 +2699,7 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
         use_mul_mat_q           = use_mul_mat_q             && ggml_cuda_should_use_mmq(src0->type, cc, src1->ne[1], /*n_experts=*/0);
         use_mul_mat_f           = use_mul_mat_f             && ggml_cuda_should_use_mmf(src0->type, cc, warp_size, src0->ne, src0->nb, src1->ne[1], /*mul_mat_id=*/false);
         use_mul_mat_vec_f       = use_mul_mat_vec_f         && ggml_cuda_should_use_mmvf(src0->type, cc, src0->ne, src0->nb, src1->ne[1]);
+        use_mul_mat_vec_q       = use_mul_mat_vec_q         && ggml_cuda_should_use_mmvq(src0->type, cc, src1->ne[1]);
         any_gpus_with_slow_fp16 = any_gpus_with_slow_fp16   || !fast_fp16_hardware_available(cc);
     }
 
@@ -2717,6 +2720,11 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     bool use_batched_cublas_f16  = src0->type == GGML_TYPE_F16 && (src1->type == GGML_TYPE_F16 || !any_gpus_with_slow_fp16);
     bool use_batched_cublas_bf16 = src0->type == GGML_TYPE_BF16 && bf16_mma_hardware_available(cc);
     bool use_batched_cublas_f32  = src0->type == GGML_TYPE_F32;
+
+    const int32_t hint = ggml_get_op_params_i32(dst, 1);
+    if (hint == GGML_HINT_SRC0_IS_HADAMARD && !split && ggml_cuda_op_fwht(ctx, src1, dst)) {
+        return;
+    }
 
     if (!split && use_mul_mat_vec_f) {
         // the custom F16 vector kernel can be used over batched cuBLAS GEMM
@@ -5113,8 +5121,14 @@ static void ggml_backend_cuda_device_get_memory(ggml_backend_dev_t dev, size_t *
 }
 
 static enum ggml_backend_dev_type ggml_backend_cuda_device_get_type(ggml_backend_dev_t dev) {
-    GGML_UNUSED(dev);
-    return GGML_BACKEND_DEVICE_TYPE_GPU;
+    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *) dev->context;
+
+    cudaDeviceProp prop;
+    CUDA_CHECK(cudaGetDeviceProperties(&prop, ctx->device));
+
+    return prop.integrated
+        ? GGML_BACKEND_DEVICE_TYPE_IGPU
+        : GGML_BACKEND_DEVICE_TYPE_GPU;
 }
 
 static void ggml_backend_cuda_device_get_props(ggml_backend_dev_t dev, ggml_backend_dev_props * props) {

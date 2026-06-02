@@ -14,6 +14,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <cstring>
+#include <cstdlib>
 #include <atomic>
 #include <chrono>
 #include <queue>
@@ -158,6 +159,13 @@ void server_model_meta::update_args(common_preset_context & ctx_preset, std::str
     // TODO: maybe validate preset before rendering ?
     // render args
     args = preset.to_args(bin_path);
+
+    // unified binary dispatches by subcommand, re-inject it right after the
+    // binary path so the child starts as 'llama serve ...' not 'llama ...'
+    const char * app_cmd = std::getenv("LLAMA_APP_CMD");
+    if (app_cmd != nullptr && app_cmd[0] != '\0' && !bin_path.empty()) {
+        args.insert(args.begin() + 1, app_cmd);
+    }
 }
 
 //
@@ -305,8 +313,11 @@ void server_models::load_models() {
             /* status       */ SERVER_MODEL_STATUS_UNLOADED,
             /* last_used    */ 0,
             /* args         */ std::vector<std::string>(),
+            /* loaded_info  */ {},
             /* exit_code    */ 0,
             /* stop_timeout */ DEFAULT_STOP_TIMEOUT,
+            /* multimodal   */ {},
+            /* need_download */ false,
         };
         add_model(std::move(meta));
     }
@@ -933,7 +944,7 @@ void server_models_routes::init_routes() {
         if (name.empty()) {
             // main instance
             auto res = std::make_unique<server_http_res>();
-            res_ok(res, {
+            res_ok(res, json{
                 // TODO: add support for this on web UI
                 {"role",          "router"},
                 {"max_instances", params.models_max},
@@ -947,6 +958,7 @@ void server_models_routes::init_routes() {
                 }},
                 {"webui_settings", webui_settings},
                 {"build_info",     std::string(llama_build_info())},
+                {"cors_proxy_enabled", params.webui_mcp_proxy},
             });
             return res;
         }
@@ -990,7 +1002,7 @@ void server_models_routes::init_routes() {
             return res;
         }
         models.load(meta->name);
-        res_ok(res, {{"success", true}});
+        res_ok(res, json{{"success", true}});
         return res;
     };
 
@@ -1028,7 +1040,7 @@ void server_models_routes::init_routes() {
                 // TODO: add other fields, may require reading GGUF metadata
             });
         }
-        res_ok(res, {
+        res_ok(res, json{
             {"data", models_json},
             {"object", "list"},
         });
@@ -1049,7 +1061,7 @@ void server_models_routes::init_routes() {
             return res;
         }
         models.unload(model->name);
-        res_ok(res, {{"success", true}});
+        res_ok(res, json{{"success", true}});
         return res;
     };
 }

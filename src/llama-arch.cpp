@@ -40,8 +40,8 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_QWEN3VL,          "qwen3vl"          },
     { LLM_ARCH_QWEN3VLMOE,       "qwen3vlmoe"       },
     { LLM_ARCH_QWEN35,           "qwen35"           },
-    { LLM_ARCH_QWEN35MOE,        "qwen35moe"        },
     { LLM_ARCH_QWEN35_MTP,       "qwen35_mtp"       },
+    { LLM_ARCH_QWEN35MOE,        "qwen35moe"        },
     { LLM_ARCH_QWEN35MOE_MTP,    "qwen35moe_mtp"    },
     { LLM_ARCH_PHI2,             "phi2"             },
     { LLM_ARCH_PHI3,             "phi3"             },
@@ -78,6 +78,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_DEEPSEEK,         "deepseek"         },
     { LLM_ARCH_DEEPSEEK2,        "deepseek2"        },
     { LLM_ARCH_DEEPSEEK2OCR,     "deepseek2-ocr"    },
+    { LLM_ARCH_DEEPSEEK32,       "deepseek32"       },
     { LLM_ARCH_CHATGLM,          "chatglm"          },
     { LLM_ARCH_GLM4,             "glm4"             },
     { LLM_ARCH_GLM4_MOE,         "glm4moe"          },
@@ -136,6 +137,7 @@ static const std::map<llm_arch, const char *> LLM_ARCH_NAMES = {
     { LLM_ARCH_LLAMA_EMBED,      "llama-embed"      },
     { LLM_ARCH_MAINCODER,        "maincoder"        },
     { LLM_ARCH_KIMI_LINEAR,      "kimi-linear"      },
+    { LLM_ARCH_TALKIE,           "talkie"           },
     { LLM_ARCH_UNKNOWN,          "(unknown)"        },
 };
 
@@ -319,6 +321,7 @@ static const std::map<llm_kv, const char *> LLM_KV_NAMES = {
     { LLM_KV_TOKENIZER_HF_JSON,              "tokenizer.huggingface.json"              },
     { LLM_KV_TOKENIZER_RWKV,                 "tokenizer.rwkv.world"                    },
     { LLM_KV_TOKENIZER_CHAT_TEMPLATE,        "tokenizer.chat_template"                 },
+    { LLM_KV_TOKENIZER_NORMALIZER_LOWERCASE, "tokenizer.ggml.normalizer.lowercase"     },
     { LLM_KV_TOKENIZER_FIM_PRE_ID,           "tokenizer.ggml.fim_pre_token_id"         },
     { LLM_KV_TOKENIZER_FIM_SUF_ID,           "tokenizer.ggml.fim_suf_token_id"         },
     { LLM_KV_TOKENIZER_FIM_MID_ID,           "tokenizer.ggml.fim_mid_token_id"         },
@@ -773,8 +776,9 @@ static const std::map<llm_tensor, llm_tensor_info> LLM_TENSOR_INFOS = {
     {LLM_TENSOR_MTP_PRE_PROJ,               {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     {LLM_TENSOR_MTP_POST_PROJ,              {LLM_TENSOR_LAYER_OUTPUT,    GGML_OP_MUL_MAT}},
     // Nemotron 3 Super
-    {LLM_TENSOR_FFN_LATENT_DOWN,            {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
-    {LLM_TENSOR_FFN_LATENT_UP,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL}},
+    // latent projections feed ggml_mul_mat, the buft probe must use MUL_MAT to keep them on GPU
+    {LLM_TENSOR_FFN_LATENT_DOWN,            {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
+    {LLM_TENSOR_FFN_LATENT_UP,              {LLM_TENSOR_LAYER_REPEATING, GGML_OP_MUL_MAT}},
 };
 
 LLM_KV::LLM_KV(llm_arch arch, const char * suffix) : arch(arch), suffix(suffix) {}
@@ -908,6 +912,7 @@ bool llm_arch_supports_sm_tensor(const llm_arch & arch) {
         case LLM_ARCH_OLMO2:
         case LLM_ARCH_OLMOE:
         case LLM_ARCH_DEEPSEEK2:
+        case LLM_ARCH_DEEPSEEK32:
         case LLM_ARCH_GLM_DSA:
         case LLM_ARCH_BITNET:
         case LLM_ARCH_T5:

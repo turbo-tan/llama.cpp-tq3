@@ -154,12 +154,10 @@ static void common_reasoning_budget_apply(struct llama_sampler * smpl, llama_tok
 
     const llama_token forced = ctx->forced_tokens[ctx->force_pos];
 
-    // set all logits to -inf except the forced token
+    // set all logits to -inf except the forced token (leave at original value)
     for (size_t i = 0; i < cur_p->size; i++) {
         if (cur_p->data[i].id != forced) {
             cur_p->data[i].logit = -INFINITY;
-        } else {
-            cur_p->data[i].logit = +INFINITY; // force the token
         }
     }
 }
@@ -248,4 +246,25 @@ common_reasoning_budget_state common_reasoning_budget_get_state(const struct lla
         return REASONING_BUDGET_IDLE;
     }
     return ((const common_reasoning_budget_ctx *)smpl->ctx)->state;
+}
+
+bool common_reasoning_budget_force(struct llama_sampler * smpl) {
+    if (!smpl) {
+        return false;
+    }
+
+    auto * ctx = (common_reasoning_budget_ctx *) smpl->ctx;
+
+    // only a sampler that is actively counting down the budget may be forced;
+    // any other state (idle, already forcing/waiting, or done) is left untouched
+    if (ctx->state != REASONING_BUDGET_COUNTING) {
+        return false;
+    }
+
+    ctx->state = REASONING_BUDGET_FORCING;
+    ctx->force_pos = 0;
+    ctx->end_matcher.reset();
+    LOG_INF("reasoning-budget: forced into forcing state (manual transition)\n");
+
+    return true;
 }
