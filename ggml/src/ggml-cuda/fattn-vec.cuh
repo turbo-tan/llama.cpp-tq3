@@ -69,7 +69,9 @@ static __global__ void flash_attn_ext_vec(
 #ifdef RDNA
     constexpr int nthreads_KQ_q = 2;
 #else
-    constexpr int nthreads_KQ_q = 4;
+    // gfx908 spills just over the VGPR gate with 4-way quantized KQ lanes.
+    // Widening the lane here reduces the per-thread live range on HIP/CDNA.
+    constexpr int nthreads_KQ_q = 8;
 #endif // RDNA
     constexpr int nthreads_V_q  = (D/4 < 32 ? D/4 : 32);
 #else
