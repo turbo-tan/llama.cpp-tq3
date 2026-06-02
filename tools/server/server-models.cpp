@@ -955,7 +955,7 @@ void server_models_routes::init_routes() {
                 }},
                 {"webui_settings", webui_settings},
                 {"build_info",     std::string(llama_build_info())},
-                {"cors_proxy_enabled", params.ui_mcp_proxy || params.webui_mcp_proxy},
+                {"cors_proxy_enabled", params.webui_mcp_proxy},
             });
             return res;
         }
