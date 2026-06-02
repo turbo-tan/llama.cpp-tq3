@@ -34,6 +34,13 @@ env:
   LLAMA_ARG_LOG_TIMESTAMPS: 1
 
 jobs:
+  sycl-disabled:
+    name: SYCL disabled placeholder
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op
+        run: |
+          echo "SYCL build remains disabled until dedicated runners are provisioned."
 
 # TODO: this build is disabled to save Github Actions resources (https://github.com/ggml-org/llama.cpp/pull/23705)
 #       in order to enable it again, we have to provision dedicated runners  to run it
