@@ -2668,6 +2668,26 @@ private:
                             continue;
                         }
 
+                        const int32_t n_predict_budget =
+                            slot.task->params.n_predict != -1 ? slot.task->params.n_predict : params_base.n_predict;
+                        const bool exceeds_context_budget =
+                            slot.can_speculate() &&
+                            slot.task->need_sampling() &&
+                            !params_base.ctx_shift &&
+                            n_predict_budget > 0 &&
+                            (int64_t) slot.task->n_tokens() + (int64_t) n_predict_budget >= (int64_t) slot.n_ctx;
+
+                        if (exceeds_context_budget) {
+                            send_error(
+                                slot,
+                                string_format(
+                                    "request budget (%d prompt + %d predict = %d tokens) exceeds the available context size (%d tokens) under speculative decoding",
+                                    slot.task->n_tokens(), n_predict_budget, slot.task->n_tokens() + n_predict_budget, slot.n_ctx),
+                                ERROR_TYPE_EXCEED_CONTEXT_SIZE);
+                            slot.release();
+                            continue;
+                        }
+
                         if (!slot.can_split()) {
                             if (slot.task->n_tokens() > n_ubatch) {
                                 send_error(slot,
