@@ -119,10 +119,9 @@ def test_with_ctx_shift():
         "n_predict": 256,
         "speculative.p_min": 0.0,
     })
-    assert res.status_code == 200
-    assert len(res.body["content"]) > 0
-    assert res.body["tokens_predicted"] == 256
-    assert res.body["truncated"] == True
+    assert res.status_code == 400
+    assert "request budget" in res.body["error"]["message"]
+    assert "context size" in res.body["error"]["message"]
 
 
 @pytest.mark.parametrize("n_slots,n_requests", [
