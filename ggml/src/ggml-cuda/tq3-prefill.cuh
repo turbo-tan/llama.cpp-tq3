@@ -45,7 +45,7 @@ __global__ void tq3_prefill_kernel_tiled(
                 const uint8_t * qp = bq->qs + g * 3;
                 packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
             }
-            packed = __shfl_sync(0xFFFFFFFF, packed, leader);
+            packed = __shfl_sync(0xFFFFFFFF, packed, leader, TQ3_PREFILL_WARP);
 
             // Centroid + WHT (once per block, reused for all TT tokens)
             float val = ggml_cuda_tq3_centroid(ggml_cuda_tq3_unpack_idx(packed, r));

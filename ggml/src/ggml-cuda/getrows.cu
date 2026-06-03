@@ -382,8 +382,8 @@ static __global__ void k_get_rows_tq3_4s(
         d = byte == 0 ? 0.0f : __uint_as_float((((uint32_t) (byte >> 5) + 118u) << 23) | ((uint32_t) (byte & 31u) << 18));
     }
 
-    packed = __shfl_sync(0xFFFFFFFF, packed, g);
-    d      = __shfl_sync(0xFFFFFFFF, d, g);
+    packed = __shfl_sync(0xFFFFFFFF, packed, g, 32);
+    d      = __shfl_sync(0xFFFFFFFF, d, g, 32);
     const uint8_t idx = (packed >> (3 * r)) & 7u;
 
     float val = tq3_0_centroids_getrows_cuda[idx] * d;
