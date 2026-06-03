@@ -721,7 +721,6 @@ __constant__ static const float tq3_0_signs_cuda[32] = {
     -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
 };
 
-static __device__ __forceinline__ uint8_t tq3_idx_from_packed_cuda(const uint8_t * qp, int r);
 
 template<typename dst_t>
 static __global__ void dequantize_block_tq3_0(const void * __restrict__ vx, dst_t * __restrict__ yy, int nb) {
@@ -833,8 +832,8 @@ static __global__ void dequantize_block_tq3_4s(const void * __restrict__ vx, dst
         d = tq3_4s_decode_scale_cuda(x->d[j]);
     }
 
-    packed = __shfl_sync(0xFFFFFFFF, packed, g);
-    d      = __shfl_sync(0xFFFFFFFF, d, g);
+    packed = __shfl_sync(0xFFFFFFFF, packed, g, 32);
+    d      = __shfl_sync(0xFFFFFFFF, d, g, 32);
     const uint8_t idx = (packed >> (3 * r)) & 7u;
 
     float val = tq3_0_centroids_cuda[idx] * d;
@@ -855,23 +854,6 @@ static void dequantize_row_tq3_4s_cuda(const void * vx, dst_t * y, const int64_t
     const int nb = k / QK_TQ3_0;
     dequantize_block_tq3_4s<<<nb, 32, 0, stream>>>(vx, y, nb);
 }
-
-static __device__ __forceinline__ uint8_t tq3_idx_from_packed_cuda(const uint8_t * qp, int r) {
-    switch (r) {
-        case 0: return  qp[0]       & 7;
-        case 1: return (qp[0] >> 3) & 7;
-        case 2: return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
-        case 3: return (qp[1] >> 1) & 7;
-        case 4: return (qp[1] >> 4) & 7;
-        case 5: return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
-        case 6: return (qp[2] >> 2) & 7;
-        default: return (qp[2] >> 5) & 7;
-    }
-}
-
-to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
-    switch (type) {
-        case GGML_TYPE_Q1_0:
             return dequantize_block_cont_cuda<QK1_0, QR1_0, dequantize_q1_0>;
         case GGML_TYPE_Q4_0:
             return dequantize_row_q4_0_cuda;
