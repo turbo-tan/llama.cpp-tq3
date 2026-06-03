@@ -339,7 +339,6 @@ static void get_rows_cuda_tq3_1s(
         s10, s11, s12);
 }
 
-static __device__ __forceinline__ uint8_t tq3_idx_from_packed_getrows_cuda(const uint8_t * qp, int r);
 
 template<typename dst_t>
 static __global__ void k_get_rows_tq3_4s(
@@ -420,19 +419,6 @@ static void get_rows_cuda_tq3_4s(
         s1, s2, s3,
         nb01, nb02, nb03,
         s10, s11, s12);
-}
-
-static __device__ __forceinline__ uint8_t tq3_idx_from_packed_getrows_cuda(const uint8_t * qp, int r) {
-    switch (r) {
-        case 0: return  qp[0]       & 7;
-        case 1: return (qp[0] >> 3) & 7;
-        case 2: return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
-        case 3: return (qp[1] >> 1) & 7;
-        case 4: return (qp[1] >> 4) & 7;
-        case 5: return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
-        case 6: return (qp[2] >> 2) & 7;
-        default: return (qp[2] >> 5) & 7;
-    }
 }
 
 template <typename dst_t>

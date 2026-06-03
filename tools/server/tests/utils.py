@@ -274,6 +274,7 @@ class ServerProcess:
 
         attempts = 3
         last_error = None
+        self.ready = False
         for attempt in range(1, attempts + 1):
             self.process = subprocess.Popen(
                 [str(arg) for arg in [server_path, *server_args]],
