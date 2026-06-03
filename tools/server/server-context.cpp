@@ -2673,7 +2673,6 @@ private:
                         const bool exceeds_context_budget =
                             slot.can_speculate() &&
                             slot.task->need_sampling() &&
-                            !params_base.ctx_shift &&
                             n_predict_budget > 0 &&
                             (int64_t) slot.task->n_tokens() + (int64_t) n_predict_budget >= (int64_t) slot.n_ctx;
 
