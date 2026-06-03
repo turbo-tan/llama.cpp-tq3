@@ -713,10 +713,9 @@ private:
 
         SRV_INF("loading model '%s'\n", params.model.path.c_str());
 
-        params_base = params;
-        auto params_tgt = params_base;
-        if (std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                      COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end()) {
+        auto params_tgt = params;
+        if (std::find(params_tgt.speculative.types.begin(), params_tgt.speculative.types.end(),
+                      COMMON_SPECULATIVE_TYPE_MTP) != params_tgt.speculative.types.end()) {
             string_parse_kv_override("llama.nomtp_trunk_only=bool:true", params_tgt.kv_overrides);
             if (params_tgt.kv_overrides.empty() || params_tgt.kv_overrides.back().key[0] != 0) {
                 params_tgt.kv_overrides.emplace_back();
@@ -725,6 +724,10 @@ private:
         }
 
         llama_init = common_init_from_params(params_tgt);
+
+        // Persist the fully initialized params, including resolved adapter pointers
+        // and any common-layer normalization done during model/context setup.
+        params_base = params_tgt;
 
         model_tgt = llama_init->model();
         ctx_tgt   = llama_init->context();
@@ -1619,7 +1622,8 @@ private:
             res->progress.time_ms   = (ggml_time_us() - slot.t_start_process_prompt) / 1000;
         } else {
             res->content = tkn.text_to_send;
-            res->tokens  = { tkn.tok };
+            res->tokens.clear();
+            res->tokens.push_back(tkn.tok);
         }
 
         res->n_decoded             = slot.n_decoded;
