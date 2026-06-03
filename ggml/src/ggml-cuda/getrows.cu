@@ -222,7 +222,7 @@ static __global__ void k_get_rows_tq3_0(
 
     float val = tq3_0_centroids_getrows_cuda[idx];
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
 
@@ -305,7 +305,7 @@ static __global__ void k_get_rows_tq3_1s(
     const float d = lane < 16 ? __half2float(x->d0) : __half2float(x->d1);
     float val = tq3_0_centroids_getrows_cuda[idx] * d;
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
 
@@ -388,7 +388,7 @@ static __global__ void k_get_rows_tq3_4s(
 
     float val = tq3_0_centroids_getrows_cuda[idx] * d;
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
 
