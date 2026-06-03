@@ -1,5 +1,6 @@
 #include "convert.cuh"
 #include "dequantize.cuh"
+#include "tq3-native.cuh"
 
 #include <cstdint>
 

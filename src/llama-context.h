@@ -86,6 +86,11 @@ struct llama_context {
 
     float * get_embeddings_pre_norm();
     float * get_embeddings_pre_norm_ith(int32_t i);
+    float * get_embeddings_pre_norm_raw_ith(int32_t i);
+    ggml_tensor * get_t_h_pre_norm() const;
+    ggml_tensor * get_t_mtp_out() const;
+    void set_mtp(llama_context * ctx_mtp_in);
+    llama_context * get_mtp() const { return mtp.ctx_mtp; }
 
     llama_token * get_sampled_tokens() const;
     llama_token   get_sampled_token_ith(int32_t idx);
@@ -356,6 +361,16 @@ private:
 
     // keep copies of the per-sequence memory on the device
     std::map<llama_seq_id, llama_memory_buffers> mem_storage;
+
+    struct mtp_state {
+        llama_context * ctx_mtp = nullptr;
+        llama_batch hook_batch{};
+        ggml_backend_buffer_t hook_batch_embd_buffer = nullptr;
+        std::vector<llama_token> hook_tokens;
+        int32_t pending_pos = -1;
+    };
+
+    mtp_state mtp;
 
     bool has_evaluated_once = false;
 

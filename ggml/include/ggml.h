@@ -429,7 +429,12 @@ extern "C" {
         GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
         GGML_TYPE_Q1_0    = 41,
-        GGML_TYPE_COUNT   = 42,
+        GGML_TYPE_TQ3_1S  = 44, // TurboQuant 3-bit with two half-block scales
+        GGML_TYPE_TQ3_4S  = 46, // TurboQuant 3-bit with four u8 per-8 scales (4.0 bpw)
+        GGML_TYPE_TQ3_0   = 200, // TurboQuant 3-bit KV-cache only
+        GGML_TYPE_TURBO3_0 = 201, // TurboQuant turbo3 KV-cache naming alias
+        GGML_TYPE_TURBO4_0 = 202, // TurboQuant turbo4 KV-cache naming alias
+        GGML_TYPE_COUNT   = 203,
     };
 
     // precision

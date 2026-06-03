@@ -167,6 +167,10 @@ enum common_speculative_type {
     COMMON_SPECULATIVE_TYPE_NGRAM_MOD,
     COMMON_SPECULATIVE_TYPE_NGRAM_CACHE,   // self-speculative decoding with 3-level n-gram cache
     COMMON_SPECULATIVE_TYPE_COUNT          // number of types, unknown type
+    // Legacy aliases kept for replayed branches and older harnesses.
+    ,COMMON_SPECULATIVE_TYPE_DRAFT  = COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE
+    ,COMMON_SPECULATIVE_TYPE_EAGLE3 = COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3
+    ,COMMON_SPECULATIVE_TYPE_MTP    = COMMON_SPECULATIVE_TYPE_DRAFT_MTP
 };
 
 // Grammar type enumeration

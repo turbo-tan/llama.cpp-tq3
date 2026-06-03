@@ -104,3 +104,8 @@ LLAMA_API float * llama_get_embeddings_pre_norm    (struct llama_context * ctx);
 
 // LLAMA_API float * llama_get_embeddings_ith(struct llama_context * ctx, int32_t i);
 LLAMA_API float * llama_get_embeddings_pre_norm_ith(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_embeddings_pre_norm_raw_ith(struct llama_context * ctx, int32_t i);
+
+LLAMA_API struct ggml_tensor * llama_context_get_t_h_pre_norm(struct llama_context * ctx);
+LLAMA_API struct ggml_tensor * llama_context_get_t_mtp_out(struct llama_context * ctx);
+LLAMA_API void llama_set_mtp(struct llama_context * ctx_target, struct llama_context * ctx_mtp);

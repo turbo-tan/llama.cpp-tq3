@@ -39,6 +39,46 @@ const std::map<std::string, common_speculative_type> common_speculative_type_fro
     {"ngram-cache",   COMMON_SPECULATIVE_TYPE_NGRAM_CACHE}
 };
 
+int32_t common_speculative_n_max(const common_params_speculative * spec) {
+    if (spec == nullptr) {
+        return 0;
+    }
+
+    int32_t n_max = 0;
+
+    const auto has_type = [&](common_speculative_type type) {
+        return std::find(spec->types.begin(), spec->types.end(), type) != spec->types.end();
+    };
+
+    if (has_type(COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE) ||
+        has_type(COMMON_SPECULATIVE_TYPE_DRAFT_EAGLE3) ||
+        has_type(COMMON_SPECULATIVE_TYPE_DRAFT_MTP)) {
+        n_max = std::max(n_max, std::max(0, spec->draft.n_max));
+    }
+
+    if (has_type(COMMON_SPECULATIVE_TYPE_NGRAM_SIMPLE)) {
+        n_max = std::max(n_max, (int32_t) spec->ngram_simple.size_m);
+    }
+
+    if (has_type(COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K)) {
+        n_max = std::max(n_max, (int32_t) spec->ngram_map_k.size_m);
+    }
+
+    if (has_type(COMMON_SPECULATIVE_TYPE_NGRAM_MAP_K4V)) {
+        n_max = std::max(n_max, (int32_t) spec->ngram_map_k4v.size_m);
+    }
+
+    if (has_type(COMMON_SPECULATIVE_TYPE_NGRAM_MOD)) {
+        n_max = std::max(n_max, std::max(0, spec->ngram_mod.n_max));
+    }
+
+    if (has_type(COMMON_SPECULATIVE_TYPE_NGRAM_CACHE)) {
+        n_max = std::max(n_max, 8);
+    }
+
+    return n_max;
+}
+
 struct common_speculative_config {
     common_speculative_type type;
     common_params_speculative params;
