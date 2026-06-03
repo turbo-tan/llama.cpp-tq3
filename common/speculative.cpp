@@ -8,7 +8,6 @@
 #endif
 #include "llama.h"
 #include "../src/llama-ext.h" // staging API: llama_set_embeddings_pre_norm / llama_get_embeddings_pre_norm_ith (used by MTP)
-#include "../src/llama-context.h"
 #include "log.h"
 #include "ngram-cache.h"
 #include "ngram-map.h"
@@ -472,22 +471,15 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         auto * ctx_dft = params.ctx_dft;
         const size_t row_bytes = (size_t) n_embd * sizeof(float);
 
-        ggml_backend_t batch_embd_backend = nullptr;
-
         auto prefetch_src_row = [&](llama_context * ctx_src, ggml_tensor * src, int32_t src_row) {
             if (!ctx_src || !src || batch.embd == nullptr) {
                 return;
             }
-            batch_embd_backend = ggml_backend_sched_get_tensor_backend(ctx_src->get_sched(), src);
-            ggml_backend_tensor_get_async(batch_embd_backend, src, batch.embd, (size_t) src_row * row_bytes, row_bytes);
+            llama_synchronize(ctx_src);
+            ggml_backend_tensor_get(src, batch.embd, (size_t) src_row * row_bytes, row_bytes);
         };
 
-        auto wait_prefetch = [&]() {
-            if (batch_embd_backend != nullptr) {
-                ggml_backend_synchronize(batch_embd_backend);
-                batch_embd_backend = nullptr;
-            }
-        };
+        auto wait_prefetch = [&]() {};
 
         if (last_n_drafted > 0) {
             const int32_t n_to_drop = (int32_t) last_n_drafted - 1;
