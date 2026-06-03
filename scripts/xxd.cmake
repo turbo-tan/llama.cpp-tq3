@@ -10,7 +10,7 @@ string(REGEX REPLACE "\\.|-" "_" name "${filename}")
 file(READ "${INPUT}" hex_data HEX)
 string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," hex_sequence "${hex_data}")
 
-string(LENGTH ${hex_data} hex_len)
+string(LENGTH "${hex_data}" hex_len)
 math(EXPR len "${hex_len} / 2")
 
 file(WRITE "${OUTPUT}" "unsigned char ${name}[] = {${hex_sequence}};\nunsigned int ${name}_len = ${len};\n")
