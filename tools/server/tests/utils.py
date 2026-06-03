@@ -486,8 +486,16 @@ class ServerPreset:
         ]
         for server in servers:
             server.offline = False
-            server.start()
-            server.stop()
+            for attempt in range(3):
+                try:
+                    server.start(timeout_seconds=600)
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(5 * (attempt + 1))
+                finally:
+                    server.stop()
 
     @staticmethod
     def tinyllama2() -> ServerProcess:
