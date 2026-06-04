@@ -5039,10 +5039,7 @@ void ggml_backend_cuda_unregister_host_buffer(void * buffer) {
         (void)cudaGetLastError();
     }
 }
-
-
 // backend device
-
 static const char * ggml_backend_cuda_device_get_name(ggml_backend_dev_t dev) {
     ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
     return ctx->name.c_str();
