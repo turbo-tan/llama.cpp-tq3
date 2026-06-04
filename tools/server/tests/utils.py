@@ -160,6 +160,8 @@ class ServerProcess:
             server_args.extend(["--hf-repo", self.model_hf_repo])
         if self.model_hf_file:
             server_args.extend(["--hf-file", self.model_hf_file])
+        if self.model_hf_repo and env.get("HF_TOKEN"):
+            server_args.extend(["--hf-token", env["HF_TOKEN"]])
         if self.models_dir:
             server_args.extend(["--models-dir", self.models_dir])
         if self.models_max is not None:
@@ -259,7 +261,11 @@ class ServerProcess:
             env["AIP_MODE"] = "PREDICTION"
 
         args = [str(arg) for arg in [server_path, *server_args]]
-        print(f"tests: starting server with: {' '.join(args)}")
+        display_args = list(args)
+        for i, arg in enumerate(display_args[:-1]):
+            if arg == "--hf-token":
+                display_args[i + 1] = "***"
+        print(f"tests: starting server with: {' '.join(display_args)}")
 
         flags = 0
         if "nt" == os.name:
