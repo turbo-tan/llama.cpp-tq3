@@ -3478,7 +3478,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
             }
         }
         const float amax_pair = fmaxf(rms_local[0], rms_local[1]);
-        const float amax = fmaxf(amax_pair, __shfl_xor_sync(0xFFFFFFFF, amax_pair, 1)) * 1.996684f;
+        const float amax_shfl = __shfl_xor_sync(0xFFFFFFFF, amax_pair, 1, WARP_SIZE);
+        const float amax = fmaxf(amax_pair, amax_shfl) * 1.996684f;
         const float d_block = amax / 127.0f;
         const float d_inv = (d_block > 0.0f) ? 127.0f / amax : 0.0f;
 
