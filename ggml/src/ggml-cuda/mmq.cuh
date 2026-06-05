@@ -3495,19 +3495,18 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
             const uint8_t * qp = bxi->qs + g * 3;
             const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
 
-            // Bake per-subgroup scale into int8 without a scratch array.
-            uint32_t pq0 = 0;
-            uint32_t pq1 = 0;
-#pragma unroll
-            for (int r = 0; r < 8; r++) {
-                const float val = tq3_centroids[(packed >> (3*r)) & 7] * rms_g;
-                const uint32_t q_byte = (uint8_t) __float2int_rn(val * d_inv);
-                if (r < 4) {
-                    pq0 |= q_byte << (8*r);
-                } else {
-                    pq1 |= q_byte << (8*(r - 4));
-                }
-            }
+            const float q_scale = rms_g * d_inv;
+            const uint32_t q0 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  0) & 7] * q_scale);
+            const uint32_t q1 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  3) & 7] * q_scale);
+            const uint32_t q2 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  6) & 7] * q_scale);
+            const uint32_t q3 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  9) & 7] * q_scale);
+            const uint32_t q4 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 12) & 7] * q_scale);
+            const uint32_t q5 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 15) & 7] * q_scale);
+            const uint32_t q6 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 18) & 7] * q_scale);
+            const uint32_t q7 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 21) & 7] * q_scale);
+
+            const uint32_t pq0 = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+            const uint32_t pq1 = q4 | (q5 << 8) | (q6 << 16) | (q7 << 24);
 
             const int out_base = blk_in_row * QI8_0 + g * 2;
 
