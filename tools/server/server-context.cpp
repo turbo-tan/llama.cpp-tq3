@@ -1990,6 +1990,8 @@ private:
 
     void process_single_task(server_task && task) {
         switch (task.type) {
+            case SERVER_TASK_TYPE_CONTROL:
+                break;
             case SERVER_TASK_TYPE_COMPLETION:
             case SERVER_TASK_TYPE_INFILL:
             case SERVER_TASK_TYPE_EMBEDDING:
