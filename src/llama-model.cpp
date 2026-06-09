@@ -1279,6 +1279,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
                 ml.get_key(LLM_KV_EMBEDDING_LENGTH_PER_LAYER,  hparams.n_embd_per_layer);
                 ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH_SWA,    hparams.n_embd_head_k_swa);
                 ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH_SWA,  hparams.n_embd_head_v_swa);
+                ml.get_key(LLM_KV_FINAL_LOGIT_SOFTCAPPING,     hparams.f_final_logit_softcapping, false);
 
                 switch (hparams.n_layer) {
                     case 35: type = LLM_TYPE_E2B; break;
@@ -8607,7 +8608,7 @@ ggml_cgraph * llama_model::build_graph(const llm_graph_params & params) const {
             } break;
         case LLM_ARCH_GEMMA4:
             {
-                llm = std::make_unique<llm_build_gemma4_iswa>(*this, params);
+                llm = std::make_unique<llm_build_gemma4>(*this, params);
             } break;
         case LLM_ARCH_GEMMA_EMBEDDING:
             {

@@ -1,6 +1,6 @@
 #include "models.h"
 
-llm_build_gemma4_iswa::llm_build_gemma4_iswa(const llama_model & model, const llm_graph_params & params) :
+llm_build_gemma4::llm_build_gemma4(const llama_model & model, const llm_graph_params & params) :
         llm_graph_context(params),
         model(model),
         n_embd_per_layer(model.hparams.n_embd_per_layer) {
@@ -19,13 +19,12 @@ llm_build_gemma4_iswa::llm_build_gemma4_iswa(const llama_model & model, const ll
     // TODO: is causal == true correct? might need some changes
     auto * inp_attn = build_attn_inp_kv_iswa();
 
-    // inp_per_layer shape: [n_embd_per_layer, n_tokens, n_layer]
+    ggml_tensor * inp_out_ids = build_inp_out_ids();
+
     ggml_tensor * inp_per_layer = nullptr;
     if (model.tok_embd_per_layer) {
         inp_per_layer = project_per_layer_inputs(inpL, get_per_layer_inputs());
     }
-
-    ggml_tensor * inp_out_ids = build_inp_out_ids();
 
     for (int il = 0; il < n_layer; ++il) {
         const int64_t n_embd_head = hparams.n_embd_head_k(il);
@@ -99,7 +98,7 @@ llm_build_gemma4_iswa::llm_build_gemma4_iswa(const llama_model & model, const ll
                     Qcur, nullptr, nullptr, nullptr, nullptr, nullptr, hparams.f_attention_scale, il);
         }
 
-        // TODO @ngxson : strip unused token right after the last KV layer to speed up prompt processing
+        // strip unused tokens for the last layer to speed up prompt processing
         if (il == n_layer - 1 && inp_out_ids) {
             cur  = ggml_get_rows(ctx0,  cur, inp_out_ids);
             inpL = ggml_get_rows(ctx0, inpL, inp_out_ids);
@@ -196,6 +195,7 @@ llm_build_gemma4_iswa::llm_build_gemma4_iswa(const llama_model & model, const ll
 
             cur = build_lora_mm(model.layers[il].per_layer_inp_gate, cur); // [n_embd_per_layer, n_tokens]
             cur = ggml_gelu(ctx0, cur);
+
             ggml_tensor * inp_this_layer = view_2d_slice(inp_per_layer, il); // [n_embd_per_layer, n_tokens]
 
             // TODO @ngxson : improve this
@@ -249,7 +249,7 @@ llm_build_gemma4_iswa::llm_build_gemma4_iswa(const llama_model & model, const ll
 }
 
 // get 2D slice view from a 3D tensor, the idx corresponds to the 3rd dim
-ggml_tensor * llm_build_gemma4_iswa::view_2d_slice(ggml_tensor * x, int idx) {
+ggml_tensor * llm_build_gemma4::view_2d_slice(ggml_tensor * x, int idx) {
     GGML_ASSERT(idx < (int) x->ne[2]);
     return ggml_view_2d(ctx0, x, x->ne[0], x->ne[1], ggml_row_size(x->type, x->ne[0]),
                         idx * x->ne[0] * x->ne[1] * ggml_element_size(x));
@@ -257,7 +257,7 @@ ggml_tensor * llm_build_gemma4_iswa::view_2d_slice(ggml_tensor * x, int idx) {
 
 // equivalent to get_per_layer_inputs() in python code
 // output shape: [n_embd_per_layer, n_layer, n_tokens]
-ggml_tensor * llm_build_gemma4_iswa::get_per_layer_inputs() {
+ggml_tensor * llm_build_gemma4::get_per_layer_inputs() {
     auto inp = std::make_unique<llm_graph_input_embd>(n_embd);
     ggml_tensor * inp_per_layer;
     if (ubatch.token) {
@@ -290,7 +290,7 @@ ggml_tensor * llm_build_gemma4_iswa::get_per_layer_inputs() {
 // inputs_embeds shape: [n_embd, n_tokens]
 // inp_per_layer shape: [n_embd_per_layer, n_layer, n_tokens] (from get_per_layer_inputs)
 // output shape: [n_embd_per_layer, n_tokens, n_layer]
-ggml_tensor * llm_build_gemma4_iswa::project_per_layer_inputs(ggml_tensor * inputs_embeds, ggml_tensor * inp_per_layer) {
+ggml_tensor * llm_build_gemma4::project_per_layer_inputs(ggml_tensor * inputs_embeds, ggml_tensor * inp_per_layer) {
     const float per_layer_projection_scale = 1.0f / sqrtf((float) n_embd);
     const float per_layer_input_scale      = 1.0f / sqrtf(2.0f);
 
