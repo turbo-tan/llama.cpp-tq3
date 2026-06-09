@@ -1183,15 +1183,15 @@ private:
 
         if (params_base.cache_idle_slots) {
             if (params_base.cache_ram_mib == 0) {
-                SRV_WRN("%s", "--cache-idle-slots requires --cache-ram, disabling\n");
+                SRV_WRN("%s: --cache-idle-slots requires --cache-ram, disabling\n", __func__);
                 params_base.cache_idle_slots = false;
             } else {
                 if (params_base.kv_unified) {
-                    SRV_INF("%s", "idle slots will be saved to prompt cache and cleared upon starting a new task\n");
+                    SRV_INF("%s: idle slots will be saved to prompt cache and cleared upon starting a new task\n", __func__);
                 } else {
                     // without a unified KV cache, clearing a slot frees no reusable room, so we only
                     // publish a RAM-cache copy of idle slots (their KV stays in VRAM) [TAG_IDLE_SLOT_CLEAR]
-                    SRV_INF("%s", "idle slots will be saved to prompt cache upon starting a new task\n");
+                    SRV_INF("%s: idle slots will be saved to prompt cache upon starting a new task\n", __func__);
                 }
                 SRV_DBG("%s", "__TEST_TAG_CACHE_IDLE_SLOTS_ENABLED__\n");
             }
@@ -1366,13 +1366,15 @@ private:
 
                 const int64_t t_start = ggml_time_us();
 
-                ret->prompt_save(*prompt_cache);
+                const bool saved_prompt = ret->prompt_save(*prompt_cache);
 
-                if (!ret->prompt_load(*prompt_cache, task.tokens)) {
+                if (saved_prompt && !ret->prompt_load(*prompt_cache, task.tokens)) {
                     ret->prompt_clear(false);
                 }
 
-                prompt_cache->update();
+                if (saved_prompt) {
+                    prompt_cache->update();
+                }
 
                 SRV_INF("prompt cache update took %.2f ms\n", (ggml_time_us() - t_start) / 1000.0);
             }
