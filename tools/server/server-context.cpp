@@ -1454,7 +1454,7 @@ private:
 
         if (params_base.cache_idle_slots) {
             if (params_base.cache_ram_mib == 0) {
-                SRV_WRN("%s", "--cache-idle-slots requires --cache-ram, disabling\n");
+                SRV_WRN("%s: --cache-idle-slots requires --cache-ram, disabling\n", __func__);
                 params_base.cache_idle_slots = false;
             } else {
                 if (params_base.kv_unified) {
@@ -1668,13 +1668,15 @@ private:
 
                 const int64_t t_start = ggml_time_us();
 
-                ret->prompt_save(*prompt_cache);
+                const bool saved_prompt = ret->prompt_save(*prompt_cache);
 
                 if (!ret->prompt_load(*prompt_cache, task.tokens)) {
                     ret->prompt_clear();
                 }
 
-                prompt_cache->update();
+                if (saved_prompt) {
+                    prompt_cache->update();
+                }
 
                 SRV_TRC("prompt cache update took %.2f ms\n", (ggml_time_us() - t_start) / 1000.0);
             }
