@@ -42,7 +42,8 @@ struct llama_hparams {
 
     uint32_t n_ctx_train; // context size the model was trained on
     uint32_t n_embd;
-    uint32_t n_layer;
+    uint32_t n_layer_all; // total layers including MTP/nextn layers (from GGUF block_count)
+    uint32_t n_layer_nextn = 0; // number of MTP/nextn layers
     int32_t n_layer_kv_from_start = -1; // if non-negative, the first n_layer_kv_from_start layers have KV cache
     uint32_t n_expert = 0;
     uint32_t n_expert_used = 0;
@@ -179,6 +180,9 @@ struct llama_hparams {
     // for Classifiers
     uint32_t n_cls_out = 1;
 
+    // input embedding dimension (0 = use n_embd)
+    uint32_t n_embd_inp_impl = 0;
+
     // output embedding dimension (0 = use n_embd)
     uint32_t n_embd_out_impl = 0;
 
@@ -314,6 +318,9 @@ struct llama_hparams {
 
     // number of layers for which has_kv() returns true
     uint32_t n_layer_kv() const;
+
+    // number of regular (non-MTP) layers
+    uint32_t n_layer() const;
 
     // note that this function uses different SWA parameters from those in the hparams
     // note: inlined on purpose for performance reasons

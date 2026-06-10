@@ -45,6 +45,8 @@ struct llama_cparams {
     bool kv_unified;
     bool pipeline_parallel;
 
+    struct llama_context * ctx_other; // for gemma4-assistant: target model context
+
     enum llama_context_type ctx_type;
     enum llama_pooling_type pooling_type;
 

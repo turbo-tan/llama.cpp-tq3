@@ -119,3 +119,5 @@ LLAMA_API void llama_set_mtp(struct llama_context * ctx_target, struct llama_con
 LLAMA_API void    llama_set_embeddings_nextn   (struct llama_context * ctx, bool value, bool masked);
 LLAMA_API float * llama_get_embeddings_nextn    (struct llama_context * ctx);
 LLAMA_API float * llama_get_embeddings_nextn_ith(struct llama_context * ctx, int32_t i);
+
+LLAMA_API struct llama_context * llama_get_ctx_other(struct llama_context * ctx);

@@ -395,6 +395,10 @@ extern "C" {
         // note: the samplers must be sampler chains (i.e. use llama_sampler_chain_init)
         struct llama_sampler_seq_config * samplers;
         size_t                            n_samplers;
+
+        // [EXPERIMENTAL]
+        // for gemma4-assistant: target model context
+        struct llama_context * ctx_other;
     };
 
     struct llama_model_tensor_override {

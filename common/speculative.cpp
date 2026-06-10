@@ -386,6 +386,8 @@ struct common_speculative_state_mtp : public common_speculative_impl {
     int32_t  last_n_accepted = -1;
     uint16_t last_n_drafted  = 0;
 
+    bool is_mem_shared = false;
+
     common_speculative_state_mtp(const common_params_speculative & params, uint32_t n_seq)
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_MTP, n_seq)
         , params(params.draft)
@@ -395,7 +397,9 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         GGML_ASSERT(ctx_tgt && ctx_dft && "MTP requires ctx_tgt and ctx_dft to be set");
         GGML_ASSERT(n_seq == 1 && "hook-driven MTP currently supports only single-sequence speculation");
 
-        n_embd = llama_model_n_embd(llama_get_model(ctx_dft));
+        n_embd = llama_model_n_embd_out(llama_get_model(ctx_dft));
+        GGML_ASSERT(n_embd == llama_model_n_embd(llama_get_model(ctx_tgt)) &&
+                "MTP input row width must match the target h_nextn width");
         common_params_sampling sparams;
         sparams.no_perf  = false;
         sparams.top_k    = 1;
@@ -429,6 +433,8 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         // Enable extraction of nextn hidden states for MTP drafters (gemma4, etc.)
         llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
+
+        is_mem_shared = llama_get_ctx_other(ctx_dft) == ctx_tgt;
     }
 
     ~common_speculative_state_mtp() override {
@@ -455,7 +461,7 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         }
         auto * ctx_dft = this->params.ctx_dft;
         const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), 0);
-        if (pos_max < N - 1) {
+        if (pos_max < N - 1 && !is_mem_shared) {
             LOG_WRN("%s: ctx_dft pos_max=%d < N-1=%d — "
                     "streaming hook may not have run on every prefill ubatch. "
                     "Drafts may degrade.\n",
@@ -488,7 +494,9 @@ struct common_speculative_state_mtp : public common_speculative_impl {
 
         auto wait_prefetch = [&]() {};
 
-        if (last_n_drafted > 0) {
+        // with shared memory the draft never stores cells, so there is nothing to roll back
+        // and removing cells here would corrupt the target's cache
+        if (last_n_drafted > 0 && !is_mem_shared) {
             const int32_t n_to_drop = (int32_t) last_n_drafted - 1;
             if (n_to_drop > 0) {
                 const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), 0);
@@ -605,7 +613,11 @@ struct common_speculative_state_mtp : public common_speculative_impl {
             common_sampler_accept(smpl.get(), id, true);
             dp.result->push_back(id);
             cond_tok = id;
-            ++pos;
+            if (!is_mem_shared) {
+                // note: with shared memory (e.g. Gemma4 assistants) we use the same position for all draft tokens
+                // ref: https://github.com/huggingface/transformers/blob/effde20942e3f82a1b97449f60b3a48c5ff96145/docs/source/en/model_doc/gemma4_assistant.md?plain=1#L36-L37
+                ++pos;
+            }
         }
 
         last_n_drafted = (uint16_t) dp.result->size();
@@ -613,6 +625,13 @@ struct common_speculative_state_mtp : public common_speculative_impl {
 
     void accept(llama_seq_id seq_id, uint16_t n_accepted) override {
         GGML_UNUSED(seq_id);
+
+        if (is_mem_shared) {
+            last_n_drafted  = 0;
+            last_n_accepted = (int32_t) n_accepted;
+            return;
+        }
+
         auto * mem_dft = llama_get_memory(params.ctx_dft);
         const llama_pos pos_max = llama_memory_seq_pos_max(mem_dft, 0);
         const int32_t n_drafted_last = (int32_t) last_n_drafted;
@@ -1185,7 +1204,8 @@ common_speculative * common_speculative_init(common_params_speculative & params,
                 LOG_WRN("%s: draft model is not specified - cannot use 'draft' type\n", __func__);
                 has_draft = false;
             }
-        } else if (has_draft_model) {
+        } else if (has_draft_model && !has_mtp) {
+            // when MTP is active the draft model slot carries the MTP/assistant model
             LOG_WRN("%s: draft model is specified but 'draft' speculative type is not explicitly enabled - enabling it\n", __func__);
             has_draft = true;
         }

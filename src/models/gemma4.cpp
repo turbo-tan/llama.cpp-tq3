@@ -2,12 +2,12 @@
 
 void llama_model_gemma4::load_arch_hparams(llama_model_loader & ml) {
     hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
-    ml.get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.swa_layers, hparams.n_layer);
+    ml.get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.swa_layers, hparams.n_layer_all);
 
     uint32_t n_kv_shared_layers = 0;
     ml.get_key(LLM_KV_ATTENTION_SHARED_KV_LAYERS, n_kv_shared_layers, false);
 
-    hparams.n_layer_kv_from_start = hparams.n_layer - (int32_t)n_kv_shared_layers;
+    hparams.n_layer_kv_from_start = hparams.n_layer_all - (int32_t)n_kv_shared_layers;
     hparams.f_attention_scale     = 1.0f; // Gemma4 uses self.scaling = 1.0 (no pre-attn scaling)
 
     ml.get_key(LLM_KV_ROPE_FREQ_BASE_SWA,          hparams.rope_freq_base_train_swa, false);
@@ -19,7 +19,7 @@ void llama_model_gemma4::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH_SWA,  hparams.n_embd_head_v_swa);
     ml.get_key(LLM_KV_FINAL_LOGIT_SOFTCAPPING,     hparams.f_final_logit_softcapping, false);
 
-    switch (hparams.n_layer) {
+    switch (hparams.n_layer_all) {
         case 30: type = LLM_TYPE_26B_A4B; break;
         case 35: type = LLM_TYPE_E2B; break;
         case 42: type = LLM_TYPE_E4B; break;
@@ -29,6 +29,9 @@ void llama_model_gemma4::load_arch_hparams(llama_model_loader & ml) {
 }
 
 void llama_model_gemma4::load_arch_tensors(llama_model_loader &) {
+    fprintf(stderr, "DEBUG: ENTERED gemma4 load_arch_tensors\n");
+    fflush(stderr);
+    LLAMA_LOG_INFO("%s: ENTERED load_arch_tensors for gemma4\n", __func__);
     LLAMA_LOAD_LOCALS;
 
     const uint32_t n_embd_per_layer = hparams.n_embd_per_layer;
@@ -57,6 +60,16 @@ void llama_model_gemma4::load_arch_tensors(llama_model_loader &) {
 
     output_norm = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), {n_embd}, 0);
 
+    // MTP projection tensors (used by assistant models, optional for regular gemma4)
+    fprintf(stderr, "DEBUG: About to create MTP tensors, n_embd=%lld, n_embd_out=%u\n", (long long)n_embd, hparams.n_embd_out());
+    fflush(stderr);
+    LLAMA_LOG_INFO("%s: attempting to create MTP tensors, n_embd=%d, n_embd_out=%d\n", __func__, (int)n_embd, (int)hparams.n_embd_out());
+    mtp_pre_proj  = create_tensor(tn(LLM_TENSOR_MTP_PRE_PROJ, "weight"), {n_embd * 2, n_embd}, TENSOR_NOT_REQUIRED);
+    mtp_post_proj = create_tensor(tn(LLM_TENSOR_MTP_POST_PROJ, "weight"), {n_embd, hparams.n_embd_out()}, TENSOR_NOT_REQUIRED);
+    fprintf(stderr, "DEBUG: MTP tensors created: pre=%p, post=%p\n", (void*)mtp_pre_proj, (void*)mtp_post_proj);
+    fflush(stderr);
+    LLAMA_LOG_INFO("%s: mtp_pre_proj=%p, mtp_post_proj=%p\n", __func__, (void*)mtp_pre_proj, (void*)mtp_post_proj);
+
     int rope_freqs_flag = 0;
 
     for (int i = 0; i < n_layer; ++i) {
@@ -79,12 +92,14 @@ void llama_model_gemma4::load_arch_tensors(llama_model_loader &) {
         layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head}, kv_flags);
         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
 
-        layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1u}, TENSOR_NOT_REQUIRED);
+        layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, nullptr, i), {1u}, TENSOR_NOT_REQUIRED);
 
         if (!hparams.is_swa(i)) {
             // full_attention layers use rope_freqs for proportional rope
-            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_embd_head/2}, rope_freqs_flag);
-            rope_freqs_flag = TENSOR_DUPLICATED;
+            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_embd_head/2}, TENSOR_NOT_REQUIRED);
+            if (layer.rope_freqs != nullptr) {
+                rope_freqs_flag = TENSOR_DUPLICATED;
+            }
         }
 
         // handle use_double_wide_mlp

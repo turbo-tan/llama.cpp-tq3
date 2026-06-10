@@ -1282,6 +1282,16 @@ common_init_result::common_init_result(common_params & params) :
         }
     }
 
+    // Check if this is a gemma4-assistant model that needs ctx_other
+    {
+        char arch[64] = {0};
+        llama_model_meta_val_str(model, "general.architecture", arch, sizeof(arch));
+        if (std::string(arch) == "gemma4-assistant" && params.speculative.draft.ctx_tgt != nullptr) {
+            LOG_INF("%s: setting ctx_other for gemma4-assistant model\n", __func__);
+            cparams.ctx_other = params.speculative.draft.ctx_tgt;
+        }
+    }
+
     llama_context * lctx = llama_init_from_model(model, cparams);
     if (lctx == NULL) {
         LOG_ERR("%s: failed to create context with model '%s'\n", __func__, params.model.path.c_str());

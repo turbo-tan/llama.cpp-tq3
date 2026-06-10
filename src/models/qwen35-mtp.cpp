@@ -8,12 +8,12 @@ void llama_model_qwen35_mtp::load_arch_hparams(llama_model_loader & ml) {
     if (hparams.nextn_predict_layers == 0) {
         throw std::runtime_error("QWEN35_MTP requires nextn_predict_layers > 0");
     }
-    GGML_ASSERT(hparams.nextn_predict_layers <= hparams.n_layer);
+    GGML_ASSERT(hparams.nextn_predict_layers <= hparams.n_layer());
 
     // only the MTP layers get a KV cache, trunk layers are skipped.
     hparams.kv_only_nextn         = true;
     hparams.n_layer_kv_from_start = -1;
-    for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+    for (uint32_t i = 0; i < hparams.n_layer(); ++i) {
         hparams.recurrent_layer_arr[i] = false;
     }
 
@@ -75,7 +75,7 @@ llama_model_qwen35_mtp::graph::graph(const llama_model & model, const llm_graph_
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
     // The MTP block lives at the source file's original layer index.
-    const int il = (int) hparams.n_layer - (int) hparams.nextn_predict_layers;
+    const int il = (int) hparams.n_layer() - (int) hparams.nextn_predict_layers;
     const auto & layer = model.layers[il];
 
     GGML_ASSERT(layer.nextn.eh_proj && "MTP block missing nextn.eh_proj");
