@@ -54,6 +54,10 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
         const int64_t n_embd_head = hparams.n_embd_head_k(i);
         const int64_t n_ff        = hparams.n_ff(i);
 
+        if (i < 4 || i == (int) hparams.n_layer_nextn - 1) {
+            LLAMA_LOG_INFO("%s: layer %d: n_head=%lld, n_embd_head=%lld, n_ff=%lld, is_swa=%d\n",
+                    __func__, i, n_head, n_embd_head, n_ff, hparams.is_swa(i));
+        }
         if (i == 0) {
             nextn_proj_pre = create_tensor(tn(LLM_TENSOR_NEXTN_PROJ_PRE, "weight", i), { 2*n_embd_backbone, n_embd }, 0);
         }
