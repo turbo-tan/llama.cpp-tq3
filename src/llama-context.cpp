@@ -2306,7 +2306,6 @@ uint32_t llama_context::output_reserve(int32_t n_outputs) {
 
 void llama_context::output_reorder() {
     const uint64_t n_vocab     = model.vocab.n_tokens();
-    const uint64_t n_embd      = model.hparams.n_embd;
     const uint64_t n_embd_out  = model.hparams.n_embd_out();
 
     for (size_t s = 0; s < output_swaps.size(); ++s) {
