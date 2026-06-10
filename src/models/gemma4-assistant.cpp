@@ -1,4 +1,5 @@
 #include "models.h"
+#include <cinttypes>
 
 namespace {
 struct llm_graph_input_tokens_only : public llm_graph_input_i {
@@ -121,7 +122,7 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
         const int64_t n_ff        = hparams.n_ff(i);
 
         if (i < 4 || i == (int) hparams.n_layer_nextn - 1) {
-            LLAMA_LOG_INFO("%s: layer %d: n_head=%lld, n_embd_head=%lld, n_ff=%lld, is_swa=%d\n",
+            LLAMA_LOG_INFO("%s: layer %d: n_head=%" PRId64 ", n_embd_head=%" PRId64 ", n_ff=%" PRId64 ", is_swa=%d\n",
                     __func__, i, n_head, n_embd_head, n_ff, hparams.is_swa(i));
         }
 
