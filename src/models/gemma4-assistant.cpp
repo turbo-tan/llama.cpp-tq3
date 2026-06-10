@@ -68,8 +68,10 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
         layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), { 1u }, 0);
 
         if (!hparams.is_swa(i)) {
-            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), { n_embd_head/2 }, rope_freqs_flag);
-            rope_freqs_flag = TENSOR_DUPLICATED;
+            layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), { n_embd_head / 2 }, TENSOR_NOT_REQUIRED | rope_freqs_flag);
+            if (layer.rope_freqs != nullptr) {
+                rope_freqs_flag = TENSOR_DUPLICATED;
+            }
         }
 
         layer.ffn_norm      = create_tensor(tn(LLM_TENSOR_FFN_NORM,      "weight", i), { n_embd }, 0);
