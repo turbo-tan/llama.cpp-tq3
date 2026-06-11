@@ -10,6 +10,41 @@ static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
     return 128;
 }
 
+static constexpr __host__ __device__ int ggml_cuda_fattn_vec_get_nthreads_KQ_q([[maybe_unused]] const int D) {
+#if defined(GGML_USE_HIP) && defined(RDNA)
+    return 2;
+#elif defined(GGML_USE_HIP)
+    return 4;
+#else
+    return (D/4 < 32 ? D/4 : 32);
+#endif
+}
+
+static constexpr __host__ __device__ int ggml_cuda_fattn_vec_get_nthreads_V_q(const int D) {
+    return (D/4 < 32 ? D/4 : 32);
+}
+
+#ifdef GGML_USE_HIP
+#define GGML_CUDA_FATTN_VEC_PARAMS                                                                     \
+        const char * GGML_CUDA_RESTRICT Q,                                                            \
+        const char * GGML_CUDA_RESTRICT K,                                                            \
+        const char * GGML_CUDA_RESTRICT V,                                                            \
+        const char * GGML_CUDA_RESTRICT mask,                                                         \
+        const char * GGML_CUDA_RESTRICT sinks,                                                        \
+        const int  * GGML_CUDA_RESTRICT KV_max,                                                       \
+        float      * GGML_CUDA_RESTRICT dst,                                                          \
+        float2     * GGML_CUDA_RESTRICT dst_meta
+#else
+#define GGML_CUDA_FATTN_VEC_PARAMS                                                                     \
+        const char * Q_ptr,                                                                           \
+        const char * K_ptr,                                                                           \
+        const char * V_ptr,                                                                           \
+        const char * mask_ptr,                                                                        \
+        const char * sinks_ptr,                                                                       \
+        const int  * KV_max_ptr,                                                                      \
+        float      * dst_ptr,                                                                         \
+        float2     * dst_meta_ptr
+#endif
 // Currently llvm with the amdgcn target does not support unrolling loops
 // that contain a break that can not be resolved at compile time.
 #ifdef __clang__
@@ -73,17 +108,8 @@ static __global__ void flash_attn_ext_vec(
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
-#ifdef GGML_USE_HIP
-#ifdef RDNA
-    constexpr int nthreads_KQ_q = 2;
-#else
-    constexpr int nthreads_KQ_q = 4;
-#endif // RDNA
-    constexpr int nthreads_V_q  = (D/4 < 32 ? D/4 : 32);
-#else
-    constexpr int nthreads_KQ_q = (D/4 < 32 ? D/4 : 32);
-    constexpr int nthreads_V_q  = (D/4 < 32 ? D/4 : 32);
-#endif // GGML_USE_HIP
+    constexpr int nthreads_KQ_q = ggml_cuda_fattn_vec_get_nthreads_KQ_q(D);
+    constexpr int nthreads_V_q  = ggml_cuda_fattn_vec_get_nthreads_V_q(D);
 
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
     constexpr int nthreads_KQ = (type_K == GGML_TYPE_F16 || type_K == GGML_TYPE_BF16) ? 128 / cpy_nb : nthreads_KQ_q;
