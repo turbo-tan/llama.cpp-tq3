@@ -305,6 +305,13 @@ jobs:
         id: checkout
         uses: actions/checkout@v6
 
+      - name: Dependencies
+        id: depends
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git-lfs
+          git lfs install
+
       - name: Test
         id: ggml-ci
         run: |
