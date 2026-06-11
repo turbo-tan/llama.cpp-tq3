@@ -3599,7 +3599,7 @@ server_context_meta server_context::get_meta() const {
         /* has_inp_image          */ impl->chat_params.allow_image,
         /* has_inp_audio          */ impl->chat_params.allow_audio,
         /* has_inp_video          */ impl->chat_params.allow_video,
-        /* json_ui_settings       */ impl->json_ui_settings,
+        /* json_ui_settings       */ impl->json_webui_settings,
         /* json_webui_settings    */ impl->json_webui_settings,  // Deprecated
         /* slot_n_ctx             */ impl->get_slot_n_ctx(),
         /* pooling_type           */ llama_pooling_type(impl->ctx_tgt),
