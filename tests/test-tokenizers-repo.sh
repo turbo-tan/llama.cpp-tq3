@@ -36,10 +36,9 @@ if [ "$(uname -m)" = s390x ]; then
     done
 fi
 
-shopt -s globstar
-for gguf in $folder/**/*.gguf; do
-    if [ -f $gguf.inp ] && [ -f $gguf.out ]; then
-        $toktest $gguf
+find "$folder" -type f -name '*.gguf' -print0 | while IFS= read -r -d '' gguf; do
+    if [ -f "$gguf.inp" ] && [ -f "$gguf.out" ]; then
+        "$toktest" "$gguf"
     else
         printf "Found \"$gguf\" without matching inp/out files, ignoring...\n"
     fi
