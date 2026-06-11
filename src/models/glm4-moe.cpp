@@ -21,12 +21,12 @@ void llama_model_glm4_moe::load_arch_hparams(llama_model_loader & ml) {
 
     // NextN/MTP parameters
     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS,        hparams.nextn_predict_layers, false);
-    GGML_ASSERT(hparams.nextn_predict_layers < hparams.n_layer && "nextn_predict_layers must be < n_layer");
+    GGML_ASSERT(hparams.nextn_predict_layers < hparams.n_layer() && "nextn_predict_layers must be < n_layer");
 
     // TODO: when MTP is implemented, this should probably be updated if needed
-    hparams.n_layer_kv_from_start = hparams.n_layer - hparams.nextn_predict_layers;
+    hparams.n_layer_kv_from_start = hparams.n_layer() - hparams.nextn_predict_layers;
 
-    switch (hparams.n_layer) {
+    switch (hparams.n_layer()) {
         case 47: type = LLM_TYPE_106B_A12B; break; // GLM-4.5-Air (46 layers + 1 NextN layer)
         case 48: type = LLM_TYPE_102B_A12B; break; // Solar Open
         case 93: type = LLM_TYPE_355B_A32B; break; // GLM-4.5 (92 layers + 1 NextN layer)

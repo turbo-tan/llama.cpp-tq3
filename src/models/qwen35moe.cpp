@@ -17,32 +17,32 @@ void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
 
     // NextN/MTP (Qwen3.5/3.6): extra decoder block appended beyond the main stack
     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS, hparams.nextn_predict_layers, false);
-    GGML_ASSERT(hparams.nextn_predict_layers < hparams.n_layer && "nextn_predict_layers must be < n_layer");
+    GGML_ASSERT(hparams.nextn_predict_layers < hparams.n_layer() && "nextn_predict_layers must be < n_layer");
     ml.get_key("llama.nomtp_trunk_only", hparams.trunk_only_nomtp, false);
 
     if (hparams.trunk_only_nomtp) {
-        hparams.n_layer -= hparams.nextn_predict_layers;
+        hparams.n_layer_all -= hparams.nextn_predict_layers;
         hparams.nextn_predict_layers = 0;
         hparams.n_layer_kv_from_start = -1;
         hparams.kv_only_nextn = false;
     } else {
         hparams.n_layer_kv_from_start = hparams.nextn_predict_layers > 0
-            ? hparams.n_layer - hparams.nextn_predict_layers
+            ? hparams.n_layer() - hparams.nextn_predict_layers
             : -1;
     }
 
     // Mark recurrent layers (linear attention layers). MTP layers are dense
     // attention-only and must be flagged non-recurrent.
     {
-        const uint32_t n_main = hparams.n_layer - hparams.nextn_predict_layers;
+        const uint32_t n_main = hparams.n_layer() - hparams.nextn_predict_layers;
         uint32_t full_attn_interval = 4;
         ml.get_key(LLM_KV_FULL_ATTENTION_INTERVAL, full_attn_interval, false);
-        for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+        for (uint32_t i = 0; i < hparams.n_layer(); ++i) {
             hparams.recurrent_layer_arr[i] = (i < n_main) && ((i + 1) % full_attn_interval != 0);
         }
     }
 
-    switch (hparams.n_layer - hparams.nextn_predict_layers) {
+    switch (hparams.n_layer() - hparams.nextn_predict_layers) {
         case 40: type = LLM_TYPE_35B_A3B; break;
         case 48: type = LLM_TYPE_122B_A10B; break;
         case 60: type = LLM_TYPE_397B_A17B; break;

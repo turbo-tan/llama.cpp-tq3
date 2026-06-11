@@ -773,9 +773,43 @@ private:
             }
 
             auto cparams = common_context_params_to_llama(params_dft);
-            ctx_dft.reset(llama_init_from_model(model_dft.get(), cparams));
 
-            ctx_dft_seq_rm_type = common_context_can_seq_rm(ctx_dft.get());
+            bool is_gemma4_assistant_draft = false;
+            char draft_arch[64] = {0};
+            llama_model_meta_val_str(model_dft.get(), "general.architecture", draft_arch, sizeof(draft_arch));
+
+            if (std::string(draft_arch) == "gemma4-assistant") {
+                is_gemma4_assistant_draft = true;
+            } else if (std::string(draft_arch) == "gemma4") {
+                char assistant_type[64] = {0};
+                llama_model_meta_val_str(model_dft.get(), "gemma4.assistant.type", assistant_type, sizeof(assistant_type));
+                if (std::string(assistant_type) == "mtp") {
+                    is_gemma4_assistant_draft = true;
+                }
+            }
+
+            if (is_gemma4_assistant_draft) {
+                const int32_t target_n_embd = llama_model_n_embd(model_tgt);
+                const int32_t draft_backbone_n_embd = llama_model_n_embd_out(model_dft.get());
+                if (target_n_embd != draft_backbone_n_embd) {
+                    SRV_ERR("incompatible gemma4-assistant draft model: target hidden size = %d, draft backbone hidden size = %d\n",
+                            target_n_embd, draft_backbone_n_embd);
+                    SRV_ERR("expected a matching Gemma 4 target model for draft '%s'\n", params_dft.model.path.c_str());
+                    return false;
+                }
+                cparams.ctx_other = ctx_tgt;
+            }
+            ctx_dft.reset(llama_init_from_model(model_dft.get(), cparams));
+            if (ctx_dft == nullptr) {
+                SRV_ERR("failed to initialize draft context for '%s'\n", params_dft.model.path.c_str());
+                return false;
+            }
+
+            if (is_gemma4_assistant_draft) {
+                ctx_dft_seq_rm_type = COMMON_CONTEXT_SEQ_RM_TYPE_NO;
+            } else {
+                ctx_dft_seq_rm_type = common_context_can_seq_rm(ctx_dft.get());
+            }
 
             params_base.speculative.draft.ctx_tgt = ctx_tgt;
             params_base.speculative.draft.ctx_dft = ctx_dft.get();

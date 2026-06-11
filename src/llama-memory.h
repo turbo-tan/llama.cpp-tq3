@@ -76,6 +76,10 @@ struct llama_memory_i {
     // return negative value to indicate that the layer il should not reuse memory
     using layer_reuse_cb = std::function<int32_t(int32_t il)>;
 
+    // this callback is used to specify which layers should share memory from another cache
+    // return negative value to indicate that the layer il should not share memory
+    using layer_share_cb = std::function<int32_t(int32_t il)>;
+
     virtual ~llama_memory_i() = default;
 
     // split the input batch into a set of ubatches and verify that they can fit into the cache

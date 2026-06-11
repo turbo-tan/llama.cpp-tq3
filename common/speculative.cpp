@@ -144,6 +144,9 @@ struct common_speculative_impl {
 
     virtual ~common_speculative_impl() = default;
 
+    // true if this implementation requires the target context to extract nextn embeddings
+    virtual bool need_embd_nextn() const { return false; }
+
     virtual void begin(llama_seq_id seq_id, const llama_tokens & prompt) = 0;
 
     virtual bool process(const llama_batch & batch) = 0;
@@ -383,6 +386,8 @@ struct common_speculative_state_mtp : public common_speculative_impl {
     int32_t  last_n_accepted = -1;
     uint16_t last_n_drafted  = 0;
 
+    bool is_mem_shared = false;
+
     common_speculative_state_mtp(const common_params_speculative & params, uint32_t n_seq)
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_MTP, n_seq)
         , params(params.draft)
@@ -392,11 +397,14 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         GGML_ASSERT(ctx_tgt && ctx_dft && "MTP requires ctx_tgt and ctx_dft to be set");
         GGML_ASSERT(n_seq == 1 && "hook-driven MTP currently supports only single-sequence speculation");
 
-        n_embd = llama_model_n_embd(llama_get_model(ctx_dft));
+        n_embd = llama_model_n_embd_out(llama_get_model(ctx_dft));
+        GGML_ASSERT(n_embd == llama_model_n_embd(llama_get_model(ctx_tgt)) &&
+                "MTP input row width must match the target h_nextn width");
         common_params_sampling sparams;
         sparams.no_perf  = false;
         sparams.top_k    = 1;
-        sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
+        sparams.samplers.clear();
+        sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
         smpl.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
 
         batch = llama_batch_init(/*n_tokens=*/ 1, /*embd=*/ n_embd, /*n_seq_max=*/ 1);
@@ -422,6 +430,12 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         batch.logits[0]    = 1;
 
         llama_set_mtp(ctx_tgt, ctx_dft);
+
+        // Enable extraction of nextn hidden states for MTP drafters (gemma4, etc.)
+        llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
+        llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
+
+        is_mem_shared = llama_get_ctx_other(ctx_dft) == ctx_tgt;
     }
 
     ~common_speculative_state_mtp() override {
@@ -448,8 +462,8 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         }
         auto * ctx_dft = this->params.ctx_dft;
         const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), 0);
-        if (pos_max < N - 1) {
-            LOG_WRN("%s: ctx_dft pos_max=%d < N-1=%d — "
+        if (pos_max < N - 1 && !is_mem_shared) {
+            LOG_WRN("%s: ctx_dft pos_max=%d < N-1=%d - "
                     "streaming hook may not have run on every prefill ubatch. "
                     "Drafts may degrade.\n",
                     __func__, (int) pos_max, N - 1);
@@ -481,7 +495,9 @@ struct common_speculative_state_mtp : public common_speculative_impl {
 
         auto wait_prefetch = [&]() {};
 
-        if (last_n_drafted > 0) {
+        // with shared memory the draft never stores cells, so there is nothing to roll back
+        // and removing cells here would corrupt the target's cache
+        if (last_n_drafted > 0 && !is_mem_shared) {
             const int32_t n_to_drop = (int32_t) last_n_drafted - 1;
             if (n_to_drop > 0) {
                 const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), 0);
@@ -508,32 +524,67 @@ struct common_speculative_state_mtp : public common_speculative_impl {
                 wait_prefetch();
             }
 
-            ggml_tensor * src;
-            int32_t src_row;
+            ggml_tensor * src = nullptr;
+            int32_t src_row = 0;
+            bool use_nextn_fallback = false;
+
             if (k == 0) {
                 src = llama_context_get_t_h_pre_norm(ctx_tgt);
-                if (last_n_accepted < 0) {
-                    src_row = (src && src->ne[1] > 0) ? (int32_t) src->ne[1] - 1 : 0;
+                if (src) {
+                    if (last_n_accepted < 0) {
+                        src_row = src->ne[1] > 0 ? (int32_t) src->ne[1] - 1 : 0;
+                    } else {
+                        src_row = last_n_accepted;
+                    }
                 } else {
-                    src_row = last_n_accepted;
+                    // nextn fallback for target (gemma4 backbone, etc.)
+                    use_nextn_fallback = true;
+                    if (last_n_accepted < 0) {
+                        src_row = 0;
+                    } else {
+                        src_row = last_n_accepted;
+                    }
                 }
             } else {
                 src = llama_context_get_t_mtp_out(ctx_dft);
                 if (src == nullptr) {
                     src = llama_context_get_t_h_pre_norm(ctx_dft);
                 }
-                src_row = src ? (int32_t) src->ne[1] - 1 : 0;
+                if (src) {
+                    src_row = (int32_t) src->ne[1] - 1;
+                } else {
+                    // nextn fallback for draft (gemma4 assistant, etc.)
+                    use_nextn_fallback = true;
+                    src_row = 0;
+                }
             }
-            if (!src) {
+
+            if (!src && !use_nextn_fallback) {
                 break;
             }
 
             llama_context * src_ctx = k == 0 ? ctx_tgt : ctx_dft;
 
-            if (next_src != src || next_ctx != src_ctx || next_src_row != src_row) {
-                wait_prefetch();
-                prefetch_src_row(src_ctx, src, src_row);
-                wait_prefetch();
+            if (use_nextn_fallback) {
+                if (batch.embd) {
+                    const float * h_row = llama_get_embeddings_nextn_ith(src_ctx, src_row);
+                    if (h_row) {
+                        const size_t src_row_bytes = (k == 0)
+                            ? (size_t) llama_model_n_embd_out(llama_get_model(ctx_tgt)) * sizeof(float)
+                            : row_bytes;
+                        memcpy(batch.embd, h_row, src_row_bytes);
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            } else {
+                if (next_src != src || next_ctx != src_ctx || next_src_row != src_row) {
+                    wait_prefetch();
+                    prefetch_src_row(src_ctx, src, src_row);
+                    wait_prefetch();
+                }
             }
             batch.token[0] = cond_tok;
             batch.pos[0]   = pos;
@@ -563,7 +614,11 @@ struct common_speculative_state_mtp : public common_speculative_impl {
             common_sampler_accept(smpl.get(), id, true);
             dp.result->push_back(id);
             cond_tok = id;
-            ++pos;
+            if (!is_mem_shared) {
+                // note: with shared memory (e.g. Gemma4 assistants) we use the same position for all draft tokens
+                // ref: https://github.com/huggingface/transformers/blob/effde20942e3f82a1b97449f60b3a48c5ff96145/docs/source/en/model_doc/gemma4_assistant.md?plain=1#L36-L37
+                ++pos;
+            }
         }
 
         last_n_drafted = (uint16_t) dp.result->size();
@@ -571,6 +626,13 @@ struct common_speculative_state_mtp : public common_speculative_impl {
 
     void accept(llama_seq_id seq_id, uint16_t n_accepted) override {
         GGML_UNUSED(seq_id);
+
+        if (is_mem_shared) {
+            last_n_drafted  = 0;
+            last_n_accepted = (int32_t) n_accepted;
+            return;
+        }
+
         auto * mem_dft = llama_get_memory(params.ctx_dft);
         const llama_pos pos_max = llama_memory_seq_pos_max(mem_dft, 0);
         const int32_t n_drafted_last = (int32_t) last_n_drafted;
@@ -588,6 +650,10 @@ struct common_speculative_state_mtp : public common_speculative_impl {
 
         last_n_drafted  = 0;
         last_n_accepted = (int32_t) n_accepted;
+    }
+
+    bool need_embd_nextn() const override {
+        return true;
     }
 };
 
@@ -1139,7 +1205,8 @@ common_speculative * common_speculative_init(common_params_speculative & params,
                 LOG_WRN("%s: draft model is not specified - cannot use 'draft' type\n", __func__);
                 has_draft = false;
             }
-        } else if (has_draft_model) {
+        } else if (has_draft_model && !has_mtp) {
+            // when MTP is active the draft model slot carries the MTP/assistant model
             LOG_WRN("%s: draft model is specified but 'draft' speculative type is not explicitly enabled - enabling it\n", __func__);
             has_draft = true;
         }
@@ -1295,6 +1362,20 @@ bool common_speculative_need_embd_pre_norm(common_speculative * spec) {
 
     for (const auto & impl : spec->impls) {
         if (impl->type == COMMON_SPECULATIVE_TYPE_MTP) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool common_speculative_need_embd_nextn(common_speculative * spec) {
+    if (spec == nullptr) {
+        return false;
+    }
+
+    for (const auto & impl : spec->impls) {
+        if (impl->need_embd_nextn()) {
             return true;
         }
     }

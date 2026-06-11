@@ -44,6 +44,12 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    if (std::find(params.speculative.types.begin(), params.speculative.types.end(), COMMON_SPECULATIVE_TYPE_MTP) !=
+            params.speculative.types.end()) {
+        LOG_ERR("%s: MTP is not supported by this legacy example; use llama-server\n", __func__);
+        return 1;
+    }
+
     if (params.n_predict < -1) {
         LOG_ERR("%s: --n-predict must be >= -1\n", __func__);
         return 1;
@@ -89,6 +95,28 @@ int main(int argc, char ** argv) {
 
     params.cpuparams_batch.n_threads = params.speculative.draft.cpuparams_batch.n_threads;
     params.tensor_buft_overrides     = params.speculative.draft.tensor_buft_overrides;
+
+    // Check if draft model is gemma4-assistant and needs ctx_other
+    {
+        auto mparams_dft = common_model_params_to_llama(params);
+        llama_model * model_dft_temp = llama_model_load_from_file(params.model.path.c_str(), mparams_dft);
+        if (model_dft_temp == nullptr) {
+            LOG_ERR("%s: failed to load draft model '%s'\n", __func__, params.model.path.c_str());
+            return 1;
+        }
+
+        char draft_arch[64] = {0};
+        llama_model_meta_val_str(model_dft_temp, "general.architecture", draft_arch, sizeof(draft_arch));
+        const bool is_gemma4_assistant_draft = std::string(draft_arch) == "gemma4-assistant";
+
+        if (is_gemma4_assistant_draft) {
+            LOG_INF("%s: detected gemma4-assistant draft model, setting ctx_other\n", __func__);
+            // Store ctx_tgt in params so it can be used when creating draft context
+            params.speculative.draft.ctx_tgt = ctx_tgt;
+        }
+
+        llama_model_free(model_dft_temp);
+    }
 
     auto llama_init_dft = common_init_from_params(params);
 

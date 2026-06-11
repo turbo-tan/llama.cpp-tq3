@@ -23,21 +23,23 @@ if [ -d $folder ] && [ -d $folder/.git ]; then
     (cd $folder; git pull)
 else
     git clone $repo $folder
-
-    # byteswap models if on big endian
-    if [ "$(uname -m)" = s390x ]; then
-        for f in $folder/*/*.gguf; do
-            echo YES | python3 "$(dirname $0)/../gguf-py/gguf/scripts/gguf_convert_endian.py" $f big
-        done
-    fi
 fi
 
-shopt -s globstar
-for gguf in $folder/**/*.gguf; do
-    if [ -f $gguf.inp ] && [ -f $gguf.out ]; then
-        $toktest $gguf
+if git lfs version >/dev/null 2>&1; then
+    (cd $folder; git lfs pull)
+fi
+
+# byteswap models if on big endian
+if [ "$(uname -m)" = s390x ]; then
+    for f in $folder/*/*.gguf; do
+        echo YES | python3 "$(dirname $0)/../gguf-py/gguf/scripts/gguf_convert_endian.py" $f big
+    done
+fi
+
+find "$folder" -type f -name '*.gguf' -print0 | while IFS= read -r -d '' gguf; do
+    if [ -f "$gguf.inp" ] && [ -f "$gguf.out" ]; then
+        "$toktest" "$gguf"
     else
         printf "Found \"$gguf\" without matching inp/out files, ignoring...\n"
     fi
 done
-

@@ -10,6 +10,20 @@ static constexpr __device__ int ggml_cuda_fattn_vec_get_nthreads_device() {
     return 128;
 }
 
+static constexpr __host__ __device__ int ggml_cuda_fattn_vec_get_nthreads_KQ_q([[maybe_unused]] const int D) {
+#if defined(GGML_USE_HIP) && defined(RDNA)
+    return 2;
+#elif defined(GGML_USE_HIP)
+    return 4;
+#else
+    return (D/4 < 32 ? D/4 : 32);
+#endif
+}
+
+static constexpr __host__ __device__ int ggml_cuda_fattn_vec_get_nthreads_V_q(const int D) {
+    return (D/4 < 32 ? D/4 : 32);
+}
+
 #ifdef GGML_USE_HIP
 #define GGML_CUDA_FATTN_VEC_PARAMS                                                                     \
         const char * GGML_CUDA_RESTRICT Q,                                                            \
@@ -70,11 +84,9 @@ static __global__ void flash_attn_ext_vec(
 
     // Skip unused kernel variants for faster compilation:
     if (use_logit_softcap && !(D == 128 || D == 256)) {
-#ifdef GGML_USE_HIP
+        // note: Q, K, V, etc. are in scope on both the HIP and the non-HIP paths,
+        //       a preprocessor conditional inside the macro arguments breaks MSVC (C1019)
         GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
-#else
-        GGML_UNUSED_VARS(Q_ptr, K_ptr, V_ptr, mask_ptr, sinks_ptr, KV_max_ptr, dst_ptr, dst_meta_ptr, scale,
-#endif
             max_bias, m0, m1, n_head_log2, logit_softcap,
             ne00, ne01, ne02, ne03,
                   nb01, nb02, nb03,
@@ -92,17 +104,8 @@ static __global__ void flash_attn_ext_vec(
     constexpr int cpy_nb = ggml_cuda_get_max_cpy_bytes();
     constexpr int cpy_ne = cpy_nb / 4;
 
-#ifdef GGML_USE_HIP
-#ifdef RDNA
-    constexpr int nthreads_KQ_q = 2;
-#else
-    constexpr int nthreads_KQ_q = 4;
-#endif // RDNA
-    constexpr int nthreads_V_q  = (D/4 < 32 ? D/4 : 32);
-#else
-    constexpr int nthreads_KQ_q = (D/4 < 32 ? D/4 : 32);
-    constexpr int nthreads_V_q  = (D/4 < 32 ? D/4 : 32);
-#endif // GGML_USE_HIP
+    constexpr int nthreads_KQ_q = ggml_cuda_fattn_vec_get_nthreads_KQ_q(D);
+    constexpr int nthreads_V_q  = ggml_cuda_fattn_vec_get_nthreads_V_q(D);
 
     constexpr int nthreads    = ggml_cuda_fattn_vec_get_nthreads_device();
     constexpr int nthreads_KQ = (type_K == GGML_TYPE_F16 || type_K == GGML_TYPE_BF16 || type_K == GGML_TYPE_TQ3_0) ? 128 / cpy_nb : nthreads_KQ_q;
@@ -537,11 +540,7 @@ static __global__ void flash_attn_ext_vec(
         dst_meta[((sequence*int(ne01.z) + ic0 + tid)*ne02 + head)*gridDim.y + blockIdx.y] = make_float2(KQ_max[tid], KQ_sum[tid]);
     }
 #else
-#ifdef GGML_USE_HIP
     GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
-#else
-    GGML_UNUSED_VARS(Q_ptr, K_ptr, V_ptr, mask_ptr, sinks_ptr, KV_max_ptr, dst_ptr, dst_meta_ptr, scale,
-#endif
         max_bias, m0, m1, n_head_log2, logit_softcap,
         ne00, ne01, ne02, ne03,
               nb01, nb02, nb03,

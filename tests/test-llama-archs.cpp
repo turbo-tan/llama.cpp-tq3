@@ -226,7 +226,7 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
     ms.add_kv(LLM_KV_SSM_TIME_STEP_RANK,        n_head);
     ms.add_kv(LLM_KV_SSM_GROUP_COUNT,           arch == LLM_ARCH_PLAMO2 ? 0 : uint32_t(2));
 
-    if (arch == LLM_ARCH_QWEN35_MTP || arch == LLM_ARCH_QWEN35MOE_MTP || arch == LLM_ARCH_GEMMA4_MTP) {
+    if (arch == LLM_ARCH_QWEN35_MTP || arch == LLM_ARCH_QWEN35MOE_MTP || arch == LLM_ARCH_GEMMA4_ASSISTANT) {
         ms.add_kv(LLM_KV_NEXTN_PREDICT_LAYERS, uint32_t(1));
     }
     ms.add_kv(LLM_KV_KDA_HEAD_DIM,              uint32_t(128));
@@ -453,7 +453,7 @@ static int save_models(const llm_arch target_arch, const size_t seed, const ggml
         if (arch == LLM_ARCH_GEMMA4) {
             continue; // FIXME: ISWA KV cache initialization needs more fixture params
         }
-        if (arch == LLM_ARCH_QWEN35_MTP || arch == LLM_ARCH_QWEN35MOE_MTP || arch == LLM_ARCH_GEMMA4_MTP) {
+        if (arch == LLM_ARCH_QWEN35_MTP || arch == LLM_ARCH_QWEN35MOE_MTP || arch == LLM_ARCH_GEMMA4_ASSISTANT) {
             continue; // MTP-only models are ancillary; can't produce valid logits standalone
         }
         for (bool moe : {false, true}) {
@@ -542,7 +542,7 @@ static int test_backends(const llm_arch target_arch, const size_t seed, const gg
         if (arch == LLM_ARCH_GEMMA4) {
             continue; // FIXME: ISWA KV cache initialization needs more fixture params
         }
-        if (arch == LLM_ARCH_QWEN35_MTP || arch == LLM_ARCH_QWEN35MOE_MTP || arch == LLM_ARCH_GEMMA4_MTP) {
+        if (arch == LLM_ARCH_QWEN35_MTP || arch == LLM_ARCH_QWEN35MOE_MTP || arch == LLM_ARCH_GEMMA4_ASSISTANT) {
             continue; // MTP-only models are ancillary; can't produce valid logits standalone
         }
 

@@ -7933,10 +7933,10 @@ class Gemma4AssistantModel(Gemma4Model):
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         if name == "pre_projection.weight":
-            yield ("assistant.pre_projection.weight", data_torch)
+            yield ("nextn.pre_projection.weight", data_torch)
             return
         if name == "post_projection.weight":
-            yield ("assistant.post_projection.weight", data_torch)
+            yield ("nextn.post_projection.weight", data_torch)
             return
         if name.startswith("masked_embedding."):
             return

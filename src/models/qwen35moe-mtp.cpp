@@ -8,13 +8,13 @@ void llama_model_qwen35moe_mtp::load_arch_hparams(llama_model_loader & ml) {
 
     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS, hparams.nextn_predict_layers, false);
     GGML_ASSERT(hparams.nextn_predict_layers > 0   && "QWEN35MOE_MTP requires nextn_predict_layers > 0");
-    GGML_ASSERT(hparams.nextn_predict_layers <= hparams.n_layer);
+    GGML_ASSERT(hparams.nextn_predict_layers <= hparams.n_layer());
     GGML_ASSERT(hparams.n_expert > 0 && "QWEN35MOE_MTP requires n_expert > 0");
 
     // only the MTP layers get a KV cache, trunk layers are skipped.
     hparams.kv_only_nextn         = true;
     hparams.n_layer_kv_from_start = -1;
-    for (uint32_t i = 0; i < hparams.n_layer; ++i) {
+    for (uint32_t i = 0; i < hparams.n_layer(); ++i) {
         hparams.recurrent_layer_arr[i] = false;
     }
 
@@ -85,7 +85,7 @@ llama_model_qwen35moe_mtp::graph::graph(const llama_model & model, const llm_gra
     const int64_t n_embd_head = hparams.n_embd_head_v();
     GGML_ASSERT(n_embd_head == hparams.n_embd_head_k());
 
-    const int il = (int) hparams.n_layer - (int) hparams.nextn_predict_layers;
+    const int il = (int) hparams.n_layer() - (int) hparams.nextn_predict_layers;
     const auto & layer = model.layers[il];
 
     GGML_ASSERT(layer.nextn.eh_proj    && "MTP block missing nextn.eh_proj");

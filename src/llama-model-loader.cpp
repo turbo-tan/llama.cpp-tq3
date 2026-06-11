@@ -557,6 +557,21 @@ llama_model_loader::llama_model_loader(
         get_key(llm_kv(LLM_KV_GENERAL_ARCHITECTURE), arch_name, false);
         llm_kv = LLM_KV(llm_arch_from_string(arch_name));
 
+        // Detect gemma4-assistant models that were converted with "gemma4" architecture
+        // but have the assistant.type metadata indicating they are MTP heads
+        // We keep using "gemma4" prefix for reading metadata, but mark it as assistant
+        if (llm_kv.arch == LLM_ARCH_GEMMA4) {
+            std::string assistant_type;
+            if (get_key(llm_kv(LLM_KV_ASSISTANT_TYPE), assistant_type, false)) {
+                if (assistant_type == "mtp") {
+                    LLAMA_LOG_INFO("%s: detected gemma4-assistant model (type=%s), will use assistant implementation\n",
+                            __func__, assistant_type.c_str());
+                    is_gemma4_assistant = true;
+                    arch_name = "gemma4-assistant";
+                }
+            }
+        }
+
         files.emplace_back(new llama_file(fname.c_str(), "rb", use_direct_io));
         contexts.emplace_back(ctx);
 
@@ -833,6 +848,9 @@ std::string llama_model_loader::get_arch_name() const {
 }
 
 enum llm_arch llama_model_loader::get_arch() const {
+    if (is_gemma4_assistant) {
+        return LLM_ARCH_GEMMA4_ASSISTANT;
+    }
     return llm_kv.arch;
 }
 
@@ -1061,9 +1079,9 @@ struct ggml_tensor * llama_model_loader::create_tensor(
             // one ggml context per buffer type
             int max_n_tensors = n_tensors;
             max_n_tensors += 1;                 // duplicated output tensor
-            max_n_tensors += hparams.n_layer*2; // duplicated rope freq tensors
+            max_n_tensors += hparams.n_layer()*2; // duplicated rope freq tensors
             if (files.empty()) {
-                max_n_tensors += hparams.n_layer*256; // this should be well above what any model actually uses
+                max_n_tensors += hparams.n_layer()*256; // this should be well above what any model actually uses
             }
             const size_t ctx_size = ggml_tensor_overhead()*max_n_tensors;
 

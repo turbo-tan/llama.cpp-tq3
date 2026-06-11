@@ -30,6 +30,8 @@ struct llama_cparams {
     bool embeddings;
     bool embeddings_pre_norm;        // also extract the hidden state before the final output norm
     bool embeddings_pre_norm_masked; // extract for only rows where batch.logits != 0
+    bool embeddings_nextn;        // also extract the hidden state before the final output norm (gemma4, etc.)
+    bool embeddings_nextn_masked; // extract nextn hidden states for only rows where batch.logits != 0
     bool causal_attn;
     bool offload_kqv;
     bool flash_attn;
@@ -42,6 +44,8 @@ struct llama_cparams {
     bool op_offload;
     bool kv_unified;
     bool pipeline_parallel;
+
+    struct llama_context * ctx_other; // for gemma4-assistant: target model context
 
     enum llama_context_type ctx_type;
     enum llama_pooling_type pooling_type;

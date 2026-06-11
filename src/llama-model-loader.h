@@ -99,6 +99,7 @@ struct llama_model_loader {
     std::string arch_name;
     std::string ftype_alias;
     LLM_KV      llm_kv    = LLM_KV(LLM_ARCH_UNKNOWN);
+    bool        is_gemma4_assistant = false;  // track if model is gemma4-assistant (converted with gemma4 arch)
 
     size_t size_done = 0;
     size_t size_data = 0;

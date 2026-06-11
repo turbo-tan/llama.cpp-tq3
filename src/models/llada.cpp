@@ -3,7 +3,7 @@
 void llama_model_llada::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS, hparams.f_norm_rms_eps);
     // LLaDA-8B has 32 layers, similar to LLaMA but for diffusion
-    switch (hparams.n_layer) {
+    switch (hparams.n_layer()) {
         case 32:
             type = LLM_TYPE_8B;
             break;
