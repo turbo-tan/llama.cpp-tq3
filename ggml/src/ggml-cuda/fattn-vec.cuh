@@ -46,6 +46,30 @@ static constexpr __host__ __device__ int ggml_cuda_fattn_vec_get_nthreads_V_q(co
         float2     * dst_meta_ptr
 #endif
 
+#ifdef GGML_USE_HIP
+#define GGML_CUDA_FATTN_VEC_UNUSED_ARGS                                                                \
+        Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,                                          \
+        max_bias, m0, m1, n_head_log2, logit_softcap,                                                 \
+        ne00, ne01, ne02, ne03,                                                                       \
+              nb01, nb02, nb03,                                                                       \
+        ne10, ne11, ne12, ne13,                                                                       \
+              nb11, nb12, nb13,                                                                       \
+              nb21, nb22, nb23,                                                                       \
+              ne31, ne32, ne33,                                                                       \
+              nb31, nb32, nb33
+#else
+#define GGML_CUDA_FATTN_VEC_UNUSED_ARGS                                                                \
+        Q_ptr, K_ptr, V_ptr, mask_ptr, sinks_ptr, KV_max_ptr, dst_ptr, dst_meta_ptr, scale,          \
+        max_bias, m0, m1, n_head_log2, logit_softcap,                                                 \
+        ne00, ne01, ne02, ne03,                                                                       \
+              nb01, nb02, nb03,                                                                       \
+        ne10, ne11, ne12, ne13,                                                                       \
+              nb11, nb12, nb13,                                                                       \
+              nb21, nb22, nb23,                                                                       \
+              ne31, ne32, ne33,                                                                       \
+              nb31, nb32, nb33
+#endif
+
 // Currently llvm with the amdgcn target does not support unrolling loops
 // that contain a break that can not be resolved at compile time.
 #ifdef __clang__
@@ -84,19 +108,7 @@ static __global__ void flash_attn_ext_vec(
 
     // Skip unused kernel variants for faster compilation:
     if (use_logit_softcap && !(D == 128 || D == 256)) {
-#ifdef GGML_USE_HIP
-        GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
-#else
-        GGML_UNUSED_VARS(Q_ptr, K_ptr, V_ptr, mask_ptr, sinks_ptr, KV_max_ptr, dst_ptr, dst_meta_ptr, scale,
-#endif
-            max_bias, m0, m1, n_head_log2, logit_softcap,
-            ne00, ne01, ne02, ne03,
-                  nb01, nb02, nb03,
-            ne10, ne11, ne12, ne13,
-                  nb11, nb12, nb13,
-                  nb21, nb22, nb23,
-                  ne31, ne32, ne33,
-                  nb31, nb32, nb33);
+        GGML_UNUSED_VARS(GGML_CUDA_FATTN_VEC_UNUSED_ARGS);
         NO_DEVICE_CODE;
         return;
     }
@@ -542,19 +554,7 @@ static __global__ void flash_attn_ext_vec(
         dst_meta[((sequence*int(ne01.z) + ic0 + tid)*ne02 + head)*gridDim.y + blockIdx.y] = make_float2(KQ_max[tid], KQ_sum[tid]);
     }
 #else
-#ifdef GGML_USE_HIP
-    GGML_UNUSED_VARS(Q, K, V, mask, sinks, KV_max, dst, dst_meta, scale,
-#else
-    GGML_UNUSED_VARS(Q_ptr, K_ptr, V_ptr, mask_ptr, sinks_ptr, KV_max_ptr, dst_ptr, dst_meta_ptr, scale,
-#endif
-        max_bias, m0, m1, n_head_log2, logit_softcap,
-        ne00, ne01, ne02, ne03,
-              nb01, nb02, nb03,
-        ne10, ne11, ne12, ne13,
-              nb11, nb12, nb13,
-              nb21, nb22, nb23,
-              ne31, ne32, ne33,
-              nb31, nb32, nb33);
+    GGML_UNUSED_VARS(GGML_CUDA_FATTN_VEC_UNUSED_ARGS);
     NO_DEVICE_CODE;
 #endif // FLASH_ATTN_AVAILABLE
 }
@@ -562,6 +562,7 @@ static __global__ void flash_attn_ext_vec(
 #pragma clang diagnostic pop
 #endif // __clang__
 #undef GGML_CUDA_FATTN_VEC_PARAMS
+#undef GGML_CUDA_FATTN_VEC_UNUSED_ARGS
 
 template <int D, int cols_per_block, ggml_type type_K, ggml_type type_V, bool use_logit_softcap>
 void ggml_cuda_flash_attn_ext_vec_case_impl(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
