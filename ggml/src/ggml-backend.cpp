@@ -324,7 +324,6 @@ void ggml_backend_tensor_get_2d_async(ggml_backend_t backend, const struct ggml_
 void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, size_t offset, size_t size) {
     GGML_ASSERT(tensor);
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
-    GGML_ASSERT(buf != NULL && "tensor buffer not set");
 
     if (size == 0) {
         return;
@@ -333,13 +332,17 @@ void ggml_backend_tensor_set(struct ggml_tensor * tensor, const void * data, siz
     GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
     GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor write out of bounds");
 
+    if (buf == NULL) {
+        memcpy((char *) tensor->data + offset, data, size);
+        return;
+    }
+
     buf->iface.set_tensor(buf, tensor, data, offset, size);
 }
 
 void ggml_backend_tensor_get(const struct ggml_tensor * tensor, void * data, size_t offset, size_t size) {
     GGML_ASSERT(tensor);
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
-    GGML_ASSERT(buf != NULL && "tensor buffer not set");
 
     if (size == 0) {
         return;
@@ -348,6 +351,11 @@ void ggml_backend_tensor_get(const struct ggml_tensor * tensor, void * data, siz
     GGML_ASSERT(tensor->data != NULL && "tensor not allocated");
     GGML_ASSERT(offset + size <= ggml_nbytes(tensor) && "tensor read out of bounds");
 
+    if (buf == NULL) {
+        memcpy(data, (const char *) tensor->data + offset, size);
+        return;
+    }
+
     buf->iface.get_tensor(buf, tensor, data, offset, size);
 }
 
@@ -355,7 +363,6 @@ void ggml_backend_tensor_set_2d(struct ggml_tensor * tensor, const void * data, 
             size_t n_copies, size_t stride_tensor, size_t stride_data) {
     GGML_ASSERT(tensor);
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
-    GGML_ASSERT(buf != NULL && "tensor buffer not set");
 
     if (n_copies <= 1 || buf->iface.set_tensor_2d == NULL) {
         for (size_t i = 0; i < n_copies; i++) {
@@ -377,7 +384,6 @@ void ggml_backend_tensor_get_2d(const struct ggml_tensor * tensor, void * data, 
             size_t n_copies, size_t stride_tensor, size_t stride_data) {
     GGML_ASSERT(tensor);
     ggml_backend_buffer_t buf = tensor->view_src ? tensor->view_src->buffer : tensor->buffer;
-    GGML_ASSERT(buf != NULL && "tensor buffer not set");
 
     if (n_copies <= 1 || buf->iface.get_tensor_2d == NULL) {
         for (size_t i = 0; i < n_copies; i++) {
