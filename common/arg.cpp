@@ -434,58 +434,6 @@ static bool parse_bool_value(const std::string & value) {
 // CLI argument parsing functions
 //
 
-bool common_params_handle_models(common_params & params, llama_example curr_ex) {
-    const bool spec_type_draft_mtp = std::find(params.speculative.types.begin(),
-                                         params.speculative.types.end(),
-                                         COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
-
-    common_download_opts opts;
-    opts.bearer_token    = params.hf_token;
-    opts.offline         = params.offline;
-    opts.skip_download   = params.skip_download;
-    opts.download_mtp    = spec_type_draft_mtp;
-    opts.download_mmproj = !params.no_mmproj && params.mmproj.path.empty() && params.mmproj.url.empty();
-
-    // sub-models (draft, mmproj, vocoder) are explicitly specified by the user,
-    // so we should not auto-discover mtp/mmproj siblings for them
-    common_download_opts sub_opts = opts;
-    sub_opts.download_mtp    = false;
-    sub_opts.download_mmproj = false;
-
-    try {
-        auto res = common_params_handle_model(params.model, opts);
-        if (params.no_mmproj) {
-            params.mmproj = {};
-        } else if (res.found_mmproj && params.mmproj.path.empty() && params.mmproj.url.empty()) {
-            // optionally, handle mmproj model when -hf is specified
-            params.mmproj = res.mmproj;
-        }
-        // only download mmproj if the current example is using it
-        for (const auto & ex : mmproj_examples) {
-            if (curr_ex == ex) {
-                common_params_handle_model(params.mmproj, sub_opts);
-                break;
-            }
-        }
-
-        // when --spec-type mtp is set and no draft model was provided explicitly,
-        // fall back to the MTP head discovered alongside the -hf model
-        if (spec_type_draft_mtp && res.found_mtp &&
-            params.speculative.draft.mparams.path.empty() &&
-            params.speculative.draft.mparams.hf_repo.empty() &&
-            params.speculative.draft.mparams.url.empty()) {
-            params.speculative.draft.mparams.path = res.mtp.path;
-        }
-        common_params_handle_model(params.speculative.draft.mparams, sub_opts);
-        common_params_handle_model(params.vocoder.model,             sub_opts);
-        return true;
-    } catch (const common_skip_download_exception &) {
-        return false;
-    } catch (const std::exception &) {
-        throw;
-    }
-}
-
 static bool common_params_parse_ex(int argc, char ** argv, common_params_context & ctx_arg) {
     common_params & params = ctx_arg.params;
 
