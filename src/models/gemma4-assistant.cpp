@@ -109,8 +109,8 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
     output   = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, TENSOR_DUPLICATED);
 
-    output_norm  = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, 0);
-    mtp_post_proj = create_tensor(tn(LLM_TENSOR_ASSISTANT_POST_PROJ, "weight"), { n_embd, hparams.n_embd_out() }, 0);
+    output_norm   = create_tensor(tn(LLM_TENSOR_OUTPUT_NORM, "weight"), { n_embd }, 0);
+    mtp_post_proj = create_tensor(tn(LLM_TENSOR_MTP_POST_PROJ, "weight"), { n_embd, hparams.n_embd_out() }, 0);
     int rope_freqs_flag = 0;
     const int64_t n_embd_backbone = hparams.n_embd_out();
 
@@ -127,7 +127,7 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
         }
 
         if (i == 0) {
-            mtp_pre_proj = create_tensor(tn(LLM_TENSOR_ASSISTANT_PRE_PROJ, "weight"), { 2 * n_embd_backbone, n_embd }, 0);
+            mtp_pre_proj = create_tensor(tn(LLM_TENSOR_MTP_PRE_PROJ, "weight"), { 2 * n_embd_backbone, n_embd }, 0);
         }
 
         layer.attn_norm      = create_tensor(tn(LLM_TENSOR_ATTN_NORM,      "weight", i), { n_embd }, 0);
@@ -135,7 +135,7 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
         layer.wo             = create_tensor(tn(LLM_TENSOR_ATTN_OUT,       "weight", i), { n_embd_head * n_head, n_embd }, 0);
         layer.attn_q_norm    = create_tensor(tn(LLM_TENSOR_ATTN_Q_NORM,    "weight", i), { n_embd_head }, 0);
         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), { n_embd }, 0);
-        layer.out_scale      = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, nullptr, i), { 1u }, TENSOR_NOT_REQUIRED);
+        layer.out_scale      = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), { 1u }, 0);
 
         if (!hparams.is_swa(i)) {
             layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), { n_embd_head / 2 }, TENSOR_NOT_REQUIRED | rope_freqs_flag);

@@ -44,6 +44,12 @@ int main(int argc, char ** argv) {
         return 1;
     }
 
+    if (std::find(params.speculative.types.begin(), params.speculative.types.end(), COMMON_SPECULATIVE_TYPE_MTP) !=
+            params.speculative.types.end()) {
+        LOG_ERR("%s: MTP is not supported by this legacy example; use llama-server\n", __func__);
+        return 1;
+    }
+
     if (params.n_predict < -1) {
         LOG_ERR("%s: --n-predict must be >= -1\n", __func__);
         return 1;
