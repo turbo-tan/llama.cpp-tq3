@@ -403,7 +403,8 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         common_params_sampling sparams;
         sparams.no_perf  = false;
         sparams.top_k    = 1;
-        sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
+        sparams.samplers.clear();
+        sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
         smpl.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
 
         batch = llama_batch_init(/*n_tokens=*/ 1, /*embd=*/ n_embd, /*n_seq_max=*/ 1);
@@ -462,7 +463,7 @@ struct common_speculative_state_mtp : public common_speculative_impl {
         auto * ctx_dft = this->params.ctx_dft;
         const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), 0);
         if (pos_max < N - 1 && !is_mem_shared) {
-            LOG_WRN("%s: ctx_dft pos_max=%d < N-1=%d — "
+            LOG_WRN("%s: ctx_dft pos_max=%d < N-1=%d - "
                     "streaming hook may not have run on every prefill ubatch. "
                     "Drafts may degrade.\n",
                     __func__, (int) pos_max, N - 1);

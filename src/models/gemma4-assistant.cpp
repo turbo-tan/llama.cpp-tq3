@@ -1,5 +1,4 @@
 #include "models.h"
-#include <cinttypes>
 
 namespace {
 struct llm_graph_input_tokens_only : public llm_graph_input_i {
@@ -19,12 +18,9 @@ struct llm_graph_input_tokens_only : public llm_graph_input_i {
 }
 
 void llama_model_gemma4_assistant::load_arch_hparams(llama_model_loader & ml) {
-    // Read the target model's hidden size from assistant metadata
     uint32_t backbone_hidden_size = 0;
     if (ml.get_key(llm_kv(LLM_KV_ASSISTANT_BACKBONE_HIDDEN_SIZE), backbone_hidden_size, false)) {
         hparams.n_embd_out_impl = backbone_hidden_size;
-        LLAMA_LOG_INFO("%s: using assistant backbone_hidden_size=%u as n_embd_out\n", 
-                __func__, backbone_hidden_size);
     }
 
     hparams.n_embd_inp_impl = hparams.n_embd_out();
@@ -32,19 +28,7 @@ void llama_model_gemma4_assistant::load_arch_hparams(llama_model_loader & ml) {
     hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
     hparams.f_attention_scale = 1.0f;
 
-    LLAMA_LOG_INFO("%s: BEFORE base loader values:\n", __func__);
-    LLAMA_LOG_INFO("%s:   n_layer() = %u, n_layer_all = %u, n_layer_nextn = %u\n", 
-            __func__, hparams.n_layer(), hparams.n_layer_all, hparams.n_layer_nextn);
-    LLAMA_LOG_INFO("%s:   n_head_arr[0] = %u, n_ff_arr[0] = %u\n", 
-            __func__, hparams.n_head_arr[0], hparams.n_ff_arr[0]);
-    LLAMA_LOG_INFO("%s:   n_embd_head_k_full = %u, n_embd_head_v_full = %u\n", 
-            __func__, hparams.n_embd_head_k_full, hparams.n_embd_head_v_full);
-    LLAMA_LOG_INFO("%s:   swa_layers[0] = %u\n", __func__, hparams.swa_layers[0]);
-
     ml.get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.swa_layers, hparams.n_layer());
-
-    LLAMA_LOG_INFO("%s: AFTER SWA pattern read: swa_layers[0] = %u\n", 
-            __func__, hparams.swa_layers[0]);
 
     uint32_t n_kv_shared_layers = 0;
     ml.get_key(LLM_KV_ATTENTION_SHARED_KV_LAYERS, n_kv_shared_layers, false);
@@ -54,43 +38,22 @@ void llama_model_gemma4_assistant::load_arch_hparams(llama_model_loader & ml) {
     if (hparams.n_layer_nextn == 0) {
         hparams.n_layer_nextn = hparams.n_layer_all;
     }
-    // For gemma4-assistant, all layers are nextn layers
     GGML_ASSERT(hparams.n_layer_nextn == hparams.n_layer_all &&
             "gemma4-assistant expects n_layer_nextn to equal n_layer_all");
-
-    LLAMA_LOG_INFO("%s: AFTER n_layer_nextn set: n_layer() = %u\n", 
-            __func__, hparams.n_layer());
-
-    // n_layer() = n_layer_all - n_layer_nextn = 0 (no regular layers)
 
     ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT,    hparams.n_head_arr,    hparams.n_layer_all);
     ml.get_key_or_arr(LLM_KV_ATTENTION_HEAD_COUNT_KV, hparams.n_head_kv_arr, hparams.n_layer_all);
     ml.get_key_or_arr(LLM_KV_FEED_FORWARD_LENGTH,     hparams.n_ff_arr,      hparams.n_layer_all);
 
-    LLAMA_LOG_INFO("%s: AFTER array re-read:\n", __func__);
-    LLAMA_LOG_INFO("%s:   n_head_arr[0] = %u, n_head_kv_arr[0] = %u, n_ff_arr[0] = %u\n", 
-            __func__, hparams.n_head_arr[0], hparams.n_head_kv_arr[0], hparams.n_ff_arr[0]);
-
     ml.get_key(LLM_KV_ROPE_FREQ_BASE_SWA,           hparams.rope_freq_base_train_swa, false);
     ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW,     hparams.n_swa);
     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,  hparams.f_norm_rms_eps);
-    
-    LLAMA_LOG_INFO("%s: BEFORE head_k/v re-read: n_embd_head_k_full = %u\n", 
-            __func__, hparams.n_embd_head_k_full);
-    
+
     ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH,         hparams.n_embd_head_k_full, false);
     ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH,       hparams.n_embd_head_v_full, false);
-    
-    LLAMA_LOG_INFO("%s: AFTER head_k/v re-read: n_embd_head_k_full = %u, n_embd_head_v_full = %u\n", 
-            __func__, hparams.n_embd_head_k_full, hparams.n_embd_head_v_full);
-    
+
     ml.get_key(LLM_KV_ATTENTION_KEY_LENGTH_SWA,     hparams.n_embd_head_k_swa);
     ml.get_key(LLM_KV_ATTENTION_VALUE_LENGTH_SWA,   hparams.n_embd_head_v_swa);
-
-    LLAMA_LOG_INFO("%s: FINAL values:\n", __func__);
-    LLAMA_LOG_INFO("%s:   n_embd_head_k_swa = %u, n_embd_head_v_swa = %u\n", 
-            __func__, hparams.n_embd_head_k_swa, hparams.n_embd_head_v_swa);
-    LLAMA_LOG_INFO("%s:   n_swa = %u\n", __func__, hparams.n_swa);
 }
 
 void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
@@ -120,11 +83,6 @@ void llama_model_gemma4_assistant::load_arch_tensors(llama_model_loader &) {
         const int64_t n_head      = hparams.n_head(i);
         const int64_t n_embd_head = hparams.n_embd_head_k(i);
         const int64_t n_ff        = hparams.n_ff(i);
-
-        if (i < 4 || i == (int) hparams.n_layer_nextn - 1) {
-            LLAMA_LOG_INFO("%s: layer %d: n_head=%" PRId64 ", n_embd_head=%" PRId64 ", n_ff=%" PRId64 ", is_swa=%d\n",
-                    __func__, i, n_head, n_embd_head, n_ff, hparams.is_swa(i));
-        }
 
         if (i == 0) {
             mtp_pre_proj = create_tensor(tn(LLM_TENSOR_MTP_PRE_PROJ, "weight"), { 2 * n_embd_backbone, n_embd }, 0);

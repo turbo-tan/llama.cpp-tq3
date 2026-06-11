@@ -79,11 +79,7 @@ void llama_model_gemma4::load_arch_tensors(llama_model_loader &) {
         layer.attn_k_norm    = create_tensor(tn(LLM_TENSOR_ATTN_K_NORM,    "weight", i), {n_embd_head}, kv_flags);
         layer.attn_post_norm = create_tensor(tn(LLM_TENSOR_ATTN_POST_NORM, "weight", i), {n_embd}, 0);
 
-        // layer_output_scale: target model has .weight suffix, assistant model doesn't
         layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, "weight", i), {1u}, TENSOR_NOT_REQUIRED);
-        if (!layer.out_scale) {
-            layer.out_scale = create_tensor(tn(LLM_TENSOR_LAYER_OUT_SCALE, nullptr, i), {1u}, TENSOR_NOT_REQUIRED);
-        }
 
         if (!hparams.is_swa(i)) {
             // full_attention layers use rope_freqs for proportional rope

@@ -773,25 +773,21 @@ private:
             }
 
             auto cparams = common_context_params_to_llama(params_dft);
-            
-            // Check if this is a gemma4-assistant model
-            // We check both the architecture string and the assistant.type metadata
-            // because some GGUF files have general.architecture=gemma4 but gemma4.assistant.type=mtp
+
             bool is_gemma4_assistant_draft = false;
             char draft_arch[64] = {0};
             llama_model_meta_val_str(model_dft.get(), "general.architecture", draft_arch, sizeof(draft_arch));
-            
+
             if (std::string(draft_arch) == "gemma4-assistant") {
                 is_gemma4_assistant_draft = true;
             } else if (std::string(draft_arch) == "gemma4") {
-                // Check for assistant.type metadata
                 char assistant_type[64] = {0};
                 llama_model_meta_val_str(model_dft.get(), "gemma4.assistant.type", assistant_type, sizeof(assistant_type));
                 if (std::string(assistant_type) == "mtp") {
                     is_gemma4_assistant_draft = true;
                 }
             }
-            
+
             if (is_gemma4_assistant_draft) {
                 const int32_t target_n_embd = llama_model_n_embd(model_tgt);
                 const int32_t draft_backbone_n_embd = llama_model_n_embd_out(model_dft.get());
