@@ -211,6 +211,45 @@ static __device__ void cpy_blck_f32_iq4_nl(const char * cxi, char * cdsti) {
     quantize_f32_iq4_nl_block((const float *)cxi, (block_iq4_nl *)cdsti);
 }
 
+__constant__ static const float TQ3_0_BOUNDARIES_CUDA[7] = {
+    -1.644041f, -1.015870f, -0.493924f, -0.008701f,
+     0.477664f,  1.001362f,  1.633223f
+};
+
+static __device__ void quantize_f32_tq3_0_block(const float * __restrict__ x, block_tq3_0 * __restrict__ y) {
+    float sum_sq = 0.0f;
+    for (int i = 0; i < QK_TQ3_0; ++i) {
+        sum_sq += x[i] * x[i];
+    }
+
+    float rms = sqrtf(sum_sq / (float) QK_TQ3_0);
+    if (rms < 1e-10f) {
+        rms = 1.0f;
+    }
+    y->d = __float2half(rms);
+
+    const float inv_rms = 1.0f / rms;
+    uint8_t indices[QK_TQ3_0];
+    for (int i = 0; i < QK_TQ3_0; ++i) {
+        const float v = x[i] * inv_rms;
+        uint8_t idx = 0;
+        for (int b = 0; b < 7; ++b) {
+            if (v > TQ3_0_BOUNDARIES_CUDA[b]) {
+                idx = b + 1;
+            }
+        }
+        indices[i] = idx;
+    }
+
+    for (int g = 0; g < QK_TQ3_0 / 8; ++g) {
+        const uint8_t * idx = indices + g * 8;
+        uint8_t * qp = y->qs + g * 3;
+        qp[0] = (idx[0])      | (idx[1] << 3) | (idx[2] << 6);
+        qp[1] = (idx[2] >> 2) | (idx[3] << 1) | (idx[4] << 4) | (idx[5] << 7);
+        qp[2] = (idx[5] >> 1) | (idx[6] << 2) | (idx[7] << 5);
+    }
+}
+
 template<typename src_t, typename dst_t>
 static __device__ void cpy_1_scalar(const char * cxi, char * cdsti) {
     *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);
