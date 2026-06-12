@@ -2260,14 +2260,14 @@ void llama_context::output_reorder() {
         }
 
         if (embd.size > 0) {
-            for (uint64_t k = 0; k < n_embd; k++) {
-                std::swap(embd.data[i0*n_embd + k], embd.data[i1*n_embd + k]);
+            for (uint64_t k = 0; k < n_embd_out; k++) {
+                std::swap(embd.data[i0*n_embd_out + k], embd.data[i1*n_embd_out + k]);
             }
         }
 
         if (embd_nextn.size > 0) {
-            for (uint64_t k = 0; k < n_embd; k++) {
-                std::swap(embd_nextn.data[i0*n_embd + k], embd_nextn.data[i1*n_embd + k]);
+            for (uint64_t k = 0; k < n_embd_out; k++) {
+                std::swap(embd_nextn.data[i0*n_embd_out + k], embd_nextn.data[i1*n_embd_out + k]);
             }
         }
 

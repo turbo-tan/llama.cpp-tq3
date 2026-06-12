@@ -164,23 +164,6 @@ llama_kv_cache::llama_kv_cache(
 
     const bool is_mla = hparams.is_mla();
 
-    const auto is_turbo_kv_type = [](ggml_type type) {
-        return type == GGML_TYPE_TQ3_0 ||
-               type == GGML_TYPE_TURBO3_0 ||
-               type == GGML_TYPE_TURBO4_0;
-    };
-
-    const int adaptive_mode = []() {
-        const char * env = std::getenv("TURBO_LAYER_ADAPTIVE");
-        const int mode = env ? std::atoi(env) : 0;
-        if (mode > 0) {
-            LLAMA_LOG_INFO("llama_kv_cache: layer-adaptive mode %d enabled\n", mode);
-        }
-        return mode;
-    }();
-
-    bool warned_cpu_fallback = false;
-
     for (uint32_t il = 0; il < n_layer; il++) {
         if (!hparams.has_kv(il)) {
             LLAMA_LOG_DEBUG("%s: layer %3d: does not have KV cache\n", __func__, il);

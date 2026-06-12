@@ -1112,6 +1112,62 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
     static constexpr int qi = QI3_S;
 };
 
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_0> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;  // 2 values per dequant call (like q4_0)
+    static constexpr int qi = 16;  // qi/vdr=4: 4 threads per block
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_1S> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4S> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4SE> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4SV> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_1S_AP1> {
+    static constexpr int qk = QK_TQ3_1S_AP1;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_Q4_0_TQ> {
+    static constexpr int qk = QK_Q4_0_TQ_V0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_Q4_1_TQ> {
+    static constexpr int qk = QK_Q4_0_TQ_V1;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
 //////////////////////
 
 struct ggml_cuda_device_info {
