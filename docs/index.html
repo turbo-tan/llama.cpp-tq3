@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tan_llama / docs</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg2: #161b22;
+    --bg3: #21262d;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --link: #58a6ff;
+    --link-hover: #79c0ff;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --orange: #f0883e;
+    --red: #f85149;
+    --purple: #bc8cff;
+    --cyan: #39d353;
+    --badge-md: #1f6feb;
+    --badge-tensor: #7c3aed;
+    --badge-txt: #374151;
+    --badge-html: #b45309;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 14px; line-height: 1.6; }
+
+  header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 14px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+  header h1 { font-size: 17px; font-weight: 600; color: var(--text); }
+  header h1 span { color: var(--muted); font-weight: 400; }
+  .header-sub { font-size: 12px; color: var(--muted); }
+  #search { margin-left: auto; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; color: var(--text); padding: 6px 12px; font-size: 13px; width: 260px; outline: none; }
+  #search:focus { border-color: var(--link); }
+  #search::placeholder { color: var(--muted); }
+
+  .container { max-width: 1080px; margin: 0 auto; padding: 24px; }
+
+  /* Zone headers — big dividers between research and upstream */
+  .zone-header { display: flex; align-items: center; gap: 12px; margin: 32px 0 20px; }
+  .zone-header .zone-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; padding: 3px 10px; border-radius: 4px; flex-shrink: 0; }
+  .zone-research .zone-label { background: rgba(63,185,80,0.15); color: var(--green); border: 1px solid rgba(63,185,80,0.3); }
+  .zone-upstream .zone-label { background: rgba(88,166,255,0.1); color: var(--link); border: 1px solid rgba(88,166,255,0.25); }
+  .zone-header hr { flex: 1; border: none; border-top: 1px solid var(--border); }
+
+  /* Sections */
+  .section { margin-bottom: 20px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .section-header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--bg2); cursor: pointer; user-select: none; }
+  .section-header:hover { background: var(--bg3); }
+  .section-title { font-size: 14px; font-weight: 600; color: var(--text); flex: 1; }
+  .section-desc { font-size: 12px; color: var(--muted); }
+  .chevron { color: var(--muted); font-size: 11px; transition: transform 0.15s; flex-shrink: 0; }
+  .collapsed .chevron { transform: rotate(-90deg); }
+
+  .section-body { padding: 8px; }
+  .section-body.hidden { display: none; }
+
+  .subsection { margin: 6px 0 10px; }
+  .subsection-label { font-size: 11px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 0 6px 4px; border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+
+  /* File rows */
+  .file-row { display: flex; align-items: flex-start; gap: 8px; padding: 5px 8px; border-radius: 5px; text-decoration: none; color: var(--text); transition: background 0.1s; }
+  .file-row:hover { background: var(--bg3); }
+  .file-row:hover .file-name { color: var(--link-hover); }
+  .file-info { flex: 1; min-width: 0; }
+  .file-name { font-size: 13px; font-family: 'SF Mono', 'Fira Code', monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  .file-desc { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .file-badges { display: flex; align-items: center; gap: 4px; flex-shrink: 0; margin-top: 1px; }
+  .badge { font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .badge-md     { background: var(--badge-md); color: #fff; }
+  .badge-tensor { background: var(--badge-tensor); color: #fff; }
+  .badge-txt    { background: var(--badge-txt); color: #ccc; border: 1px solid #555; }
+  .badge-html   { background: var(--badge-html); color: #fff; }
+  .pill { font-size: 10px; padding: 1px 7px; border-radius: 10px; border: 1px solid; font-weight: 600; }
+  .pill-active   { color: var(--green);  border-color: var(--green); }
+  .pill-proven   { color: var(--cyan);   border-color: var(--cyan); }
+  .pill-recipe   { color: var(--orange); border-color: var(--orange); }
+  .pill-sop      { color: var(--yellow); border-color: var(--yellow); }
+  .pill-critical { color: var(--red);    border-color: var(--red); }
+  .pill-archive  { color: var(--muted);  border-color: var(--border); }
+  .pill-steering { color: var(--purple); border-color: var(--purple); }
+  .pill-candidate{ color: #f0883e;       border-color: #f0883e; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+  .three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0; }
+
+  .no-results { color: var(--muted); padding: 24px; font-style: italic; text-align: center; display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>tan_llama <span>/ docs</span></h1>
+    <div class="header-sub">TurboQuant research · llama.cpp fork</div>
+  </div>
+  <input id="search" type="text" placeholder="Filter files…" autocomplete="off" spellcheck="false">
+</header>
+
+<div class="container">
+
+<!-- ════════════════════════════════════════════════════════════════════
+     ZONE: RESEARCH  (TurboQuant, experiments, steering)
+═════════════════════════════════════════════════════════════════════ -->
+<div class="zone-header zone-research">
+  <span class="zone-label">TurboQuant Research</span>
+  <hr>
+</div>
+
+<!-- ── Current models & SOPs ─────────────────────────────────────── -->
+<div class="section" data-section="current">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Current Models &amp; SOPs</span>
+    <span class="section-desc">flagship recipe, v2b candidate, benchloop SOP, speed plan</span>
+  </div>
+  <div class="section-body">
+    <div class="subsection">
+      <div class="subsection-label">Recipes &amp; tensor policies</div>
+      <a class="file-row" href="turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k.recipe.md">
+        <div class="file-info">
+          <span class="file-name">qwen36_27b_mtp_tq3_4s_out6k.recipe.md</span>
+          <span class="file-desc">Production flagship — 13.39 GiB, 42.73 tok/s, coding 100%, toolcall 96.7%</span>
+        </div>
+        <div class="file-badges"><span class="pill pill-recipe">flagship</span><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k.tensor-types.txt">
+        <div class="file-info">
+          <span class="file-name">qwen36_27b_mtp_tq3_4s_out6k.tensor-types.txt</span>
+          <span class="file-desc">Policy: output Q6_K override only (confirmed override)</span>
+        </div>
+        <div class="file-badges"><span class="badge badge-tensor">tensor</span></div>
+      </a>
+      <a class="file-row" href="turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k_v2b.recipe.md">
+        <div class="file-info">
+          <span class="file-name">qwen36_27b_mtp_tq3_4s_out6k_v2b.recipe.md</span>
+          <span class="file-desc">13.63 GiB — ssm_alpha/beta → F32, attn_v Q6_K, attn_output Q4_K. Gates pending.</span>
+        </div>
+        <div class="file-badges"><span class="pill pill-candidate">candidate</span><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k_v2b.tensor-types.txt">
+        <div class="file-info">
+          <span class="file-name">qwen36_27b_mtp_tq3_4s_out6k_v2b.tensor-types.txt</span>
+          <span class="file-desc">Policy: ssm F32, ssm_out Q5_K, attn_v Q6_K, attn_output Q4_K</span>
+        </div>
+        <div class="file-badges"><span class="badge badge-tensor">tensor</span></div>
+      </a>
+      <a class="file-row" href="turboquant/generated/qwen36_27b_mtp_tq3_4s_outq6k.tensor-types.txt">
+        <div class="file-info">
+          <span class="file-name">qwen36_27b_mtp_tq3_4s_outq6k.tensor-types.txt</span>
+          <span class="file-desc">Earlier naming variant of out6k policy (from perf/a5 branch)</span>
+        </div>
+        <div class="file-badges"><span class="badge badge-tensor">tensor</span></div>
+      </a>
+    </div>
+
+    <div class="subsection">
+      <div class="subsection-label">SOPs &amp; active plans</div>
+      <a class="file-row" href="turboquant/out6k-benchloop-sop.md">
+        <div class="file-info">
+          <span class="file-name">out6k-benchloop-sop.md</span>
+          <span class="file-desc">Server launch command, BenchLoop shape, dry-run, template override — use this for all local runs</span>
+        </div>
+        <div class="file-badges"><span class="pill pill-sop">SOP</span><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/active/SPEED_PLAN_27B_MTP_OUT6K_20260610.md">
+        <div class="file-info">
+          <span class="file-name">SPEED_PLAN_27B_MTP_OUT6K_20260610.md</span>
+          <span class="file-desc">Full track plan: output quant A/B, MTP layer A/B, KV type sweep</span>
+        </div>
+        <div class="file-badges"><span class="pill pill-active">active</span><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/active/SPEED_PLAN_PROGRESS_20260611.md">
+        <div class="file-info">
+          <span class="file-name">SPEED_PLAN_PROGRESS_20260611.md</span>
+          <span class="file-desc">Progress notes from Jun 11 perf campaign run</span>
+        </div>
+        <div class="file-badges"><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/active/TQ3_MASTER_PLAN.md">
+        <div class="file-info">
+          <span class="file-name">TQ3_MASTER_PLAN.md</span>
+          <span class="file-desc">Top-level roadmap for TurboQuant — all tracks and priorities</span>
+        </div>
+        <div class="file-badges"><span class="pill pill-active">active</span><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/active/ACTIVE_PROGRESS_PLAN.md">
+        <div class="file-info"><span class="file-name">ACTIVE_PROGRESS_PLAN.md</span></div>
+        <div class="file-badges"><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/upstream-sync-checklist-20260613.md">
+        <div class="file-info">
+          <span class="file-name">upstream-sync-checklist-20260613.md</span>
+          <span class="file-desc">Checklist for rebasing llama.cpp-tq3 onto upstream master (Jun 13 2026)</span>
+        </div>
+        <div class="file-badges"><span class="badge badge-md">md</span></div>
+      </a>
+      <a class="file-row" href="turboquant/toolcall-recovery-plan-20260612.md">
+        <div class="file-info">
+          <span class="file-name">toolcall-recovery-plan-20260612.md</span>
+          <span class="file-desc">Template collapse recovery for tool-call regression in out6k</span>
+        </div>
+        <div class="file-badges"><span class="badge badge-md">md</span></div>
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- ── Steering ────────────────────────────────────────────────────── -->
+<div class="section" data-section="steering">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Steering &amp; Project SOPs</span>
+    <span class="section-desc">process rules — perf-campaign-sop is critical, always follow it</span>
+  </div>
+  <div class="section-body">
+    <a class="file-row" href="steering/perf-campaign-sop.md">
+      <div class="file-info">
+        <span class="file-name">perf-campaign-sop.md</span>
+        <span class="file-desc">ALWAYS follow this + campaign ledger for any perf work. Update plan before/after every phase.</span>
+      </div>
+      <div class="file-badges"><span class="pill pill-critical">critical</span><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="steering/rebase-sop.md">
+      <div class="file-info">
+        <span class="file-name">rebase-sop.md</span>
+        <span class="file-desc">How to safely rebase llama.cpp-tq3 onto upstream master</span>
+      </div>
+      <div class="file-badges"><span class="pill pill-steering">SOP</span><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="steering/testing-procedures.md">
+      <div class="file-info">
+        <span class="file-name">testing-procedures.md</span>
+        <span class="file-desc">Standard testing procedures for the fork</span>
+      </div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+  </div>
+</div>
+
+<!-- ── Proven Results ─────────────────────────────────────────────── -->
+<div class="section" data-section="proven">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Proven Results &amp; Benchmarks</span>
+    <span class="section-desc">dashboards, benchmark data, quality numbers</span>
+  </div>
+  <div class="section-body two-col">
+    <a class="file-row" href="turboquant/proven/TQ3_4S_PERFORMANCE_DASHBOARD.md">
+      <div class="file-info">
+        <span class="file-name">TQ3_4S_PERFORMANCE_DASHBOARD.md</span>
+        <span class="file-desc">Main performance scorecard — speed, quality, size vs UD</span>
+      </div>
+      <div class="file-badges"><span class="pill pill-proven">proven</span><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="turboquant/proven/BENCHMARK_RESULTS.md">
+      <div class="file-info">
+        <span class="file-name">BENCHMARK_RESULTS.md</span>
+        <span class="file-desc">Historical benchmark results across models and configurations</span>
+      </div>
+      <div class="file-badges"><span class="pill pill-proven">proven</span><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="turboquant/proven/TQ3_RUNTIME_AND_RESULTS.md">
+      <div class="file-info"><span class="file-name">TQ3_RUNTIME_AND_RESULTS.md</span><span class="file-desc">Runtime shapes and results reference</span></div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="turboquant/proven/TQ3_PP_BREAKTHROUGH.md">
+      <div class="file-info"><span class="file-name">TQ3_PP_BREAKTHROUGH.md</span><span class="file-desc">Prompt-processing speed breakthrough notes</span></div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="turboquant/proven/TQ3_PP_ANALYSIS.md">
+      <div class="file-info"><span class="file-name">TQ3_PP_ANALYSIS.md</span></div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="turboquant/proven/TQ3_4S_V2_RELEASE.md">
+      <div class="file-info"><span class="file-name">TQ3_4S_V2_RELEASE.md</span><span class="file-desc">v2 release notes and numbers</span></div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="turboquant/proven/GGML_ENUM_RESERVATION_NOTES.md">
+      <div class="file-info"><span class="file-name">GGML_ENUM_RESERVATION_NOTES.md</span><span class="file-desc">GGML type enum reservation for TQ3 types</span></div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+    <a class="file-row" href="quality-benchmarks.md">
+      <div class="file-info"><span class="file-name">quality-benchmarks.md</span></div>
+      <div class="file-badges"><span class="badge badge-md">md</span></div>
+    </a>
+  </div>
+</div>
+
+<!-- ── 27B Tensor Policies — experiment sweep ─────────────────────── -->
+<div class="section" data-section="tensor27b">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">27B Experiment Tensor Policies</span>
+    <span class="section-desc">layer-wise adaptive KV precision sweep — Phase A5</span>
+  </div>
+  <div class="section-body three-col">
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_edge4_attn_q5k.tensor-types"><div class="file-info"><span class="file-name">edge4_attn_q5k</span><span class="file-desc">Edge 4 layers attn → Q5_K</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_edge4_attn_q5k_near8_ffn_q4k.tensor-types"><div class="file-info"><span class="file-name">edge4_attn_q5k + near8_ffn_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_edge4_ffn_q5k.tensor-types"><div class="file-info"><span class="file-name">edge4_ffn_q5k</span><span class="file-desc">Edge 4 layers FFN → Q5_K</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_edge4_ffn_q5k_attn_q4k.tensor-types"><div class="file-info"><span class="file-name">edge4_ffn_q5k + attn_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_edge4_ffn_q5k_near8_ffn_q4k.tensor-types"><div class="file-info"><span class="file-name">edge4_ffn_q5k + near8_ffn_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last6_ffn_q5k.tensor-types"><div class="file-info"><span class="file-name">last6_ffn_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last8_down_q4k.tensor-types"><div class="file-info"><span class="file-name">last8_down_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last8_ffn_q5k_last4_attnout_q5k.tensor-types"><div class="file-info"><span class="file-name">last8_ffn_q5k + last4_attnout_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last8_ffn_q5k_last4_attnqkv_q5k.tensor-types"><div class="file-info"><span class="file-name">last8_ffn_q5k + last4_attnqkv_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last8_ffn_q6k.tensor-types"><div class="file-info"><span class="file-name">last8_ffn_q6k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last10_ffn_q5k.tensor-types"><div class="file-info"><span class="file-name">last10_ffn_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last10_ffn_q5k_last2_attnout_q5k.tensor-types"><div class="file-info"><span class="file-name">last10_ffn_q5k + last2_attnout_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last10_ffn_q5k_last2_attnqkv_q5k.tensor-types"><div class="file-info"><span class="file-name">last10_ffn_q5k + last2_attnqkv_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last10_ffn_q6k.tensor-types"><div class="file-info"><span class="file-name">last10_ffn_q6k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_last12_ffn_q5k.tensor-types"><div class="file-info"><span class="file-name">last12_ffn_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_late8_down_q5k_edge4_attnout_q4k.tensor-types"><div class="file-info"><span class="file-name">late8_down_q5k + edge4_attnout_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_late8_ffn_q5k_edge4_attn_q4k.tensor-types"><div class="file-info"><span class="file-name">late8_ffn_q5k + edge4_attn_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_late12_ffn_q4k_edge4_ffn_q5k.tensor-types"><div class="file-info"><span class="file-name">late12_ffn_q4k + edge4_ffn_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_near8_ffn_q4k.tensor-types"><div class="file-info"><span class="file-name">near8_ffn_q4k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+    <a class="file-row" href="turboquant/generated/27B_TQ3_4S_near8_ffn_q5k.tensor-types"><div class="file-info"><span class="file-name">near8_ffn_q5k</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+  </div>
+</div>
+
+<!-- ── 9B / 122B + Legacy tensor policies ─────────────────────────── -->
+<div class="section" data-section="tensor-other">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">9B / 122B Policies &amp; Legacy Tensor Types</span>
+    <span class="section-desc">balanced/compact presets, TQ3_1S-era 9B experiments</span>
+  </div>
+  <div class="section-body">
+    <div class="subsection">
+      <div class="subsection-label">9B &amp; 122B presets</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/generated/9B_TQ_POLICY_balanced.txt"><div class="file-info"><span class="file-name">9B_TQ_POLICY_balanced.txt</span><span class="file-desc">Balanced quality/size preset for 9B models</span></div><div class="file-badges"><span class="badge badge-txt">txt</span></div></a>
+        <a class="file-row" href="turboquant/generated/9B_TQ_POLICY_compact.txt"><div class="file-info"><span class="file-name">9B_TQ_POLICY_compact.txt</span><span class="file-desc">Compact (smaller) preset for 9B models</span></div><div class="file-badges"><span class="badge badge-txt">txt</span></div></a>
+        <a class="file-row" href="turboquant/generated/122B_TQ_POLICY_balanced.txt"><div class="file-info"><span class="file-name">122B_TQ_POLICY_balanced.txt</span><span class="file-desc">Balanced preset for 122B models</span></div><div class="file-badges"><span class="badge badge-txt">txt</span></div></a>
+        <a class="file-row" href="turboquant/generated/122B_TQ_POLICY_compact.txt"><div class="file-info"><span class="file-name">122B_TQ_POLICY_compact.txt</span><span class="file-desc">Compact preset for 122B models</span></div><div class="file-badges"><span class="badge badge-txt">txt</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Legacy 27B policies (archive)</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/27B_TQ3_4S_ATTN_Q8_0.tensor-types"><div class="file-info"><span class="file-name">27B_TQ3_4S_ATTN_Q8_0</span><span class="file-desc">All attn → Q8_0 (early experiment)</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/27B_TQ3_4S_LAST8_FFN_Q5_K.tensor-types"><div class="file-info"><span class="file-name">27B_TQ3_4S_LAST8_FFN_Q5_K</span><span class="file-desc">Last 8 layers FFN → Q5_K (early experiment)</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Legacy TQ3_1S policies (9B era)</div>
+      <div class="three-col">
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/tq3_1s_attnv.tensor-type.txt"><div class="file-info"><span class="file-name">tq3_1s_attnv</span><span class="file-desc">attn_v override</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/tq3_1s_ffndown.tensor-type.txt"><div class="file-info"><span class="file-name">tq3_1s_ffndown</span><span class="file-desc">ffn_down override</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/tq3_1s_mixed.tensor-type.txt"><div class="file-info"><span class="file-name">tq3_1s_mixed</span><span class="file-desc">Mixed policy</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_EDGE2_ALL.tensor-types"><div class="file-info"><span class="file-name">9B edge2 all</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_EDGE4_ATTNQKV.tensor-types"><div class="file-info"><span class="file-name">9B edge4 attn QKV</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_EDGE4_FFN.tensor-types"><div class="file-info"><span class="file-name">9B edge4 FFN</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_EDGE4_FFNDOWN.tensor-types"><div class="file-info"><span class="file-name">9B edge4 FFN-down</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_EDGE_LAYERS.tensor-types"><div class="file-info"><span class="file-name">9B edge layers</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_TOP6_IMATRIX_FFN_PLUS_BLK3_ATTN.tensor-types"><div class="file-info"><span class="file-name">9B top6 imatrix FFN + blk3 attn</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_TOP6_IMATRIX_FFN_STRICT.tensor-types"><div class="file-info"><span class="file-name">9B top6 imatrix FFN strict</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_TOP7_IMATRIX_FFN_PLUS_BLK3_ATTN.tensor-types"><div class="file-info"><span class="file-name">9B top7 imatrix FFN + blk3 attn</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_TOP7_IMATRIX_FFN_STRICT.tensor-types"><div class="file-info"><span class="file-name">9B top7 imatrix FFN strict</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_TOP8_IMATRIX_FFN.tensor-types"><div class="file-info"><span class="file-name">9B top8 imatrix FFN</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+        <a class="file-row" href="turboquant/archive/tensor-policies-legacy/9B_TQ3_1S_Q4_0_TOP8_IMATRIX_FFN_STRICT.tensor-types"><div class="file-info"><span class="file-name">9B top8 imatrix FFN strict</span></div><div class="file-badges"><span class="badge badge-tensor">tensor</span></div></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Procedures ─────────────────────────────────────────────────── -->
+<div class="section" data-section="procedures">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Procedures &amp; Checklists</span>
+    <span class="section-desc">quantize SOP, benchmark protocol, release, HF upload</span>
+  </div>
+  <div class="section-body two-col">
+    <a class="file-row" href="turboquant/procedures/TQ3_4S_QUANTIZE_SOP.md"><div class="file-info"><span class="file-name">TQ3_4S_QUANTIZE_SOP.md</span><span class="file-desc">Step-by-step quant build procedure with tensor-type-file flag</span></div><div class="file-badges"><span class="pill pill-sop">SOP</span><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/BENCHMARK_PROTOCOL.md"><div class="file-info"><span class="file-name">BENCHMARK_PROTOCOL.md</span><span class="file-desc">Standard benchmark protocol — what to run, how to interpret</span></div><div class="file-badges"><span class="pill pill-sop">SOP</span><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/TQ3_4S_CONVERSION_GUIDE.md"><div class="file-info"><span class="file-name">TQ3_4S_CONVERSION_GUIDE.md</span><span class="file-desc">Converting models to TQ3_4S format</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/NEW_TYPE_CHECKLIST.md"><div class="file-info"><span class="file-name">NEW_TYPE_CHECKLIST.md</span><span class="file-desc">Checklist when registering a new GGML quantization type</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/TEST_SUITE.md"><div class="file-info"><span class="file-name">TEST_SUITE.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/CHAT_TEST_SUITE.md"><div class="file-info"><span class="file-name">CHAT_TEST_SUITE.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/HF_UPLOAD_SOP.md"><div class="file-info"><span class="file-name">HF_UPLOAD_SOP.md</span><span class="file-desc">HuggingFace upload procedure for published quants</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/JACOBI_RELEASE_CHECKLIST.md"><div class="file-info"><span class="file-name">JACOBI_RELEASE_CHECKLIST.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/procedures/LLAMA_SIMPLE_CHAT_TEST_SOP.md"><div class="file-info"><span class="file-name">LLAMA_SIMPLE_CHAT_TEST_SOP.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="procedure/compile-remote-gpu-server.md"><div class="file-info"><span class="file-name">compile-remote-gpu-server.md</span><span class="file-desc">Build llama.cpp on remote GPU server (desktop-play / 192.168.1.77)</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="procedure/eval-harness-sop.md"><div class="file-info"><span class="file-name">eval-harness-sop.md</span><span class="file-desc">Eval harness usage for BenchLoop runs</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="procedure/test-gemma4-mtp.md"><div class="file-info"><span class="file-name">test-gemma4-mtp.md</span><span class="file-desc">Testing procedure for Gemma4 + MTP</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<!-- ── Active Plans ───────────────────────────────────────────────── -->
+<div class="section" data-section="active">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Active Research Plans</span>
+    <span class="section-desc">spec decode, KV precision, MTP depth, decode speed</span>
+  </div>
+  <div class="section-body two-col">
+    <a class="file-row" href="turboquant/active/PHASE_A5_LAYERWISE_ADAPTIVE_KV_PRECISION_PROGRESS.md"><div class="file-info"><span class="file-name">PHASE_A5: Layerwise KV Precision</span><span class="file-desc">Progress log for A5 experiment phase</span></div><div class="file-badges"><span class="pill pill-active">active</span><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/PHASE_A6_ADAPTIVE_MTP_DEPTH_DESIGN.md"><div class="file-info"><span class="file-name">PHASE_A6: Adaptive MTP Depth</span><span class="file-desc">Design for adaptive speculative draft depth</span></div><div class="file-badges"><span class="pill pill-active">active</span><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/ADAPTIVE_KV_PRECISION_IMPLEMENTATION_PLAN.md"><div class="file-info"><span class="file-name">ADAPTIVE_KV_PRECISION_IMPLEMENTATION_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/SPEC_DECODE_STATUS.md"><div class="file-info"><span class="file-name">SPEC_DECODE_STATUS.md</span><span class="file-desc">Speculative decode implementation status</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/SPEC_DECODE_FLOW_ANALYSIS.md"><div class="file-info"><span class="file-name">SPEC_DECODE_FLOW_ANALYSIS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/SPEC_DECODE_BENCHMARK_MATRIX.md"><div class="file-info"><span class="file-name">SPEC_DECODE_BENCHMARK_MATRIX.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/SPECULATIVE_HYBRID_PLAN.md"><div class="file-info"><span class="file-name">SPECULATIVE_HYBRID_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/DECODE_SPEED_PLAN.md"><div class="file-info"><span class="file-name">DECODE_SPEED_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/DECODE_SPEED_PLAN_X_ANALYSIS.md"><div class="file-info"><span class="file-name">DECODE_SPEED_PLAN_X_ANALYSIS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/TQ3_DECODE_ANALYSIS.md"><div class="file-info"><span class="file-name">TQ3_DECODE_ANALYSIS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/TQ3_DECODE_KV_CONSOLIDATED_PLAN.md"><div class="file-info"><span class="file-name">TQ3_DECODE_KV_CONSOLIDATED_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/JACOBI_DECODE_PLAN.md"><div class="file-info"><span class="file-name">JACOBI_DECODE_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/SHADOW_STATE_DECODE.md"><div class="file-info"><span class="file-name">SHADOW_STATE_DECODE.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/FP4_KV_PLAN.md"><div class="file-info"><span class="file-name">FP4_KV_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/TQ3_BLOCK128_PLAN.md"><div class="file-info"><span class="file-name">TQ3_BLOCK128_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/TQ3_4F_FASTROT_PLAN.md"><div class="file-info"><span class="file-name">TQ3_4F_FASTROT_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/TRIATTENTION_INVESTIGATION.md"><div class="file-info"><span class="file-name">TRIATTENTION_INVESTIGATION.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/active/TRIATTENTION_HANDOVER.md"><div class="file-info"><span class="file-name">TRIATTENTION_HANDOVER.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/vcache-precompute-complete-analysis.md"><div class="file-info"><span class="file-name">vcache-precompute-complete-analysis.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turboquant/novel-warp-specialized-persistent-attention.md"><div class="file-info"><span class="file-name">novel-warp-specialized-persistent-attention.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<!-- ── Experiments ────────────────────────────────────────────────── -->
+<div class="section" data-section="experiments">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Experiments</span>
+    <span class="section-desc">Gemma4 MTP &amp; assistant integration, MoE RPC, pre-rotate queries</span>
+  </div>
+  <div class="section-body two-col">
+    <a class="file-row" href="experiments/gemma4-mtp-status.md"><div class="file-info"><span class="file-name">gemma4-mtp-status.md</span><span class="file-desc">Current status of Gemma4 MTP support</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-mtp-test-report.md"><div class="file-info"><span class="file-name">gemma4-mtp-test-report.md</span><span class="file-desc">Test results for Gemma4 + MTP</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-mtp-model-compatibility.md"><div class="file-info"><span class="file-name">gemma4-mtp-model-compatibility.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-mtp-upstream-alignment-status.md"><div class="file-info"><span class="file-name">gemma4-mtp-upstream-alignment-status.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-mtp-upstream-comparison.md"><div class="file-info"><span class="file-name">gemma4-mtp-upstream-comparison.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-assistant-handover-20260611.md"><div class="file-info"><span class="file-name">gemma4-assistant-handover-20260611.md</span><span class="file-desc">Handover doc for Gemma4 assistant mode integration</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-assistant-mtp-testing-sop.md"><div class="file-info"><span class="file-name">gemma4-assistant-mtp-testing-sop.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-assistant-upstream-alignment-status.md"><div class="file-info"><span class="file-name">gemma4-assistant-upstream-alignment-status.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-assistant-upstream-diff-analysis.md"><div class="file-info"><span class="file-name">gemma4-assistant-upstream-diff-analysis.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/gemma4-assistant-layer-counting-status.md"><div class="file-info"><span class="file-name">gemma4-assistant-layer-counting-status.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="experiments/moe-expert-parallelism-rpc.md"><div class="file-info"><span class="file-name">moe-expert-parallelism-rpc.md</span><span class="file-desc">MoE expert parallelism via RPC investigation</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="pre-rotate-queries-investigation.md"><div class="file-info"><span class="file-name">pre-rotate-queries-investigation.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="pre-rotate-queries-plan.md"><div class="file-info"><span class="file-name">pre-rotate-queries-plan.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="turbo-speed-investigation.md"><div class="file-info"><span class="file-name">turbo-speed-investigation.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<!-- ── Handovers ──────────────────────────────────────────────────── -->
+<div class="section" data-section="handovers">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Handovers</span>
+    <span class="section-desc">session context recovery docs</span>
+  </div>
+  <div class="section-body">
+    <div class="subsection">
+      <div class="subsection-label">Active (Jun 2026)</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/active/handovers/2026-06-10_turboquant_recovery_handover.md"><div class="file-info"><span class="file-name">2026-06-10 turboquant recovery handover</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/active/handovers/2026-06-10_qwen36_27b_mtp_tq3_4s_recovery_handover.md"><div class="file-info"><span class="file-name">2026-06-10 qwen36 27b MTP recovery handover</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/active/handovers/2026-06-10_turboquant_benchloop_mtp_cache_rebase_index.md"><div class="file-info"><span class="file-name">2026-06-10 benchloop / MTP / cache / rebase index</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Archive (Apr 2026)</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/handovers/CONSOLIDATED_HANDOVER_20260419.md"><div class="file-info"><span class="file-name">CONSOLIDATED_HANDOVER_20260419.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/handovers/FULL_HANDOVER_20260419.md"><div class="file-info"><span class="file-name">FULL_HANDOVER_20260419.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/handovers/SPECULATIVE_DECODE_BREAKTHROUGH.md"><div class="file-info"><span class="file-name">SPECULATIVE_DECODE_BREAKTHROUGH.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/handovers/SPECULATIVE_DECODE_HANDOVER.md"><div class="file-info"><span class="file-name">SPECULATIVE_DECODE_HANDOVER.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Archive (collapsed) ────────────────────────────────────────── -->
+<div class="section collapsed" data-section="archive">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Archive — Historical &amp; Superseded</span>
+    <span class="section-desc">click to expand — strategy-legacy, marlin-legacy, moonshot-legacy, exl-legacy, exploration</span>
+  </div>
+  <div class="section-body hidden">
+    <div class="subsection">
+      <div class="subsection-label">Strategy legacy</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/strategy-legacy/MARS_SHOT.md"><div class="file-info"><span class="file-name">MARS_SHOT.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/strategy-legacy/MOONSHOT_IDEAS.md"><div class="file-info"><span class="file-name">MOONSHOT_IDEAS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/strategy-legacy/TQ3_CURRENT_STATE_AND_TARGETS.md"><div class="file-info"><span class="file-name">TQ3_CURRENT_STATE_AND_TARGETS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/strategy-legacy/TQ3_DECODE_MOONSHOT_24TOK.md"><div class="file-info"><span class="file-name">TQ3_DECODE_MOONSHOT_24TOK.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/strategy-legacy/TQ3_DECODE_OPTIMIZATION_ANALYSIS.md"><div class="file-info"><span class="file-name">TQ3_DECODE_OPTIMIZATION_ANALYSIS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/strategy-legacy/TQ3_SPEED_OPTIMIZATION_PLAN.md"><div class="file-info"><span class="file-name">TQ3_SPEED_OPTIMIZATION_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Moonshot legacy</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/moonshot-legacy/LEGACY_PP_SPEED_DESIGN.md"><div class="file-info"><span class="file-name">LEGACY_PP_SPEED_DESIGN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/moonshot-legacy/LEGACY_SPEED_HANDOVER.md"><div class="file-info"><span class="file-name">LEGACY_SPEED_HANDOVER.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/moonshot-legacy/TQ3_4S_ROTATED_MMQ_KERNEL_DESIGN.md"><div class="file-info"><span class="file-name">TQ3_4S_ROTATED_MMQ_KERNEL_DESIGN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/moonshot-legacy/LEGACY_TQ3_4S_SPEED_ANALYSIS_PROPER.md"><div class="file-info"><span class="file-name">LEGACY_TQ3_4S_SPEED_ANALYSIS_PROPER.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/moonshot-legacy/LEGACY_TQ3_VS_Q3KS_INVESTIGATION.md"><div class="file-info"><span class="file-name">LEGACY_TQ3_VS_Q3KS_INVESTIGATION.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Marlin legacy</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/marlin-legacy/MARLIN_KERNEL_SPEC.md"><div class="file-info"><span class="file-name">MARLIN_KERNEL_SPEC.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_performance_analysis.md"><div class="file-info"><span class="file-name">marlin_performance_analysis.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_status_final.md"><div class="file-info"><span class="file-name">marlin_status_final.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_kernel_postmortem.md"><div class="file-info"><span class="file-name">marlin_kernel_postmortem.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_kernel_status.md"><div class="file-info"><span class="file-name">marlin_kernel_status.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_kernel_fixed.md"><div class="file-info"><span class="file-name">marlin_kernel_fixed.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_optimized.md"><div class="file-info"><span class="file-name">marlin_optimized.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/marlin-legacy/marlin_morning_brief.md"><div class="file-info"><span class="file-name">marlin_morning_brief.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">ExLlama legacy</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/exl-legacy/exl2_final_status.md"><div class="file-info"><span class="file-name">exl2_final_status.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/exl-legacy/exl3_vs_tq3_4s_comparison.md"><div class="file-info"><span class="file-name">exl3_vs_tq3_4s_comparison.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/exl-legacy/exllamav2_analysis.md"><div class="file-info"><span class="file-name">exllamav2_analysis.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Exploration legacy</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/exploration-legacy/TQ3_NEXT_GEN_PLAN.md"><div class="file-info"><span class="file-name">TQ3_NEXT_GEN_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/exploration-legacy/TQ3_KV_PREROTATION_PROOF.md"><div class="file-info"><span class="file-name">TQ3_KV_PREROTATION_PROOF.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/exploration-legacy/TQ3_5BIT_K_EXPLORATION.md"><div class="file-info"><span class="file-name">TQ3_5BIT_K_EXPLORATION.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/exploration-legacy/TQ_POLICY_PLAN_9B_122B.md"><div class="file-info"><span class="file-name">TQ_POLICY_PLAN_9B_122B.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/exploration-legacy/YQ4_PLAN.md"><div class="file-info"><span class="file-name">YQ4_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Superseded plans</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/superseded/MILESTONE_27B_PARITY.md"><div class="file-info"><span class="file-name">MILESTONE_27B_PARITY.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/superseded/TQ3_MOONSHOT_MASTER_LOG.md"><div class="file-info"><span class="file-name">TQ3_MOONSHOT_MASTER_LOG.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/superseded/TQ3_PP_SPEED_PLAN.md"><div class="file-info"><span class="file-name">TQ3_PP_SPEED_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/superseded/TQ3_NATIVE_PROMPT_KERNEL_DESIGN.md"><div class="file-info"><span class="file-name">TQ3_NATIVE_PROMPT_KERNEL_DESIGN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/superseded/TQ3_MULTIROW_TILE_KERNEL_DESIGN.md"><div class="file-info"><span class="file-name">TQ3_MULTIROW_TILE_KERNEL_DESIGN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/superseded/TQ3_Q3KS_BOTTLENECK_MAP.md"><div class="file-info"><span class="file-name">TQ3_Q3KS_BOTTLENECK_MAP.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Misc archive</div>
+      <div class="two-col">
+        <a class="file-row" href="turboquant/archive/TQ3_STATUS.md"><div class="file-info"><span class="file-name">TQ3_STATUS.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/QWEN_WITNESS_INVESTIGATION.md"><div class="file-info"><span class="file-name">QWEN_WITNESS_INVESTIGATION.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/HF_Qwen3.5-27B-TQ3_1S_README.md"><div class="file-info"><span class="file-name">HF_Qwen3.5-27B-TQ3_1S_README.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/community/REDDIT_TQ3_4S_DASHBOARD.md"><div class="file-info"><span class="file-name">REDDIT_TQ3_4S_DASHBOARD.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/archive/parked/EAGLE3_TRAINING_PLAN.md"><div class="file-info"><span class="file-name">EAGLE3_TRAINING_PLAN.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/journey/tq3_1s_to_tq3_4s.md"><div class="file-info"><span class="file-name">tq3_1s_to_tq3_4s.md</span><span class="file-desc">Evolution story from TQ3_1S to TQ3_4S</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+        <a class="file-row" href="turboquant/papers/weight-compression-tq3.md"><div class="file-info"><span class="file-name">weight-compression-tq3.md</span><span class="file-desc">Technical paper draft on TQ3 weight compression</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+      </div>
+    </div>
+    <div class="subsection">
+      <div class="subsection-label">Public HTML</div>
+      <a class="file-row" href="turboquant/public/qwen36_27b_tq3_publication_20260529.html"><div class="file-info"><span class="file-name">qwen36_27b_tq3_publication_20260529.html</span></div><div class="file-badges"><span class="badge badge-html">html</span></div></a>
+      <a class="file-row" href="turboquant/public/qwen36_27b_tq3_publication_public.html"><div class="file-info"><span class="file-name">qwen36_27b_tq3_publication_public.html</span></div><div class="file-badges"><span class="badge badge-html">html</span></div></a>
+    </div>
+  </div>
+</div>
+
+
+<!-- ════════════════════════════════════════════════════════════════════
+     ZONE: llama.cpp UPSTREAM  (clearly separated)
+═════════════════════════════════════════════════════════════════════ -->
+<div class="zone-header zone-upstream">
+  <span class="zone-label">llama.cpp Upstream Docs</span>
+  <hr>
+  <span style="font-size:12px; color:var(--muted); white-space:nowrap;">imported from ggerganov/llama.cpp — do not edit</span>
+</div>
+
+<!-- ── Build &amp; Install ──────────────────────────────────────────── -->
+<div class="section collapsed" data-section="upstream-build">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Build, Install &amp; General</span>
+    <span class="section-desc">how to compile, install, run Docker, speculative decode</span>
+  </div>
+  <div class="section-body two-col hidden">
+    <a class="file-row" href="build.md"><div class="file-info"><span class="file-name">build.md</span><span class="file-desc">CMake build instructions for all platforms</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="install.md"><div class="file-info"><span class="file-name">install.md</span><span class="file-desc">Pre-built install options (Homebrew, package managers)</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="docker.md"><div class="file-info"><span class="file-name">docker.md</span><span class="file-desc">Docker images and compose setup</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="speculative.md"><div class="file-info"><span class="file-name">speculative.md</span><span class="file-desc">Speculative decoding — draft models, MTP, tree verification</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="function-calling.md"><div class="file-info"><span class="file-name">function-calling.md</span><span class="file-desc">Tool call / function calling API support</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multi-gpu.md"><div class="file-info"><span class="file-name">multi-gpu.md</span><span class="file-desc">Multi-GPU tensor splitting and RPC</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="ops.md"><div class="file-info"><span class="file-name">ops.md</span><span class="file-desc">GGML op support matrix across backends</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="preset.md"><div class="file-info"><span class="file-name">preset.md</span><span class="file-desc">Sampling preset configuration</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="llguidance.md"><div class="file-info"><span class="file-name">llguidance.md</span><span class="file-desc">Structured output / grammar guidance</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal.md"><div class="file-info"><span class="file-name">multimodal.md</span><span class="file-desc">Multimodal (vision) support overview</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="build-riscv64-spacemit.md"><div class="file-info"><span class="file-name">build-riscv64-spacemit.md</span><span class="file-desc">Build for RISC-V 64 SpacemiT platform</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="build-s390x.md"><div class="file-info"><span class="file-name">build-s390x.md</span><span class="file-desc">Build for IBM z/Architecture (s390x)</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<!-- ── Backends ───────────────────────────────────────────────────── -->
+<div class="section collapsed" data-section="upstream-backends">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Backends</span>
+    <span class="section-desc">CUDA, SYCL, OpenCL, Vulkan, CANN, Snapdragon, VirtGPU, LMStudio…</span>
+  </div>
+  <div class="section-body two-col hidden">
+    <a class="file-row" href="backend/LMStudio.md"><div class="file-info"><span class="file-name">LMStudio.md</span><span class="file-desc">LMStudio integration notes and model compatibility</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/CUDA-FEDORA.md"><div class="file-info"><span class="file-name">CUDA-FEDORA.md</span><span class="file-desc">CUDA setup on Fedora Linux</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/SYCL.md"><div class="file-info"><span class="file-name">SYCL.md</span><span class="file-desc">Intel SYCL/oneAPI backend (Intel GPU)</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/OPENCL.md"><div class="file-info"><span class="file-name">OPENCL.md</span><span class="file-desc">OpenCL backend</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/CANN.md"><div class="file-info"><span class="file-name">CANN.md</span><span class="file-desc">Huawei Ascend CANN backend</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/BLIS.md"><div class="file-info"><span class="file-name">BLIS.md</span><span class="file-desc">BLIS CPU math library backend</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/ZenDNN.md"><div class="file-info"><span class="file-name">ZenDNN.md</span><span class="file-desc">AMD ZenDNN backend</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/zDNN.md"><div class="file-info"><span class="file-name">zDNN.md</span><span class="file-desc">IBM z Deep Neural Network library backend</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/OPENVINO.md"><div class="file-info"><span class="file-name">OPENVINO.md</span><span class="file-desc">Intel OpenVINO backend</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/VirtGPU.md"><div class="file-info"><span class="file-name">VirtGPU.md</span><span class="file-desc">Virtualized GPU backend (Virgl/Venus)</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="backend/snapdragon/README.md"><div class="file-info"><span class="file-name">Snapdragon README</span><span class="file-desc">Qualcomm Snapdragon — Linux, Windows, developer setup</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<!-- ── Multimodal ─────────────────────────────────────────────────── -->
+<div class="section collapsed" data-section="upstream-multimodal">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Multimodal Models</span>
+    <span class="section-desc">Gemma3, LLaVA, MiniCPM-V, MobileVLM…</span>
+  </div>
+  <div class="section-body two-col hidden">
+    <a class="file-row" href="multimodal/gemma3.md"><div class="file-info"><span class="file-name">gemma3.md</span><span class="file-desc">Gemma 3 multimodal setup</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/llava.md"><div class="file-info"><span class="file-name">llava.md</span><span class="file-desc">LLaVA vision-language model support</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/minicpmo4.0.md"><div class="file-info"><span class="file-name">minicpmo4.0.md</span><span class="file-desc">MiniCPM-o 4.0 multimodal</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/minicpmv4.6.md"><div class="file-info"><span class="file-name">minicpmv4.6.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/minicpmv4.5.md"><div class="file-info"><span class="file-name">minicpmv4.5.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/minicpmv4.0.md"><div class="file-info"><span class="file-name">minicpmv4.0.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/minicpmv2.6.md"><div class="file-info"><span class="file-name">minicpmv2.6.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/MobileVLM.md"><div class="file-info"><span class="file-name">MobileVLM.md</span><span class="file-desc">MobileVLM lightweight vision-language model</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/glmedge.md"><div class="file-info"><span class="file-name">glmedge.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="multimodal/granitevision.md"><div class="file-info"><span class="file-name">granitevision.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<!-- ── Development (upstream) ─────────────────────────────────────── -->
+<div class="section collapsed" data-section="upstream-dev">
+  <div class="section-header" onclick="toggle(this)">
+    <span class="chevron">▾</span>
+    <span class="section-title">Development (upstream)</span>
+    <span class="section-desc">how to add models, debugging tests, parsing, token gen tips</span>
+  </div>
+  <div class="section-body hidden">
+    <a class="file-row" href="development/HOWTO-add-model.md"><div class="file-info"><span class="file-name">HOWTO-add-model.md</span><span class="file-desc">How to add a new model architecture to llama.cpp</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="development/debugging-tests.md"><div class="file-info"><span class="file-name">debugging-tests.md</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="development/parsing.md"><div class="file-info"><span class="file-name">parsing.md</span><span class="file-desc">Tokenizer and text parsing internals</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+    <a class="file-row" href="development/token_generation_performance_tips.md"><div class="file-info"><span class="file-name">token_generation_performance_tips.md</span><span class="file-desc">Tips for maximizing token generation throughput</span></div><div class="file-badges"><span class="badge badge-md">md</span></div></a>
+  </div>
+</div>
+
+<p class="no-results" id="no-results">No files match "<span id="no-results-q"></span>"</p>
+
+</div><!-- /container -->
+
+<script>
+function toggle(header) {
+  const section = header.closest('.section');
+  const body = section.querySelector('.section-body');
+  section.classList.toggle('collapsed');
+  body.classList.toggle('hidden');
+}
+
+const search = document.getElementById('search');
+search.addEventListener('input', () => {
+  const q = search.value.trim().toLowerCase();
+  const noResults = document.getElementById('no-results');
+  document.getElementById('no-results-q').textContent = search.value.trim();
+
+  if (!q) {
+    document.querySelectorAll('.file-row').forEach(r => r.style.display = '');
+    document.querySelectorAll('.subsection').forEach(s => s.style.display = '');
+    document.querySelectorAll('.section').forEach(s => {
+      s.style.display = '';
+      const defaultCollapsed = s.dataset.section?.startsWith('upstream') || s.dataset.section === 'archive';
+      const body = s.querySelector('.section-body');
+      if (defaultCollapsed && !s.dataset.userExpanded) {
+        s.classList.add('collapsed');
+        body.classList.add('hidden');
+      }
+    });
+    noResults.style.display = 'none';
+    return;
+  }
+
+  let anyVisible = false;
+  document.querySelectorAll('.section').forEach(section => {
+    const rows = section.querySelectorAll('.file-row');
+    let sectionHasMatch = false;
+    rows.forEach(row => {
+      const text = row.textContent.toLowerCase();
+      const match = text.includes(q);
+      row.style.display = match ? '' : 'none';
+      if (match) sectionHasMatch = true;
+    });
+    section.style.display = sectionHasMatch ? '' : 'none';
+    if (sectionHasMatch) {
+      anyVisible = true;
+      section.classList.remove('collapsed');
+      section.querySelector('.section-body').classList.remove('hidden');
+      section.querySelectorAll('.subsection').forEach(sub => {
+        const subHas = Array.from(sub.querySelectorAll('.file-row')).some(r => r.style.display !== 'none');
+        sub.style.display = subHas ? '' : 'none';
+      });
+    }
+  });
+
+  noResults.style.display = anyVisible ? 'none' : 'block';
+});
+
+// Track user-expanded sections so clear-search doesn't re-collapse them
+document.querySelectorAll('.section-header').forEach(h => {
+  h.addEventListener('click', () => {
+    const s = h.closest('.section');
+    if (!s.classList.contains('collapsed')) {
+      s.dataset.userExpanded = '1';
+    } else {
+      delete s.dataset.userExpanded;
+    }
+  });
+});
+</script>
+</body>
+</html>
