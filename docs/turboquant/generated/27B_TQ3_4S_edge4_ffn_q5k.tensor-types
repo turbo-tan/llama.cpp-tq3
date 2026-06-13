@@ -1,0 +1,1 @@
+blk\.(0|1|2|3|60|61|62|63)\.(ffn_down|ffn_gate|ffn_up)\.weight=q5_k

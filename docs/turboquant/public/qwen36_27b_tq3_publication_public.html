@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Qwen3.6-27B-MTP-TQ3_4S</title>
+  <style>
+    :root {
+      --bg:#0c1117; --panel:#121926f0; --line:#2a3749; --text:#edf5ff;
+      --muted:#a7b7ca; --good:#34d399; --warn:#fbbf24; --accent:#6ee7b7;
+    }
+    *{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:
+      radial-gradient(circle at top left,rgba(96,165,250,.16),transparent 28%),
+      radial-gradient(circle at 80% 0,rgba(110,231,183,.12),transparent 20%),
+      linear-gradient(180deg,#081018 0%,#0c1117 100%);color:var(--text)}
+    .wrap{max-width:1080px;margin:0 auto;padding:28px 18px 40px}
+    .hero,.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;box-shadow:0 18px 50px rgba(0,0,0,.25)}
+    .hero{padding:26px 24px;margin-bottom:16px}
+    .eyebrow{color:var(--accent);text-transform:uppercase;letter-spacing:.18em;font-weight:700;font-size:12px}
+    h1{margin:12px 0 10px;font-size:clamp(2rem,4vw,3.2rem);line-height:1.05;letter-spacing:-.04em}
+    .lede{margin:0;color:var(--muted);max-width:74ch;line-height:1.7}
+    .grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px}
+    .metric{grid-column:span 3;padding:18px}
+    .label{color:var(--muted);font-size:.86rem}.value{margin-top:6px;font-size:1.9rem;font-weight:800;letter-spacing:-.04em}
+    .sub{margin-top:6px;color:var(--muted);font-size:.86rem}
+    .wide{grid-column:span 12;padding:18px}
+    .half{grid-column:span 6;padding:18px}
+    h2{margin:0 0 10px;font-size:1.1rem;letter-spacing:-.03em}
+    p,li{color:var(--muted);line-height:1.65;margin:0}
+    ul{margin:0;padding-left:18px;display:grid;gap:8px}
+    table{width:100%;border-collapse:collapse;font-size:.94rem}
+    th,td{padding:10px 10px;text-align:left;border-bottom:1px solid var(--line)}
+    th{font-size:.84rem;text-transform:uppercase;letter-spacing:.08em;color:#c8d4e1;background:rgba(255,255,255,.03)}
+    tr:last-child td{border-bottom:0}
+    .good{color:var(--good);font-weight:700}.warn{color:var(--warn);font-weight:700}
+    .pill{display:inline-block;padding:7px 11px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.03);margin:6px 6px 0 0}
+    .quote{padding:14px 16px;border-left:3px solid #60a5fa;background:rgba(96,165,250,.08);border-radius:12px}
+    @media (max-width:900px){.metric,.half{grid-column:span 12}.wrap{padding:16px 12px 28px}.hero{padding:20px}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <div class="eyebrow">TurboQuant Publication</div>
+      <h1>Qwen3.6-27B-MTP-TQ3_4S</h1>
+      <p class="lede">Recovered publication draft. This is the public-facing version: one model, one template, one conservative <code>p-min</code>, and one verified benchloop anchor.</p>
+    </section>
+
+    <section class="grid">
+      <div class="card metric"><div class="label">Full benchloop</div><div class="value good">69.0</div><div class="sub">speed at <code>p-min=1.0</code></div></div>
+      <div class="card metric"><div class="label">Toolcall</div><div class="value">96.7%</div><div class="sub">14/15 passed</div></div>
+      <div class="card metric"><div class="label">Coding</div><div class="value good">100%</div><div class="sub">12/12 passed</div></div>
+      <div class="card metric"><div class="label">Dataextract</div><div class="value warn">89.1%</div><div class="sub">12/15 passed</div></div>
+
+      <div class="card wide">
+        <h2>Headline</h2>
+        <div class="quote">The recovered winner story is a 27B MTP release that keeps coding perfect, tool usage strong, and mixed-task speed competitive with the rebuilt publish template.</div>
+        <div style="margin-top:10px">
+          <span class="pill"><strong>Model:</strong> Qwen3.6-27B-MTP-TQ3_4S</span>
+          <span class="pill"><strong>Template:</strong> rebuilt publish template</span>
+          <span class="pill"><strong>Setting:</strong> p-min=1.0</span>
+          <span class="pill"><strong>Winner path:</strong> tq3_4l2 / unsloth_27b_mtp</span>
+        </div>
+      </div>
+
+      <div class="card half">
+        <h2>Evidence</h2>
+        <table>
+          <thead><tr><th>Metric</th><th>Value</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td>Speed</td><td class="good">69.0</td><td>9/9</td></tr>
+            <tr><td>Toolcall</td><td>96.7%</td><td>14/15</td></tr>
+            <tr><td>Coding</td><td class="good">100%</td><td>12/12</td></tr>
+            <tr><td>Dataextract</td><td class="warn">89.1%</td><td>12/15</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card half">
+        <h2>Quality Snapshot</h2>
+        <table>
+          <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+          <tbody>
+            <tr><td>PPL overhead</td><td>+3.95%</td></tr>
+            <tr><td>Mean KLD</td><td>0.146</td></tr>
+            <tr><td>Median KLD</td><td>0.036</td></tr>
+            <tr><td>P90 KLD</td><td>0.193</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card wide">
+        <h2>Notes</h2>
+        <ul>
+          <li>The larger recovery index remains the source of links and background.</li>
+          <li>This file is intentionally slimmer for public viewing.</li>
+          <li>The exact artifact-backed benchloop log remains the source of truth for the numbers above.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

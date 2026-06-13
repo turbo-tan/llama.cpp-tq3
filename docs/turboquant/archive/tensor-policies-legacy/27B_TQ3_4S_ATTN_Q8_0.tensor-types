@@ -1,0 +1,4 @@
+attn_q\.weight=q8_0
+attn_k\.weight=q8_0
+attn_v\.weight=q8_0
+attn_output\.weight=q8_0
