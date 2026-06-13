@@ -447,6 +447,21 @@ Verified results with the promoted publish template:
   - run: `/home/awee/.bench-loop/runs/20260613-123133-Qwen3.6-27B-MTP-TQ3_4S-mtp-q4k-outq6.gguf-local-openai_compat/run.json`
 - `coding 100.0 12/12`
   - run: `/home/awee/.bench-loop/runs/20260613-123229-Qwen3.6-27B-MTP-TQ3_4S-mtp-q4k-outq6.gguf-local-openai_compat/run.json`
+- combined local full suite on the same recovered publish template:
+  - run: `/home/awee/.bench-loop/runs/20260613-131757-Qwen3.6-27B-MTP-TQ3_4S-mtp-q4k-outq6.gguf-local-openai_compat/run.json`
+  - `speed 68.6 9/9`
+  - `toolcall 96.7 14/15`
+  - `coding 100.0 12/12`
+  - `dataextract 91.0 12/15`
+  - `instructfollow 74.5 9/15`
+  - `reasonmath 73.3 11/15`
+  - `GEN TOK/S 42.73`
+
+Long-context status from this full run:
+
+- The old template-collapse behavior does not appear in the recovered publish-template path.
+- This does not by itself prove `262144`-context behavior is fully fixed.
+- It does prove the recovered template is stable on the validated `32768` quality gate and no longer the blocker for out6k recovery.
 
 The working publish template lineage is:
 
