@@ -11,13 +11,13 @@ important historical and fit-first format, but most current work targets
 
 | Page | Purpose |
 |---|---|
+| [INDEX.md](INDEX.md) | Agent and human navigation index for TurboQuant docs |
 | [papers/weight-compression-tq3.md](papers/weight-compression-tq3.md) | Public-style explanation of the TQ3 weight compression family |
 | [journey/tq3_1s_to_tq3_4s.md](journey/tq3_1s_to_tq3_4s.md) | Development history from `TQ3_1S` to `TQ3_4S` |
 | [active/README.md](active/README.md) | Current work only: active plans, decode/KV research, speculative-decode status |
 | [proven/README.md](proven/README.md) | Validated results and release-facing docs only |
 | [procedures/README.md](procedures/README.md) | SOPs, checklists, benchmark protocol, and upload steps |
 | [../steering/rebase-sop.md](../steering/rebase-sop.md) | Canonical upstream/master -> master -> main sync workflow |
-| [INDEX.md](INDEX.md) | Full index across active, proven, procedures, and archive |
 
 ## Current Position
 

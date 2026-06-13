@@ -13,6 +13,16 @@ Run the public-facing evaluation gates with the correct model, template, and art
 - Do not compare against stale binaries in `/tmp` or other ephemeral build paths.
 - Keep the winner model path explicit in the note header when comparing variants, especially if you are switching between the late public winner and an outQ6K experiment.
 
+## Canonical Roots
+
+Use these roots unless a handover explicitly says otherwise:
+
+- Repo root for docs and artifacts: `/home/awee/code/tan_llama`
+- Primary branch build for this repo: `/home/awee/code/tan_llama/build-current`
+- Legacy branch build for this repo: `/home/awee/code/tan_llama/build`
+- llm-launch root: `/home/awee/code/llm-launch`
+- Model root: `/home/awee/models/turboquant`
+
 ## Canonical Commands
 
 ### BenchLoop

@@ -4,6 +4,16 @@ Status: ACTIVE steering. Applies to all TurboQuant speed/perf work.
 Born from the 27B MTP outQ6K campaign (2026-06-10/11); see
 [SPEED_PLAN_27B_MTP_OUT6K_20260610.md](../turboquant/active/SPEED_PLAN_27B_MTP_OUT6K_20260610.md).
 
+Current canonical workspace roots for this campaign are:
+
+- Docs and artifacts: `/home/awee/code/tan_llama`
+- Primary branch build: `/home/awee/code/tan_llama/build-current`
+- Legacy branch build: `/home/awee/code/tan_llama/build`
+- Shared models: `/home/awee/models/turboquant`
+
+If an older phase refers to a separate worktree, treat that as historical context
+only unless the phase note says otherwise.
+
 ## 1. The ledger rule (why this SOP exists)
 
 Every campaign has ONE living plan doc under `docs/turboquant/active/`. It must

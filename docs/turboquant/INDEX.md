@@ -1,6 +1,17 @@
 # TurboQuant TQ3_4S — Documentation Index
 
-For the cleaner entrypoint, start with [README.md](README.md).
+If you are resuming a TurboQuant task, start here and then follow the linked
+SOPs below. This is the navigation page for agents and humans alike.
+
+Canonical roots:
+
+- Repo root: `/home/awee/code/tan_llama`
+- Primary branch build: `/home/awee/code/tan_llama/build-current`
+- Legacy branch build: `/home/awee/code/tan_llama/build`
+- llm-launch root: `/home/awee/code/llm-launch`
+- Shared models: `/home/awee/models/turboquant`
+
+For the cleaner project entrypoint, also see [README.md](README.md).
 
 ## Entry Points
 
@@ -44,6 +55,10 @@ For the cleaner entrypoint, start with [README.md](README.md).
 | [procedures/HF_UPLOAD_SOP.md](procedures/HF_UPLOAD_SOP.md) | HuggingFace upload procedure |
 | [procedures/NEW_TYPE_CHECKLIST.md](procedures/NEW_TYPE_CHECKLIST.md) | New quant-type checklist |
 | [procedures/TQ3_4S_QUANTIZE_SOP.md](procedures/TQ3_4S_QUANTIZE_SOP.md) | TQ3_4S and outQ6K quantization SOP |
+| [../procedure/eval-harness-sop.md](../procedure/eval-harness-sop.md) | Canonical BenchLoop and harness SOP |
+| [benchloop-sop.md](benchloop-sop.md) | Detailed benchmark gate and runtime shape |
+| [upstream-sync-checklist-20260613.md](upstream-sync-checklist-20260613.md) | Current sync checklist and recovery guardrails |
+| [toolcall-recovery-plan-20260612.md](toolcall-recovery-plan-20260612.md) | Recovery plan and prompt-parity notes |
 
 ## Archive
 

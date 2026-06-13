@@ -33,7 +33,7 @@ Out of scope for this pass:
 - Published template override:
   - `/home/awee/code/tan_llama/publish/qwen36-27b-mtp-tq3_4s/chat_template.jinja`
 - Runtime SOP:
-  - `docs/turboquant/out6k-benchloop-sop.md`
+  - `docs/turboquant/benchloop-sop.md`
 
 ## Problem statement
 
@@ -59,7 +59,7 @@ Use these first before doing new speculation:
 - MTP expert review:
   - `docs/turboquant/mtp-expert-review-20260612.md`
 - Out6k runtime SOP:
-  - `docs/turboquant/out6k-benchloop-sop.md`
+  - `docs/turboquant/benchloop-sop.md`
 - Investigation notes mentioned in chat history:
   - branch `fix/toolcall-2token-prompt-drift`
   - commits:
