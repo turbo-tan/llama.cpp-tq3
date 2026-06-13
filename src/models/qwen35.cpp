@@ -206,10 +206,11 @@ llama_model_qwen35::graph::graph(const llama_model & model, const llm_graph_para
     }
     cur = inpL;
 
+    ggml_tensor * h_nextn = cur;
     cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
 
-    cb(cur, "h_nextn", -1);
-    res->t_h_nextn = cur;
+    cb(h_nextn, "h_nextn", -1);
+    res->t_h_nextn = h_nextn;
 
     if (!cparams.embeddings_nextn_masked && inp_out_ids) {
         cur = ggml_get_rows(ctx0, cur, inp_out_ids);
@@ -621,14 +622,15 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
     cur = ggml_add(ctx0, cur, ffn_residual);
     cb(cur, "mtp_post_ffn", il);
 
+    ggml_tensor * h_nextn = cur;
     ggml_tensor * head_norm_w = layer.nextn.shared_head_norm
             ? layer.nextn.shared_head_norm
             : model.output_norm;
     GGML_ASSERT(head_norm_w && "QWEN35 MTP: missing both nextn.shared_head_norm and output_norm");
     cur = build_norm(cur, head_norm_w, nullptr, LLM_NORM_RMS, -1);
 
-    cb(cur, "h_nextn", -1);
-    res->t_h_nextn = cur;
+    cb(h_nextn, "h_nextn", -1);
+    res->t_h_nextn = h_nextn;
 
     cur = ggml_get_rows(ctx0, cur, inp_out_ids);
     cb(cur, "mtp_shared_head_norm", -1);

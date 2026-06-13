@@ -1159,6 +1159,9 @@ void llama_context::set_embeddings_nextn(bool value, bool masked) {
 
     cparams.embeddings_nextn        = value;
     cparams.embeddings_nextn_masked = masked;
+
+    // Changing nextn extraction affects the graph outputs used by draft-MTP.
+    sched_need_reserve = true;
 }
 
 void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
