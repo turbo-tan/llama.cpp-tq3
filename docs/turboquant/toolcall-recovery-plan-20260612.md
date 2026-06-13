@@ -1,5 +1,9 @@
 # Toolcall Recovery Plan - 2026-06-12
 
+Superseded as the main execution checklist by:
+
+- `docs/turboquant/upstream-sync-checklist-20260613.md`
+
 This document records the active recovery plan for the Qwen3.6 27B out6k regression work so another engineer can pick it up directly.
 
 ## Scope
