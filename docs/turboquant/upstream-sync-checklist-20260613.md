@@ -60,6 +60,12 @@ Tracked local code change still not committed:
   - `instructfollow 74.5 9/15`
   - `reasonmath 73.3 11/15`
 
+Current comparison note:
+
+- this is the last known-good local full-suite reference for the out6k recovery
+- do not replace it with the later `20260613-143632` run
+- `20260613-143632` is the broken long-prompt follow-up and shows `draft acceptance = 0.00000`, so it is a stop-and-investigate result, not a new baseline
+
 ### 4. KV-cache naming coverage exists in tree
 
 Current tree documents:
@@ -93,6 +99,8 @@ Checklist:
 Reason:
 
 - current quality proof used a binary that may include an uncommitted code delta
+- the validated draft-MTP contract on this branch uses `--spec-draft-p-min 0.0`, not the legacy `1.0` guidance
+- the `ngl=99` validation path must start from a quiet GPU state; a busy VRAM state can prevent a fair source-only test
 
 Checklist:
 
@@ -102,6 +110,8 @@ Checklist:
   - `coding`
 - [ ] rerun one speed check
 - [ ] confirm the same quality holds without any floating local edits
+- [ ] if `draft acceptance = 0.00000`, stop and investigate before any more benchmark runs
+- [ ] before any `ngl=99` launch, stop other GPU consumers and verify the card is free enough for a full load
 
 ### C. Recheck the large-prompt failure directly
 
@@ -109,12 +119,14 @@ Reason:
 
 - full BenchLoop stability is not the same as re-proving the old large-prompt failure is gone
 - the historical failure was triggered in the real serving path with a repeated long prompt
+- the current long-prompt repro has already shown `draft acceptance = 0.00000`, so this is a live stop-and-investigate condition
 
 Checklist:
 
 - [ ] rerun the repeated large-prompt repro
 - [ ] record exact prompt size, context size, and server flags
 - [ ] confirm whether draft acceptance or request stability still collapses
+- [ ] stop immediately if the draft path returns `0` accepted drafts
 - [ ] if fixed, document the exact proof run
 - [ ] if not fixed, isolate it as a separate runtime issue from template recovery
 
@@ -139,6 +151,8 @@ Reason:
 
 - current proof uses `--chat-template-file`
 - embedded GGUF template is older and not the recovered winner template
+- the embedded publish-template GGUF artifact is not the validated baseline for this pass
+- direct smoke on the original out6k GGUF plus the publish template override returns `30` for `15% of 200`
 
 Checklist:
 
@@ -168,6 +182,24 @@ In this repo, `partial` means:
 
 - keep BenchLoop local only with `BENCHLOOP_NO_SUBMIT=1`
 - do not publish remote benchmark runs without explicit approval
+
+## Artifact storage map
+
+Keep these locations in mind so recipe/config history does not get lost again:
+
+- generated turboquant recipes and tensor-type policies:
+  - `docs/turboquant/generated/`
+- out6k recipe and policy pair:
+  - `docs/turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k_v2b.recipe.md`
+  - `docs/turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k_v2b.tensor-types.txt`
+- family-specific historical benchmark archives:
+  - `artifacts/qwen36/`
+  - `artifacts/qwopus/`
+  - `artifacts/gemma4/`
+- local BenchLoop run outputs:
+  - `artifacts/benchloop/`
+- model-specific conversion or quantization logs:
+  - `artifacts/`
 
 ## Merge gate
 
