@@ -8,15 +8,15 @@ Beat UD-Q3_K_XL on **both size AND quality**.
 
 | Metric | Target | v2b actual |
 |---|---|---|
-| Size | < 13.77 GiB (UD) | **13.63 GiB** ✅ |
-| bpw | < 4.34 (UD) | **4.28 bpw** ✅ |
+| Size | < 13.77 GiB (UD) | **13.52 GiB** ✅ |
+| bpw | < 4.34 (UD) | **4.25 bpw** ✅ |
 | Quality | ≥ out6k baseline | **unmeasured** — gates pending |
 
 ## Artifact
 
 ```
 /home/awee/models/turboquant/tq3_4l2/unsloth_27b_mtp/Qwen3.6-27B-MTP-TQ3_4S-out6k-v2b.gguf
-14G  (13.63 GiB)   built 2026-06-12 15:52
+14G  (13.52 GiB / 4.25 bpw)  rebuilt 2026-06-13 20:05 (ssm_alpha/beta F32 → Q8_0; previous F32 build crashed bench-loop)
 ```
 
 ## Source
@@ -36,15 +36,17 @@ Policy file: `docs/turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k_v2b.tensor-t
 | Tensor pattern | out6k winner | v2b | Rationale |
 |---|---|---|---|
 | `blk.*.ssm_out` | Q4_K | **Q5_K** | Recurrent output projection; upping to Q5_K captures more of the state dynamics |
-| `blk.*.ssm_alpha` | Q3_K | **F32** | Recurrent decay param — suspected main quality bug in out6k; small tensor, cost is negligible |
-| `blk.*.ssm_beta` | Q3_K | **F32** | Same as ssm_alpha — recursive decay, must stay high-precision |
+| `blk.*.ssm_alpha` | Q3_K | **Q8_0** | Recurrent decay param — Q8_0 preserves near-full precision vs 3-bit while staying on GPU (F32 tried first but dispatched to CPU via mmvq fallback → 2× speed regression + bench-loop crash) |
+| `blk.*.ssm_beta` | Q3_K | **Q8_0** | Same as ssm_alpha — Q8_0 keeps it on the fast mmvq path |
 | `blk.*.attn_v` (full-attn layers) | Q5_K | **Q6_K** | Value projection; one step up reclaims quality in the attention layers that matter most |
 | `blk.*.attn_output` (full-attn) | Q6_K | **Q4_K** | Claw-back: fund the above upgrades by dropping attn_output one step |
 | Everything else (bulk, output, embd, MTP) | TQ3_4S | TQ3_4S (unchanged) | |
 
-The ssm_alpha/ssm_beta → F32 change is the key hypothesis: 3-bit precision on recursive decay
-parameters is likely what caused the template collapse observed in the original out6k run. Keeping
-them in F32 adds negligible bytes (small tensors) but should preserve recurrent state fidelity.
+The ssm_alpha/ssm_beta precision hypothesis: 3-bit on recursive decay parameters is likely what
+caused the template collapse in out6k. Q8_0 raises precision dramatically vs TQ3_4S/Q3_K while
+staying on the fast CUDA mmvq path (F32 was tried first, but `ggml_cuda_should_use_mmvq` returns
+true for F32 by default, dispatching to `mul_mat_vec_q_switch_type` → `GGML_ABORT` on the missing
+F32 case, causing bench-loop crash + CPU fallback → ~18 t/s vs expected ~43 t/s).
 
 ## Open A/B
 
@@ -54,14 +56,19 @@ them in F32 adds negligible bytes (small tensors) but should preserve recurrent 
 ## Build command
 
 ```bash
-python3 convert_hf_to_gguf.py \
-  --outtype tq3_4s \
-  --tensor-type-file docs/turboquant/generated/qwen36_27b_mtp_tq3_4s_out6k_v2b.tensor-types.txt \
-  --outfile /home/awee/models/turboquant/tq3_4l2/unsloth_27b_mtp/Qwen3.6-27B-MTP-TQ3_4S-out6k-v2b.gguf \
-  /home/awee/models/turboquant/tq3_4l2/unsloth_27b_mtp/Qwen3.6-27B-MTP-TQ3_4L2.gguf
+# Source is already a GGUF (BF16), so use llama-quantize.
+# Note: llama-quantize --tensor-type-file uses name=type format (no spaces),
+# so pass overrides via --tensor-type flags instead of the .tensor-types.txt file.
+/home/awee/code/llama.cpp-tq3/build/bin/llama-quantize \
+  --tensor-type 'blk.*.ssm_alpha=Q8_0' \
+  --tensor-type 'blk.*.ssm_beta=Q8_0' \
+  --tensor-type 'blk.*.ssm_out=Q5_K' \
+  --tensor-type 'blk.*.attn_v=Q6_K' \
+  --tensor-type 'blk.*.attn_output=Q4_K' \
+  /home/awee/models/turboquant/tq3_4l2/unsloth_27b_mtp/Qwen3.6-27B-MTP-TQ3_4L2.gguf \
+  /home/awee/models/turboquant/tq3_4l2/unsloth_27b_mtp/Qwen3.6-27B-MTP-TQ3_4S-out6k-v2b.gguf \
+  TQ3_4S
 ```
-
-(Or equivalent llama-quantize invocation using the policy file as `--tensor-type-file`.)
 
 ## Pending gates
 

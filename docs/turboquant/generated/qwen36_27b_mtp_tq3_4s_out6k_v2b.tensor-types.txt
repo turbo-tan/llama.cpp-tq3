@@ -1,5 +1,5 @@
-blk.*.ssm_alpha F32
-blk.*.ssm_beta F32
+blk.*.ssm_alpha Q8_0
+blk.*.ssm_beta Q8_0
 blk.*.ssm_out Q5_K
 blk.*.attn_v Q6_K
 blk.*.attn_output Q4_K
