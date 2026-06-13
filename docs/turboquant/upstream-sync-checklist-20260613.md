@@ -166,7 +166,7 @@ Checklist:
 
 Use the recovered publish template and the current local-only SOP:
 
-- `/home/awee/code/tan_llama/docs/turboquant/out6k-benchloop-sop.md`
+- `/home/awee/code/tan_llama/docs/turboquant/benchloop-sop.md`
 
 Important current rule:
 

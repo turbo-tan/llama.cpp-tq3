@@ -1,5 +1,17 @@
 # Testing Procedures and Build Guidelines
 
+## Canonical Roots
+
+Use these roots as the default path map for this workspace:
+
+- `tan_llama` repo root: `/home/awee/code/tan_llama`
+- `tan_llama` primary build: `/home/awee/code/tan_llama/build-current`
+- `tan_llama` legacy build: `/home/awee/code/tan_llama/build`
+- `llm-launch` root: `/home/awee/code/llm-launch`
+- shared models: `/home/awee/models`
+
+Do not use `/tmp` or stale backup trees as canonical roots.
+
 ## Build Procedures
 
 ### Local Build with Polling
@@ -12,7 +24,7 @@ cd /home/awee/code/tan_llama
 ./scripts/build-with-poll.sh llama-speculative 4
 
 # Or manually start and poll
-cd build
+cd /home/awee/code/tan_llama/build-current
 nohup cmake --build . --target llama-speculative -j2 > build.log 2>&1 &
 echo $! > build.pid
 

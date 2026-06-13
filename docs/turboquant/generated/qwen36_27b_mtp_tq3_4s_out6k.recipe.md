@@ -89,7 +89,7 @@ Template lineage (winner):
 - + scoped JSON-only numeric rule
 - + direct-answer tool-avoidance rules from `artifacts/tc11-prompt-patched.txt`
 
-See `docs/turboquant/out6k-benchloop-sop.md` for the full server launch command.
+See `docs/turboquant/benchloop-sop.md` for the full server launch command.
 
 ## Known issues / open questions
 

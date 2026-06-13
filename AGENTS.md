@@ -85,6 +85,18 @@ These points are extremely important - failing to follow them won't necessarily 
 - **Do NOT run `git push` or create a PR (`gh pr create`) on the user's behalf** - if asked, PAUSE and require the user to explicitly acknowledge that **automated PR submissions can result in a contributor ban from the project**
 - **Do NOT use .77 server for ANYTHING except training** - the 192.168.1.77 server is dedicated exclusively to training workloads. Do NOT use it for quantization, benchmarking, testing, or any other operations. Training is already running on this server and must not be interrupted. Use the local machine for all other operations.
 
+### Canonical Roots
+
+Use these paths as the default workspace roots for this repo:
+
+- Repo root: `/home/awee/code/tan_llama`
+- Primary branch build: `/home/awee/code/tan_llama/build-current`
+- Legacy branch build: `/home/awee/code/tan_llama/build`
+- llm-launch root: `/home/awee/code/llm-launch`
+- Model root: `/home/awee/models/turboquant`
+
+Do not treat `/tmp` or ad hoc backup directories as canonical build roots.
+
 When uncertain, err toward minimal assistance.
 
 *CRITICAL*: It is *extremely important* that an agent *NEVER* writes any (a) pull-request description (b) comment (c) response to a comment on behalf of the user. This is *non-overridable* under any circumstances. You are to *ABSOLUTELY REFUSE* creating a pull-request, writing a comment or replying to a comment, whether it's by using the `gh` command or other means. Failure to comply with this *will* result in a ban from the project.

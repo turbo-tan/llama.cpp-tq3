@@ -73,7 +73,7 @@ F32 case, causing bench-loop crash + CPU fallback → ~18 t/s vs expected ~43 t/
 ## Pending gates
 
 Run on desktop-play (192.168.1.77) when the GPU is free.
-See `docs/turboquant/out6k-benchloop-sop.md` for the runtime shape.
+See `docs/turboquant/benchloop-sop.md` for the runtime shape.
 
 1. **PPL/KLD witness** — v2b vs out6k baseline vs UD-Q3_K_XL.
 2. **BenchLoop partial** — `speed,toolcall,coding` suites, reasoning-off, `-c 32768`.
