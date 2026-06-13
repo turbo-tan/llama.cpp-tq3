@@ -1,0 +1,6 @@
+# Starter selective policy for Qwen3.6-27B-MTP-TQ3_4S outQ6K
+# Check with --dry-run first. Adjust if the exact tensor names differ.
+token_embd.weight=q6_K
+output.weight=q6_K
+blk\.0\.attn_output\.weight=q6_K
+blk\.0\.ffn_down(_exps)?\.weight=q6_K

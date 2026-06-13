@@ -1,0 +1,2 @@
+blk\.(56|57|58|59|60|61|62|63)\.ffn_down\.weight=q5_k
+blk\.(0|1|2|3|60|61|62|63)\.attn_output\.weight=q4_k

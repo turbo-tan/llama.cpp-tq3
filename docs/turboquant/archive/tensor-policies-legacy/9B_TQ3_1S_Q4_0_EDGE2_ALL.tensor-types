@@ -1,0 +1,1 @@
+blk\.(0|1|30|31)\.(attn_q|attn_k|attn_v|attn_output|ffn_down|ffn_gate|ffn_up|attn_qkv)\.weight=q4_0
