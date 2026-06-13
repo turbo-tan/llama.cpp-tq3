@@ -56,6 +56,29 @@ Verified 2026-06-13 template-isolation gate on current `build-current` with `-c 
   - plus scoped JSON-only numeric rule
   - plus direct-answer tool-avoidance rules from `artifacts/tc11-prompt-patched.txt`
 
+Verified 2026-06-13 full local BenchLoop on the recovered publish template and current rebase runtime:
+
+- run:
+  - `/home/awee/.bench-loop/runs/20260613-131757-Qwen3.6-27B-MTP-TQ3_4S-mtp-q4k-outq6.gguf-local-openai_compat/run.json`
+- runtime shape:
+  - `./build-current/bin/llama-server`
+  - `-c 32768`
+  - `-ctk q8_0`
+  - `-ctv tq3_0`
+- measured:
+  - `speed 68.6 9/9`
+  - `toolcall 96.7 14/15`
+  - `coding 100.0 12/12`
+  - `dataextract 91.0 12/15`
+  - `instructfollow 74.5 9/15`
+  - `reasonmath 73.3 11/15`
+  - `GEN TOK/S 42.73`
+
+Interpretation:
+
+- This full run does not show the earlier template-collapse behavior.
+- Remaining misses are ordinary benchmark-quality misses, not the old out6k template regression.
+
 ## Dry run
 
 Use a direct `llama-bench` check before BenchLoop:
