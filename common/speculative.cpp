@@ -2,6 +2,9 @@
 
 #include "common.h"
 #include "ggml.h"
+#if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#include "../ggml/include/ggml-cuda.h"
+#endif
 #include "llama.h"
 #include "log.h"
 #include "ngram-cache.h"
@@ -471,7 +474,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
         for (auto & s : smpls) {
             common_params_sampling sparams;
             sparams.no_perf  = false;
-            sparams.top_k    = 10;
+            sparams.top_k    = 1;
             sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
             s.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
         }
@@ -1191,6 +1194,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         return true;
     }
 };
+
 
 // state of self-speculation (simple implementation, not ngram-map)
 struct common_speculative_impl_ngram_simple : public common_speculative_impl {
