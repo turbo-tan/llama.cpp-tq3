@@ -24,6 +24,16 @@
 #define GROUP_MAX_EPS_IQ1_S 1e-12f
 
 #define UNUSED GGML_UNUSED
+// Portable ffs (find first set bit) for Windows/MSVC compatibility
+#if defined(_MSC_VER)
+#include <intrin.h>
+static int ffs(int x) {
+    unsigned long i;
+    return _BitScanForward(&i, (unsigned long)x) ? (int)(i + 1) : 0;
+}
+#else
+#include <strings.h>
+#endif
 
 static inline int best_index_int8(int n, const int8_t * val, float x) {
     if (x <= val[0]) return 0;
