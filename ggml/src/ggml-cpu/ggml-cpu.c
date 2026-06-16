@@ -77,6 +77,16 @@
 
 #define UNUSED GGML_UNUSED
 #define SWAP(x, y, T) do { T SWAP = x; (x) = y; (y) = SWAP; } while (0)
+// Portable ffs (find first set bit) for Windows/MSVC compatibility
+#if defined(_MSC_VER)
+#include <intrin.h>
+static int ffs(int x) {
+    unsigned long i;
+    return _BitScanForward(&i, (unsigned long)x) ? (int)(i + 1) : 0;
+}
+#else
+#include <strings.h>
+#endif
 
 // Portable ffs (find first set bit) for Windows/MSVC compatibility
 #if defined(_MSC_VER)
