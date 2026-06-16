@@ -2563,7 +2563,8 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
         if (auto_params.supports_thinking) {
             auto_params.thinking_start_tag = trim_whitespace(autoparser.reasoning.start);
             auto_params.thinking_end_tag   = trim_whitespace(autoparser.reasoning.end);
-            restore_qwen_thinking_prefill_blank_line(auto_params);
+            // restore_qwen_thinking_prefill_blank_line: disabled — adds extra \n that
+            // breaks MTP draft acceptance vs the tc15 reference baseline (8ad718007).
         }
         common_peg_arena arena;
         arena.load(auto_params.parser);
