@@ -1469,8 +1469,10 @@ private:
 
                 const bool saved_prompt = ret->prompt_save(*prompt_cache);
 
-                if (saved_prompt && !ret->prompt_load(*prompt_cache, task.tokens)) {
-                    ret->prompt_clear(false);
+                if (!ret->prompt_load(*prompt_cache, task.tokens)) {
+                    if (saved_prompt) {
+                        ret->prompt_clear(false);
+                    }
                 }
 
                 if (saved_prompt) {
