@@ -289,13 +289,14 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
     return false;
 #endif // GGML_CUDA_FORCE_CUBLAS
 
-    // TQ3_4S: use MMQ for prefill (ne11 >= 64) on NVIDIA tensor-core GPUs.
-    // Contiguity guard in ggml_cuda_mul_mat ensures KV cache views use cuBLAS.
+    // TQ3_4S: use MMQ for prefill on NVIDIA tensor-core GPUs. Narrower prefill
+    // shapes (ne11 >= 16) also benefit, matching the 8ad718007 reference; the
+    // contiguity guard in ggml_cuda_mul_mat ensures KV cache views use cuBLAS.
     if (type == GGML_TYPE_TQ3_4S &&
         GGML_CUDA_CC_IS_NVIDIA(cc) &&
         fp16_mma_hardware_available(cc) &&
         n_experts == 0) {
-        return ne11 >= 64;
+        return ne11 >= 16;
     }
 
     bool mmq_supported;
