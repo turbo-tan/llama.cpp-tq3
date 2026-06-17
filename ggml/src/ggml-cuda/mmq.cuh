@@ -3512,63 +3512,83 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     float * x_df = (float *) (x_qs + txs.qs);
 #endif
 
-    constexpr int blocks_per_tile_x_row = 2*MMQ_TILE_NE_K / QI8_0;
-    constexpr int rows_per_warp_group = nwarps / blocks_per_tile_x_row;
-    static_assert(rows_per_warp_group > 0, "Not enough warps for TQ3_4S MMQ tile loader");
+    constexpr int threads_per_row = 16;
+    constexpr int nrows = WARP_SIZE / threads_per_row;
+    const int kqsx = threadIdx.x % threads_per_row;
 
-    const int lane = threadIdx.x;
-    const int warp = threadIdx.y;
+    static constexpr float tq3_centroids[8] = {
+        -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+         0.230106f,  0.725222f,  1.277503f,  1.988943f
+    };
 
-    constexpr float tq3_d_scale = 2.1519f / 127.0f;
-    constexpr int8_t tq3_q8_levels[8] = {-127, -79, -45, -14, 14, 45, 79, 127};
-
-    for (int i0 = 0; i0 < mmq_y; i0 += rows_per_warp_group) {
-        const int i = i0 + warp / blocks_per_tile_x_row;
-        if (need_check && i >= i_max) break;
-
-        const int blk = warp % blocks_per_tile_x_row;
-        const block_tq3_4s * bxi = (const block_tq3_4s *)x + kbx0 + i*stride + blk;
-        const int g = lane / 8;
-        const int r = lane % 8;
-        const int leader = g * 8;
-
-        float rms = 0.0f;
-        uint32_t packed = 0;
-        if (r == 0) {
-            const uint8_t sb = bxi->d[g];
-            if (sb == 0) {
-                rms = 0.0f;
-            } else {
-                const int exp = (sb >> 5) - 9;
-                const float mantissa = 1.0f + (float)(sb & 31) / 32.0f;
-                rms = ldexpf(mantissa, exp);
-            }
-            const uint8_t * qp = bxi->qs + g * 3;
-            packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
+    const auto decode_tq3_4s_scale = [] __device__ (const uint8_t sb) {
+        if (sb == 0) {
+            return 0.0f;
         }
-        rms = __shfl_sync(0xFFFFFFFF, rms, leader);
-        packed = __shfl_sync(0xFFFFFFFF, packed, leader);
+        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
+        return __uint_as_float(bits);
+    };
 
-        const uint8_t idx = (packed >> (3 * r)) & 7;
-        const int q = (int) tq3_q8_levels[idx];
-        const float d = __shfl_sync(0xFFFFFFFF, rms * tq3_d_scale, leader);
+#pragma unroll
+    for (int i0 = 0; i0 < mmq_y; i0 += nrows*nwarps) {
+        int i = i0 + threadIdx.y*nrows + threadIdx.x/threads_per_row;
 
-        const int slot = lane % QI8_0;
-        const int q1 = __shfl_sync(0xFFFFFFFF, q, 4*slot + 0);
-        const int q2 = __shfl_sync(0xFFFFFFFF, q, 4*slot + 1);
-        const int q3 = __shfl_sync(0xFFFFFFFF, q, 4*slot + 2);
-        const int q4 = __shfl_sync(0xFFFFFFFF, q, 4*slot + 3);
-        if (lane < QI8_0) {
-            const uint32_t packed_q = (uint8_t) q1 | ((uint8_t) q2 << 8) | ((uint8_t) q3 << 16) | ((uint8_t) q4 << 24);
+        if (need_check) {
+            i = min(i, i_max);
+        }
+
+        const int blk_in_row = kqsx / 2;
+        const int half = kqsx % 2;
+        const int g_base = half * 2;
+
+        const block_tq3_4s * bxi = (const block_tq3_4s *)x + kbx0 + i*stride + blk_in_row;
+
+        float rms_local[2];
+#pragma unroll
+        for (int sg = 0; sg < 2; ++sg) {
+            rms_local[sg] = decode_tq3_4s_scale(bxi->d[g_base + sg]);
+        }
+
+        const float amax_pair = fmaxf(rms_local[0], rms_local[1]);
+        const float amax_shfl = __shfl_xor_sync(0xFFFFFFFF, amax_pair, 1, WARP_SIZE);
+        const float amax = fmaxf(amax_pair, amax_shfl) * 1.996684f;
+        const float d_block = amax / 127.0f;
+        const float d_inv = (d_block > 0.0f) ? 127.0f / amax : 0.0f;
+
+#pragma unroll
+        for (int sg = 0; sg < 2; sg++) {
+            const int g = g_base + sg;
+            const float rms_g = rms_local[sg];
+
+            const uint8_t * qp = bxi->qs + g * 3;
+            const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
+
+            const float q_scale = rms_g * d_inv;
+            const uint32_t q0 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  0) & 7] * q_scale);
+            const uint32_t q1 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  3) & 7] * q_scale);
+            const uint32_t q2 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  6) & 7] * q_scale);
+            const uint32_t q3 = (uint8_t) __float2int_rn(tq3_centroids[(packed >>  9) & 7] * q_scale);
+            const uint32_t q4 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 12) & 7] * q_scale);
+            const uint32_t q5 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 15) & 7] * q_scale);
+            const uint32_t q6 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 18) & 7] * q_scale);
+            const uint32_t q7 = (uint8_t) __float2int_rn(tq3_centroids[(packed >> 21) & 7] * q_scale);
+
+            const uint32_t pq0 = q0 | (q1 << 8) | (q2 << 16) | (q3 << 24);
+            const uint32_t pq1 = q4 | (q5 << 8) | (q6 << 16) | (q7 << 24);
+
+            const int out_base = blk_in_row * QI8_0 + g * 2;
+
 #if defined(AMD_MFMA_AVAILABLE) || defined(TURING_MMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
-            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + blk*QI8_0 + lane] = packed_q;
-            if (lane == 0) {
-                x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + blk] = d;
+            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + out_base + 0] = pq0;
+            x_qs[i*MMQ_MMA_TILE_X_K_Q8_0 + out_base + 1] = pq1;
+            if (sg == 0 && half == 0) {
+                x_df[i*MMQ_MMA_TILE_X_K_Q8_0 + blk_in_row] = d_block;
             }
 #else
-            x_qs[i*(2*MMQ_TILE_NE_K + 1) + blk*QI8_0 + lane] = packed_q;
-            if (lane == 0) {
-                x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + blk] = d;
+            x_qs[i*(2*MMQ_TILE_NE_K + 1) + out_base + 0] = pq0;
+            x_qs[i*(2*MMQ_TILE_NE_K + 1) + out_base + 1] = pq1;
+            if (sg == 0 && half == 0) {
+                x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + blk_in_row] = d_block;
             }
 #endif
         }

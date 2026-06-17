@@ -1000,12 +1000,51 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         }
 
         auto * ctx_tgt = this->params.ctx_tgt;
+        auto * ctx_dft = this->params.ctx_dft;
 
         const size_t row_bytes = (size_t) n_embd * sizeof(float);
 
-        // KV cache catch-up is handled by the llama_set_mtp hook inside process_ubatch.
-        // Do not prune here: prompt batches have just been caught up by the hook, and
-        // draft() already removes speculative overlap from dp.n_past before reseeding.
+        bool needs_kv_catchup = false;
+        if (!is_mem_shared) {
+            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                if (i_batch_end[seq_id] < 0) {
+                    continue;
+                }
+
+                const llama_pos pos_max = llama_memory_seq_pos_max(llama_get_memory(ctx_dft), seq_id);
+                if (pos_max < batch_in.pos[i_batch_end[seq_id]]) {
+                    needs_kv_catchup = true;
+                    break;
+                }
+            }
+        }
+
+        if (needs_kv_catchup) {
+            common_batch_clear(batch);
+
+            for (int k = 0; k < n_tokens; ++k) {
+                common_batch_add(batch, batch_in.token[k], batch_in.pos[k], { batch_in.seq_id[k][0] }, 0);
+            }
+
+            if (n_tokens > 1) {
+                const float * h_tgt = llama_get_embeddings_nextn(ctx_tgt);
+                std::memcpy(batch.embd + (size_t) 1 * n_embd, h_tgt, row_bytes * (n_tokens - 1));
+            }
+
+            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                if (i_batch_beg[seq_id] < 0) {
+                    continue;
+                }
+
+                std::memcpy(batch.embd + (size_t) i_batch_beg[seq_id] * n_embd, pending_h[seq_id].data(), row_bytes);
+            }
+
+            const int32_t rc = llama_decode(ctx_dft, batch);
+            if (rc != 0) {
+                LOG_ERR("%s: llama_decode(ctx_dft) failed rc=%d (pos=%d)\n", __func__, (int) rc, (int) batch_in.pos[0]);
+                return false;
+            }
+        }
 
         for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
             if (i_batch_end[seq_id] < 0) {
