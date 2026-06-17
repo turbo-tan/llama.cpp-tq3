@@ -1252,6 +1252,8 @@ void llama_context::handle_mtp_for_ubatch(
         }
     }
 
+    synchronize();
+
     const bool pending_continues = mtp.pending_pos >= 0 && mtp.pending_pos + 1 == pos_start;
     if (mtp.pending_pos >= 0 && !pending_continues) {
         mtp.pending_pos = -1;
@@ -1261,9 +1263,9 @@ void llama_context::handle_mtp_for_ubatch(
     const int    n_out     = (pending_continues ? 1 : 0) + (n_rows - 1);
 
     if (decode_mtp && n_out > 0) {
-        int out_idx = 0;        if (pending_continues) {
-            // pending row was async-copied to hook_batch.embd[pending_offset]
-            // in the previous call; no CPU memcpy needed here
+        int out_idx = 0;
+        if (pending_continues) {
+            std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, mtp.pending_h.data(), row_bytes);
             mtp.hook_batch.token[out_idx]     = tokens[0];
             mtp.hook_batch.pos[out_idx]       = pos_start;
             mtp.hook_batch.n_seq_id[out_idx]  = 1;
@@ -1295,6 +1297,8 @@ void llama_context::handle_mtp_for_ubatch(
         }
         GGML_ASSERT(out_idx == n_out);
         mtp.hook_batch.n_tokens = n_out;
+
+        synchronize();
 
         const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
         if (rc_dec != 0) {
