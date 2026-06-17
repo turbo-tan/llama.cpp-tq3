@@ -2848,7 +2848,7 @@ void dequantize_row_tq3_4s(const block_tq3_4s * GGML_RESTRICT x, float * GGML_RE
     }
 }
 
-void quantize_row_tq3_1s_shift_ref(const float * GGML_RESTRICT x, block_tq3_1s_shift * GGML_RESTRICT y, int64_t k) {
+static void quantize_row_tq3_1s_shift_ref(const float * GGML_RESTRICT x, block_tq3_1s_shift * GGML_RESTRICT y, int64_t k) {
     assert(k % QK_TQ3_0 == 0);
     const int64_t nb = k / QK_TQ3_0;
 
@@ -3405,7 +3405,7 @@ static inline uint8_t tq3_v_choose_c4(float x) {
     return (uint8_t)best;
 }
 
-static float tq3_v_quant_group(const float * vals, int n, const float * centroids, int nc,
+static float tq3_v_quant_group(const float * vals, int n, const float * centroids, int /*nc*/,
                                 uint8_t (* choose)(float), float * out_scale, uint8_t * out_idx) {
     float sum_sq = 0.0f;
     for (int j = 0; j < n; j++) sum_sq += vals[j] * vals[j];
