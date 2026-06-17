@@ -1833,13 +1833,6 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
 }
 
 int llama_context::decode(const llama_batch & batch_inp) {
-    // PROFILING: count calls and measure timing
-    static std::atomic<int64_t> decode_call_count{0};
-    static std::atomic<int64_t> decode_total_us{0};
-    static thread_local int64_t local_count = 0;
-    const int64_t t0 = ggml_time_us();
-    const int64_t call_num = decode_call_count.fetch_add(1) + 1;
-
     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
     // so accept either present rather than requiring exactly one.
     GGML_ASSERT(batch_inp.token || batch_inp.embd);
@@ -2217,18 +2210,6 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     // wait for the computation to finish (automatically done when obtaining the model output)
     //synchronize();
-
-    // PROFILING: accumulate timing and log periodically
-    {
-        const int64_t elapsed = ggml_time_us() - t0;
-        decode_total_us.fetch_add(elapsed);
-        local_count++;
-        if (local_count % 10 == 1 || local_count <= 5 || batch_inp.n_tokens > 1) {
-            fprintf(stderr, "PROFILE decode #%lld n_tokens=%d elapsed=%lld us total_us=%lld\n",
-                    (long long)call_num, batch_inp.n_tokens, (long long)elapsed,
-                    (long long)decode_total_us.load());
-        }
-    }
 
     return 0;
 }
