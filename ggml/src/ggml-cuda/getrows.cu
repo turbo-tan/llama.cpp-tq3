@@ -230,7 +230,7 @@ static __global__ void k_get_rows_tq3_0(
 
     float val = tq3_0_centroids_getrows_cuda[idx];
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
 
@@ -313,7 +313,7 @@ static __global__ void k_get_rows_tq3_1s(
     const float d = lane < 16 ? __half2float(x->d0) : __half2float(x->d1);
     float val = tq3_0_centroids_getrows_cuda[idx] * d;
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
 
@@ -399,7 +399,7 @@ static __global__ void k_get_rows_tq3_4s(
 
     float val = tq3_0_centroids_getrows_cuda[idx] * ds[g];
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
 
@@ -497,7 +497,7 @@ static __global__ void k_get_rows_tq3_1s_ap1(
         const float d = lane < 16 ? __half2float(x->d0) : __half2float(x->d1);
         val = tq3_0_centroids_getrows_cuda[idx] * d;
         for (int step = 1; step < 32; step <<= 1) {
-            const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+            const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
             val = (lane & step) ? (other - val) : (other + val);
         }
         dst_row[block * QK_TQ3_0 + lane] = ggml_cuda_cast<dst_t>(val * (tq3_0_signs_getrows_cuda[lane] / sqrtf(32.0f)));
@@ -510,7 +510,7 @@ static __global__ void k_get_rows_tq3_1s_ap1(
     const float d = lane < 16 ? __half2float(x->d0) : __half2float(x->d1);
     val = tq3_0_centroids_getrows_cuda[idx] * d + __half2float(x->m);
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
     dst_row[block * QK_TQ3_0 + lane] = ggml_cuda_cast<dst_t>(val * (tq3_0_signs_getrows_cuda[lane] / sqrtf(32.0f)));
