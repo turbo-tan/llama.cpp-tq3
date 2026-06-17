@@ -1,2 +1,0 @@
-blk\.[0-9]+\.attn_v\.weight=Q4_0
-blk\.[0-9]+\.ffn_down\.weight=Q4_0
