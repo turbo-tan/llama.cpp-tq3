@@ -1511,7 +1511,10 @@ bool llama_model_base::load_tensors(llama_model_loader & ml) {
             }
         }
     }
-    ml.done_getting_tensors();
+    const bool partial_nextn_load =
+            (arch == LLM_ARCH_QWEN35 || arch == LLM_ARCH_QWEN35MOE) &&
+            (hparams.trunk_only_nomtp || hparams.mtp_only);
+    ml.done_getting_tensors(partial_nextn_load);
 
     // Tied NVFP4 output is valid when no separate LM-head scale tensors are present.
     // If sidecar scales exist, the output weight must be an actual output tensor.

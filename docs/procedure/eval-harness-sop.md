@@ -12,6 +12,7 @@ Run the public-facing evaluation gates with the correct model, template, and art
 - Do not mix partial and full results in the same summary table.
 - Do not compare against stale binaries in `/tmp` or other ephemeral build paths.
 - Keep the winner model path explicit in the note header when comparing variants, especially if you are switching between the late public winner and an outQ6K experiment.
+- Before running any harness, verify the runtime binary commit hash matches the current source `HEAD`; if not, rebuild the active build tree first.
 
 ## Canonical Roots
 

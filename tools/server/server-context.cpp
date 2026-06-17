@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
+#include <cstring>
 #include <exception>
 #include <memory>
 #include <filesystem>
@@ -44,6 +45,14 @@ static uint32_t server_n_outputs_max(const common_params & params) {
 
     if (params.embedding ||
             (params.pooling_type != LLAMA_POOLING_TYPE_UNSPECIFIED && params.pooling_type != LLAMA_POOLING_TYPE_NONE)) {
+        return n_batch;
+    }
+
+    const bool spec_mtp = std::find(params.speculative.types.begin(), params.speculative.types.end(),
+                                    COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end()
+                       || std::find(params.speculative.types.begin(), params.speculative.types.end(),
+                                    COMMON_SPECULATIVE_TYPE_MTP) != params.speculative.types.end();
+    if (spec_mtp) {
         return n_batch;
     }
 
@@ -1050,7 +1059,10 @@ private:
         const bool has_draft = params.speculative.has_dft();
         const bool spec_mtp = std::find(params_base.speculative.types.begin(),
                                         params_base.speculative.types.end(),
-                                        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
+                                        COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()
+                           || std::find(params_base.speculative.types.begin(),
+                                        params_base.speculative.types.end(),
+                                        COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end();
         const bool has_spec = has_draft || spec_mtp;
 
         if (callback_state) {
@@ -1172,6 +1184,14 @@ private:
                     SRV_WRN("[spec] failed to measure %s memory: %s\n",
                             has_draft ? "draft model" : "MTP context", e.what());
                 }
+            }
+        }
+
+        if (spec_mtp) {
+            string_parse_kv_override("llama.nomtp_trunk_only=bool:true", params_base.kv_overrides);
+            if (params_base.kv_overrides.empty() || params_base.kv_overrides.back().key[0] != 0) {
+                params_base.kv_overrides.emplace_back();
+                params_base.kv_overrides.back().key[0] = 0;
             }
         }
 
@@ -1666,14 +1686,19 @@ private:
             if (update_cache) {
                 SRV_TRC("%s", "updating prompt cache\n");
 
-                const int64_t t_start = ggml_time_us();
-
+                const int64_t t_start = ggml_time_us();                // Save the current slot's KV to cache-ram (frees VRAM), if any
                 const bool saved_prompt = ret->prompt_save(*prompt_cache);
 
+                // Always try to load the target prompt from cache-ram.
+                // This is needed even when saved_prompt is false (e.g. cache-idle-slots
+                // already cleared the slot's tokens in process_single_task but the KV
+                // was previously saved to cache-ram).
                 if (!ret->prompt_load(*prompt_cache, task.tokens)) {
-                    ret->prompt_clear();
+                    // If we saved something but couldn't load, clear the slot
+                    if (saved_prompt) {
+                        ret->prompt_clear(false);
+                    }
                 }
-
                 if (saved_prompt) {
                     prompt_cache->update();
                 }
@@ -3508,7 +3533,7 @@ private:
                         add_ok &= batch.add(slot.id,
                             cur_tok,
                             slot.prompt.tokens.pos_next(),
-                            slot.need_embd());
+                            slot.need_embd() || slot.need_embd_nextn());
                         slot.prompt.tokens.push_back(cur_tok);
 
                         slot.n_prompt_tokens_processed++;

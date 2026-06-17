@@ -419,6 +419,8 @@ namespace GGUFMeta {
         return found;
     }
 
+    template bool llama_model_loader::get_key<bool>       (const std::string & key, bool & result,        bool required);
+
     template<typename T>
     bool llama_model_loader::get_key(enum llm_kv kid, T & result, bool required) {
         return get_key(llm_kv(kid), result, required);

@@ -1193,7 +1193,9 @@ void llm_graph_result::reset() {
     t_logits      = nullptr;
     t_embd        = nullptr;
     t_embd_pooled = nullptr;
+    t_h_pre_norm  = nullptr;
     t_h_nextn     = nullptr;
+    t_mtp_out     = nullptr;
 
     t_layer_inp.resize(LLAMA_MAX_LAYERS);
     std::fill(t_layer_inp.begin(), t_layer_inp.end(), nullptr);
@@ -1237,8 +1239,14 @@ void llm_graph_result::set_outputs(const llm_graph_params & params) {
     if (t_embd_pooled != nullptr) {
         ggml_set_output(t_embd_pooled);
     }
+    if (t_h_pre_norm != nullptr) {
+        ggml_set_output(t_h_pre_norm);
+    }
     if (t_h_nextn != nullptr) {
         ggml_set_output(t_h_nextn);
+    }
+    if (t_mtp_out != nullptr) {
+        ggml_set_output(t_mtp_out);
     }
     {
         const auto & embeddings_layer_inp = params.cparams.embeddings_layer_inp;

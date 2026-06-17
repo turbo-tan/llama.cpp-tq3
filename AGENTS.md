@@ -90,12 +90,20 @@ These points are extremely important - failing to follow them won't necessarily 
 Use these paths as the default workspace roots for this repo:
 
 - Repo root: `/home/awee/code/tan_llama`
+- Public fork source root: `/home/awee/code/llama.cpp-tq3`
 - Primary branch build: `/home/awee/code/tan_llama/build-current`
 - Legacy branch build: `/home/awee/code/tan_llama/build`
 - llm-launch root: `/home/awee/code/llm-launch`
 - Model root: `/home/awee/models/turboquant`
 
 Do not treat `/tmp` or ad hoc backup directories as canonical build roots.
+
+Treat the roots as separate roles:
+
+- `/home/awee/code/llama.cpp-tq3` is the public-facing fork source tree for rebases, branch work, and release-ready code changes
+- `/home/awee/code/tan_llama` is the research workspace for docs, handovers, procedures, publication assets, and experiments
+
+Do not let temporary source copies, rebasing scratch trees, or branch builds inside `tan_llama` become the de facto canonical fork checkout.
 
 When uncertain, err toward minimal assistance.
 

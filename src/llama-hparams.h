@@ -48,6 +48,8 @@ struct llama_hparams {
     bool swin_norm;
     bool norm_before_residual = false;
     bool norm_before_fc       = false;
+    bool trunk_only_nomtp = false;
+    bool mtp_only = false;
 
     uint32_t n_ctx_train; // context size the model was trained on
     uint32_t n_embd;

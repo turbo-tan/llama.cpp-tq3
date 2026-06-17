@@ -17,6 +17,17 @@
 #include <omp.h>
 #endif
 
+// Portable ffs (find first set bit) for Windows/MSVC compatibility
+#if defined(_MSC_VER)
+#include <intrin.h>
+static int ffs(int x) {
+    unsigned long i;
+    return _BitScanForward(&i, (unsigned long)x) ? (int)(i + 1) : 0;
+}
+#else
+#include <strings.h>
+#endif
+
 #define GROUP_MAX_EPS 1e-15f
 #define GROUP_MAX_EPS_IQ3_XXS 1e-8f
 #define GROUP_MAX_EPS_IQ2_S 1e-8f

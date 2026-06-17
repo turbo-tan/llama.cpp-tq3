@@ -6,6 +6,7 @@
 #include "llama-graph.h"
 #include "llama-adapter.h"
 #include "llama-impl.h"
+#include "llama-mtp.h"
 #include "llama-memory.h"
 
 #include "ggml-cpp.h"
@@ -87,6 +88,10 @@ struct llama_context {
 
     float * get_embeddings_nextn();
     float * get_embeddings_nextn_ith(int32_t i);
+    ggml_tensor * get_t_h_pre_norm() const;
+    ggml_tensor * get_t_mtp_out() const;
+    void set_mtp(llama_context * ctx_mtp_in);
+    llama_context * get_mtp() const { return mtp.ctx_mtp; }
 
     float * get_embeddings_layer_inp(uint32_t lid);
 
@@ -266,6 +271,13 @@ private:
     // that differs from the layer it belongs to (usually due to missing backend support)
     void resolve_fused_ops(const llama_memory_context_i * mctx, uint32_t n_seqs);
 
+    void handle_mtp_for_ubatch(
+            int32_t              n_tokens,
+            const llama_token  * tokens,
+            const llama_pos    * positions,
+            struct ggml_tensor * t_h_pre_norm,
+            bool                 decode_mtp);
+
     // TODO: read/write lora adapters and cvec
     size_t state_write_data(llama_io_write_i & io);
     size_t state_read_data (llama_io_read_i  & io);
@@ -285,6 +297,7 @@ private:
     llama_adapter_loras_ptr loras;
 
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably
+    llama_mtp mtp;
 
     llama_memory_ptr memory;
 
