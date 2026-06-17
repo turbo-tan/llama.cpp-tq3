@@ -877,7 +877,7 @@ std::string common_chat_template_generation_prompt(
     return common_chat_template_generation_prompt_impl(tmpl, inputs, std::nullopt, std::nullopt, std::nullopt);
 }
 
-static void restore_qwen_thinking_prefill_blank_line(common_chat_params & params) {
+[[maybe_unused]] static void restore_qwen_thinking_prefill_blank_line(common_chat_params & params) {
     if (!params.supports_thinking || params.thinking_start_tag != "<think>") {
         return;
     }
@@ -2414,7 +2414,11 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
         if (auto_params.supports_thinking) {
             auto_params.thinking_start_tag = trim_whitespace(autoparser.reasoning.start);
             auto_params.thinking_end_tag   = trim_whitespace(autoparser.reasoning.end);
-            restore_qwen_thinking_prefill_blank_line(auto_params);
+            // restore_qwen_thinking_prefill_blank_line: disabled — the extra '\n' it
+            // appends shifts the prefill by one token, which desyncs the MTP draft seed
+            // and collapses draft acceptance from ~97.9% to ~50% (gen 57→18 t/s) on the
+            // Qwen3.6-27B-MTP TQ3_4S runtime. The (1/15) dataextract task that the '\n'
+            // helped is tracked separately; speed/acceptance take priority for the ship build.
         }
         common_peg_arena arena;
         arena.load(auto_params.parser);
