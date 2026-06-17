@@ -54,7 +54,7 @@ static uint32_t server_n_outputs_max(const common_params & params) {
     const bool spec_mtp = std::find(params.speculative.types.begin(), params.speculative.types.end(),
                                     COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end()
                        || std::find(params.speculative.types.begin(), params.speculative.types.end(),
-                                    COMMON_SPECULATIVE_TYPE_MTP) != params.speculative.types.end();
+                                    COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
     if (spec_mtp) {
         return n_batch;
     }
@@ -826,7 +826,7 @@ private:
                                             COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()
                                || std::find(params_base.speculative.types.begin(),
                                             params_base.speculative.types.end(),
-                                            COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end();
+                                            COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
             const bool has_draft = params_base.speculative.has_dft();
 
             if (has_draft || spec_mtp) {
@@ -905,7 +905,7 @@ private:
         if (std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
                       COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()
             || std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                      COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end()) {
+                      COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()) {
             string_parse_kv_override("llama.nomtp_trunk_only=bool:true", params_base.kv_overrides);
             if (params_base.kv_overrides.empty() || params_base.kv_overrides.back().key[0] != 0) {
                 params_base.kv_overrides.emplace_back();
@@ -965,7 +965,7 @@ private:
                                             COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()
                                || std::find(params_base.speculative.types.begin(),
                                             params_base.speculative.types.end(),
-                                            COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end();
+                                            COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end();
 
             if (spec_mtp) {
                 cparams.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
@@ -983,7 +983,7 @@ private:
         } else if (std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
                              COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()
                || std::find(params_base.speculative.types.begin(), params_base.speculative.types.end(),
-                             COMMON_SPECULATIVE_TYPE_MTP) != params_base.speculative.types.end()) {
+                             COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params_base.speculative.types.end()) {
             char trunk_arch[64] = {0};
             llama_model_meta_val_str(model_tgt, "general.architecture", trunk_arch, sizeof(trunk_arch));
 
