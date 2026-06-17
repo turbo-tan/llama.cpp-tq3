@@ -870,7 +870,7 @@ static __global__ void dequantize_block_tq3_1s(const void * __restrict__ vx, dst
 
     float val = tq3_0_centroids_cuda[idx] * (j < 16 ? d0 : d1);
     for (int step = 1; step < 32; step <<= 1) {
-        float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         if (j & step) {
             val = other - val;
         } else {
@@ -916,7 +916,7 @@ static __global__ void dequantize_block_tq3_4s(const void * __restrict__ vx, dst
 
     float val = tq3_0_centroids_cuda[idx] * ds[g];
     for (int step = 1; step < 32; step <<= 1) {
-        float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         if (j & step) {
             val = other - val;
         } else {
@@ -963,7 +963,7 @@ static __global__ void dequantize_block_tq3_4se(const void * __restrict__ vx, ds
 
     float val = tq3_0_centroids_cuda[idx] * ds[g] + shifts[h];
     for (int step = 1; step < 32; step <<= 1) {
-        float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         if (j & step) {
             val = other - val;
         } else {
@@ -1061,7 +1061,7 @@ static __global__ void dequantize_block_tq3_4sv(const void * __restrict__ vx, ds
 
     // Inverse WHT butterfly
     for (int step = 1; step < 32; step <<= 1) {
-        float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         if (j & step) {
             val = other - val;
         } else {
@@ -1131,7 +1131,7 @@ static __global__ void dequantize_block_tq3_1s_ap1(const void * __restrict__ vx,
         const float d = lane < 16 ? __half2float(x->d0) : __half2float(x->d1);
         float val = tq3_0_centroids_cuda[idx] * d;
         for (int step = 1; step < 32; step <<= 1) {
-            const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+            const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
             val = (lane & step) ? (other - val) : (other + val);
         }
         y[lane] = (dst_t) (val * (tq3_0_signs_cuda[lane] / sqrtf(32.0f)));
@@ -1146,7 +1146,7 @@ static __global__ void dequantize_block_tq3_1s_ap1(const void * __restrict__ vx,
     const float d = lane < 16 ? __half2float(x->d0) : __half2float(x->d1);
     float val = tq3_0_centroids_cuda[idx] * d + __half2float(x->m);
     for (int step = 1; step < 32; step <<= 1) {
-        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step);
+        const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
         val = (lane & step) ? (other - val) : (other + val);
     }
     y[lane] = (dst_t) (val * (tq3_0_signs_cuda[lane] / sqrtf(32.0f)));
