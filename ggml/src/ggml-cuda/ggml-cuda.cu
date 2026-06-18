@@ -2584,6 +2584,10 @@ static bool ggml_cuda_can_use_mul_mat_vec_q(
         return false;
     }
 
+    if (!ggml_is_quantized(src0_type)) {
+        return false;
+    }
+
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     return ggml_cuda_should_use_mmvq(src0_type, cc, ne11);
 }

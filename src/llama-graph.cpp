@@ -2523,6 +2523,9 @@ ggml_tensor * llm_graph_context::build_attn(
 
     // combine with the original kq mask
     kq_mask_top_k = ggml_add(ctx0, kq_mask_top_k, kq_mask);
+    if (cparams.flash_attn) {
+        kq_mask_top_k = ggml_cast(ctx0, kq_mask_top_k, GGML_TYPE_F16);
+    }
 
     ggml_tensor * q = q_cur;
     ggml_tensor * k = mctx_cur->get_k(ctx0, il);
@@ -2696,7 +2699,10 @@ llm_graph_input_attn_k_dsa * llm_graph_context::build_attn_inp_k_dsa() const {
     {
         inp->self_k_idxs_mla = mctx_cur->get_mla()->build_input_k_idxs(ctx0, ubatch);
 
-        inp->self_kq_mask_mla = build_attn_inp_kq_mask(ctx0, mctx_cur->get_mla(), ubatch, cparams);
+        auto cparams_copy = cparams;
+        cparams_copy.flash_attn = false;
+
+        inp->self_kq_mask_mla = build_attn_inp_kq_mask(ctx0, mctx_cur->get_mla(), ubatch, cparams_copy);
         inp->self_kq_mask_mla_cnv = inp->self_kq_mask_mla;
     }
 
