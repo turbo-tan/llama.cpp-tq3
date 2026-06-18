@@ -36,13 +36,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect UI changes
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.sha || github.event.pull_request.head.sha || github.sha || github.head_ref || github.ref_name }}
+
+      - name: Detect changed UI files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            ui:
+              - 'tools/ui/**'
+
   ui-build:
     name: Build static output
     uses: ./.github/workflows/ui-build.yml
 
   ui-checks:
     name: Checks
-    needs: ui-build
+    needs: [changes, ui-build]
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
@@ -52,8 +72,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.inputs.sha || github.event.pull_request.head.sha || github.sha || github.head_ref || github.ref_name }}
 
+      - name: Skip when UI is unchanged
+        if: ${{ needs.changes.outputs.ui != 'true' }}
+        run: echo "No tools/ui changes detected; skipping UI checks."
+
       - name: Setup Node.js
         id: node
+        if: ${{ needs.changes.outputs.ui == 'true' }}
         uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -62,39 +87,39 @@ jobs:
 
       - name: Install dependencies
         id: setup
-        if: ${{ steps.node.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && steps.node.conclusion == 'success' }}
         run: npm ci
         working-directory: tools/ui
 
       - name: Run type checking
-        if: ${{ always() && steps.setup.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.setup.conclusion == 'success' }}
         run: npm run check
         working-directory: tools/ui
 
       - name: Run linting
-        if: ${{ always() && steps.setup.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.setup.conclusion == 'success' }}
         run: npm run lint
         working-directory: tools/ui
 
       - name: Install Playwright browsers
         id: playwright
-        if: ${{ always() && steps.setup.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.setup.conclusion == 'success' }}
         run: npx playwright install --with-deps
         working-directory: tools/ui
 
       - name: Run Client tests
-        if: ${{ always() && steps.playwright.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.playwright.conclusion == 'success' }}
         run: npm run test:client
         working-directory: tools/ui
 
       - name: Run Unit tests
-        if: ${{ always() && steps.playwright.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.playwright.conclusion == 'success' }}
         run: npm run test:unit
         working-directory: tools/ui
 
   e2e-tests:
     name: E2E Tests
-    needs: ui-build
+    needs: [changes, ui-build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -103,8 +128,13 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.inputs.sha || github.event.pull_request.head.sha || github.sha || github.head_ref || github.ref_name }}
 
+      - name: Skip when UI is unchanged
+        if: ${{ needs.changes.outputs.ui != 'true' }}
+        run: echo "No tools/ui changes detected; skipping UI E2E tests."
+
       - name: Setup Node.js
         id: node
+        if: ${{ needs.changes.outputs.ui == 'true' }}
         uses: actions/setup-node@v6
         with:
           node-version: "24"
@@ -113,32 +143,32 @@ jobs:
 
       - name: Install dependencies
         id: setup
-        if: ${{ steps.node.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && steps.node.conclusion == 'success' }}
         run: npm ci
         working-directory: tools/ui
 
       - name: Build application
-        if: ${{ always() && steps.setup.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.setup.conclusion == 'success' }}
         run: npm run build
         working-directory: tools/ui
 
       - name: Install Playwright browsers
         id: playwright
-        if: ${{ always() && steps.setup.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.setup.conclusion == 'success' }}
         run: npx playwright install --with-deps
         working-directory: tools/ui
 
       - name: Build Storybook
-        if: ${{ always() && steps.playwright.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.playwright.conclusion == 'success' }}
         run: npm run build-storybook
         working-directory: tools/ui
 
       - name: Run UI tests
-        if: ${{ always() && steps.playwright.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.playwright.conclusion == 'success' }}
         run: npm run test:ui -- --testTimeout=60000
         working-directory: tools/ui
 
       - name: Run E2E tests
-        if: ${{ always() && steps.playwright.conclusion == 'success' }}
+        if: ${{ needs.changes.outputs.ui == 'true' && always() && steps.playwright.conclusion == 'success' }}
         run: npm run test:e2e
         working-directory: tools/ui

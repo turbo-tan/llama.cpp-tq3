@@ -40,13 +40,36 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Detect UI changes
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.sha || github.event.pull_request.head.sha || github.sha || github.head_ref || github.ref_name }}
+
+      - name: Detect changed UI files
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            ui:
+              - 'tools/ui/**'
+
   ui-build:
     name: Build static output
+    needs: changes
+    if: ${{ needs.changes.outputs.ui == 'true' }}
     uses: ./.github/workflows/ui-build-self-hosted.yml
 
   ui-checks:
     name: Checks
-    needs: ui-build
+    needs: [changes, ui-build]
+    if: ${{ needs.changes.outputs.ui == 'true' }}
     runs-on: [self-hosted, PLAYWRIGHT]
     continue-on-error: true
     steps:
@@ -83,7 +106,8 @@ jobs:
 
   e2e-tests:
     name: E2E Tests
-    needs: ui-build
+    needs: [changes, ui-build]
+    if: ${{ needs.changes.outputs.ui == 'true' }}
     runs-on: [self-hosted, PLAYWRIGHT]
     steps:
       - name: Checkout code
