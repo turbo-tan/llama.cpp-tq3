@@ -10632,11 +10632,12 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
 
     const bool kda = (neg0 == S_v);
 
-    // state is 3D (S_v*S_v*H, K, n_seqs); K is the snapshot slot count.
-    const int64_t K = src_state->ne[1];
+    // Snapshot slot count is stored in the op params. The input state only
+    // carries the base state [S_v, S_v, H, n_seqs].
+    const int64_t K = ggml_get_op_params_i32(dst, 0);
     GGML_ASSERT(K >= 1);
-    // per-seq stride in floats (slot 0 of seq s lives at state + s * seq_stride)
-    const int64_t state_seq_stride = src_state->nb[2] / sizeof(float);
+    const int64_t state_head_stride = src_state->nb[2] / sizeof(float);
+    const int64_t state_seq_stride  = src_state->nb[3] / sizeof(float);
 
     const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
     const int ith = params->ith;
@@ -10682,8 +10683,7 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
             : state_out_base + (iv3 * H + iv1) * S_v * S_v;
 
         // copy input state into the working buffer and operate in-place
-        // state layout (D, K, n_seqs): slot 0 of seq iv3 starts at iv3 * state_seq_stride.
-        const float * s_in = state_in_base + iv3 * state_seq_stride + iv1 * S_v * S_v;
+        const float * s_in = state_in_base + iv3 * state_seq_stride + iv1 * state_head_stride;
         memcpy(s_out, s_in, S_v * S_v * sizeof(float));
 
         // attn output pointer for first token of this (head, seq)
