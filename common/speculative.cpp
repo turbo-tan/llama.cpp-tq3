@@ -214,9 +214,8 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
             common_params_sampling params;
             params.no_perf = false;
             params.top_k = 10;
-            params.samplers = {
-                COMMON_SAMPLER_TYPE_TOP_K,
-            };
+            params.samplers.clear();
+            params.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
 
             smpl.reset(common_sampler_init(llama_get_model(ctx_dft), params));
         }
@@ -472,7 +471,8 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
             common_params_sampling sparams;
             sparams.no_perf  = false;
             sparams.top_k    = 10;
-            sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
+            sparams.samplers.clear();
+            sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
             s.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
         }
 
@@ -886,7 +886,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             common_params_sampling sparams;
             sparams.no_perf  = false;
             sparams.top_k    = 10;
-            sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
+            sparams.samplers.clear();
+            sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K);
             s.reset(common_sampler_init(llama_get_model(ctx_dft), sparams));
         }
 
