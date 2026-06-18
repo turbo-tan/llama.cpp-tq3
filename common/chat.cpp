@@ -1717,6 +1717,11 @@ static common_chat_params common_chat_params_init_lfm2(const common_chat_templat
                              tmpl.source().find(THINK_START) != std::string::npos;
     auto include_grammar   = has_response_format || (has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE);
 
+    auto has_tools         = inputs.tools.is_array() && !inputs.tools.empty();
+    auto extract_reasoning = inputs.reasoning_format != COMMON_REASONING_FORMAT_NONE &&
+                             tmpl.source().find(THINK_START) != std::string::npos;
+    auto include_grammar   = has_tools && inputs.tool_choice != COMMON_CHAT_TOOL_CHOICE_NONE;
+
     if (inputs.has_continuation()) {
         const auto & msg = inputs.continue_msg;
 
@@ -3142,6 +3147,9 @@ static common_chat_params common_chat_templates_apply_jinja(const struct common_
             if (!end_tag.empty()) {
                 auto_params.thinking_end_tags = {std::move(end_tag)};
             }
+            auto_params.thinking_end_tag   = trim_whitespace(autoparser.reasoning.end);
+            // Keep the Qwen off-thinking prefill unchanged; the extra blank line
+            // breaks MTP draft alignment on the shipped TQ3_4S runtime.
         }
         common_peg_arena arena;
         arena.load(auto_params.parser);

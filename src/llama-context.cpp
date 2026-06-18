@@ -1272,6 +1272,8 @@ void llama_context::handle_mtp_for_ubatch(
         }
     }
 
+    synchronize();
+
     const bool pending_continues = mtp.pending_pos >= 0 && mtp.pending_pos + 1 == pos_start;
     if (mtp.pending_pos >= 0 && !pending_continues) {
         mtp.pending_pos = -1;
@@ -1283,8 +1285,7 @@ void llama_context::handle_mtp_for_ubatch(
     if (decode_mtp && n_out > 0) {
         int out_idx = 0;
         if (pending_continues) {
-            // pending row was async-copied to hook_batch.embd[pending_offset]
-            // in the previous call; no CPU memcpy needed here
+            std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, mtp.pending_h.data(), row_bytes);
             mtp.hook_batch.token[out_idx]     = tokens[0];
             mtp.hook_batch.pos[out_idx]       = pos_start;
             mtp.hook_batch.n_seq_id[out_idx]  = 1;
@@ -1316,6 +1317,8 @@ void llama_context::handle_mtp_for_ubatch(
         }
         GGML_ASSERT(out_idx == n_out);
         mtp.hook_batch.n_tokens = n_out;
+
+        synchronize();
 
         const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
         if (rc_dec != 0) {
@@ -1858,13 +1861,6 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
 }
 
 int llama_context::decode(const llama_batch & batch_inp) {
-    // PROFILING: count calls and measure timing
-    static std::atomic<int64_t> decode_call_count{0};
-    static std::atomic<int64_t> decode_total_us{0};
-    static thread_local int64_t local_count = 0;
-    const int64_t t0 = ggml_time_us();
-    const int64_t call_num = decode_call_count.fetch_add(1) + 1;
-
     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
     // so accept either present rather than requiring exactly one.
     GGML_ASSERT(batch_inp.token || batch_inp.embd);
@@ -2247,18 +2243,6 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
     // wait for the computation to finish (automatically done when obtaining the model output)
     //synchronize();
-
-    // PROFILING: accumulate timing and log periodically
-    {
-        const int64_t elapsed = ggml_time_us() - t0;
-        decode_total_us.fetch_add(elapsed);
-        local_count++;
-        if (local_count % 10 == 1 || local_count <= 5 || batch_inp.n_tokens > 1) {
-            fprintf(stderr, "PROFILE decode #%lld n_tokens=%d elapsed=%lld us total_us=%lld\n",
-                    (long long)call_num, batch_inp.n_tokens, (long long)elapsed,
-                    (long long)decode_total_us.load());
-        }
-    }
 
     return 0;
 }

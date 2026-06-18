@@ -27,6 +27,7 @@ constexpr float MAX_DOT_PRODUCT_ERROR_LOWBIT = 0.04f;
 constexpr float MAX_DOT_PRODUCT_ERROR_FP4 = 0.03f;
 constexpr float MAX_DOT_PRODUCT_ERROR_BINARY = 0.40f;
 constexpr float MAX_DOT_PRODUCT_ERROR_TERNARY = 0.15f;
+constexpr float MAX_DOT_PRODUCT_ERROR_TQ3_0 = 0.10f;
 
 static const char* RESULT_STR[] = {"ok", "FAILED"};
 
@@ -163,6 +164,8 @@ static int test_vec_dot_q(bool verbose) {
                 type == GGML_TYPE_IQ2_S   ? MAX_QUANTIZATION_TOTAL_ERROR_2BITS :
                 type == GGML_TYPE_Q3_K    ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
                 type == GGML_TYPE_IQ3_S   ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
+                type == GGML_TYPE_TQ3_0   ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS_XXS :
+                type == GGML_TYPE_TQ3_1S  ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS :
                 type == GGML_TYPE_IQ3_XXS ? MAX_QUANTIZATION_TOTAL_ERROR_3BITS_XXS :
                 type == GGML_TYPE_NVFP4   ? MAX_QUANTIZATION_TOTAL_ERROR_FP4 : MAX_QUANTIZATION_TOTAL_ERROR;
             bool failed = !(total_error < max_quantization_error);
@@ -189,6 +192,18 @@ static int test_vec_dot_q(bool verbose) {
                 : type == GGML_TYPE_NVFP4
                 ? MAX_DOT_PRODUCT_ERROR_FP4
                 : MAX_DOT_PRODUCT_ERROR;
+                                            type == GGML_TYPE_IQ3_XXS || type == GGML_TYPE_IQ3_S || type == GGML_TYPE_IQ2_S ||
+                                            type == GGML_TYPE_TQ3_1S
+                                          ? MAX_DOT_PRODUCT_ERROR_LOWBIT
+                                          : type == GGML_TYPE_Q1_0
+                                          ? MAX_DOT_PRODUCT_ERROR_BINARY
+                                          : type == GGML_TYPE_TQ3_0
+                                          ? MAX_DOT_PRODUCT_ERROR_TQ3_0
+                                          : type == GGML_TYPE_TQ1_0 || type == GGML_TYPE_TQ2_0
+                                          ? MAX_DOT_PRODUCT_ERROR_TERNARY
+                                          : type == GGML_TYPE_NVFP4
+                                          ? MAX_DOT_PRODUCT_ERROR_FP4
+                                          : MAX_DOT_PRODUCT_ERROR;
             failed = !(vec_dot_error < max_allowed_error);
             num_failed += failed;
             if (failed || verbose) {
