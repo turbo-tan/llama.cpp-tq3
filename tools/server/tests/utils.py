@@ -29,7 +29,7 @@ from re import RegexFlag
 import wget
 
 
-DEFAULT_HTTP_TIMEOUT = 60
+DEFAULT_HTTP_TIMEOUT = int(os.environ.get("LLAMA_SERVER_START_TIMEOUT", "60"))
 
 
 class ServerResponse:
