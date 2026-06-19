@@ -1266,6 +1266,8 @@ void llama_context::handle_mtp_for_ubatch(
         }
     }
 
+    std::vector<int32_t> last_row_by_seq(n_seq_max, -1);
+
     if (decode_mtp) {
         ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
         GGML_ASSERT(backend_t != nullptr);
@@ -1289,7 +1291,7 @@ void llama_context::handle_mtp_for_ubatch(
                 ++out_idx;
             }
 
-            if (k + 1 < n_tokens && seq_ids[k + 1][0] == seq_id) {
+            if (last_row_by_seq[seq_id] >= 0) {
                 ggml_backend_tensor_get_2d_async(
                     backend_t,
                     t,
@@ -1297,16 +1299,18 @@ void llama_context::handle_mtp_for_ubatch(
                     0,
                     row_bytes,
                     1,
-                    (size_t) k * row_bytes,
+                    (size_t) last_row_by_seq[seq_id] * row_bytes,
                     row_bytes);
 
-                mtp.hook_batch.token[out_idx]     = tokens[k + 1];
-                mtp.hook_batch.pos[out_idx]       = positions[k + 1];
+                mtp.hook_batch.token[out_idx]     = tokens[k];
+                mtp.hook_batch.pos[out_idx]       = positions[k];
                 mtp.hook_batch.n_seq_id[out_idx]  = 1;
                 mtp.hook_batch.seq_id[out_idx][0] = seq_id;
                 mtp.hook_batch.logits[out_idx]    = 0;
                 ++out_idx;
             }
+
+            last_row_by_seq[seq_id] = k;
         }
 
         mtp.hook_batch.n_tokens = out_idx;
@@ -1324,15 +1328,17 @@ void llama_context::handle_mtp_for_ubatch(
 
     ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
     GGML_ASSERT(backend_t != nullptr);
-    for (int32_t k = 0; k < n_tokens; ++k) {
-        const llama_seq_id seq_id = seq_ids[k][0];
+    for (uint32_t seq_id = 0; seq_id < n_seq_max; ++seq_id) {
+        if (last_row_by_seq[seq_id] < 0) {
+            continue;
+        }
         ggml_backend_tensor_get_async(
             backend_t,
             t,
             mtp.pending_h.data() + (size_t) seq_id * n_embd,
-            (size_t) k * row_bytes,
+            (size_t) last_row_by_seq[seq_id] * row_bytes,
             row_bytes);
-        mtp.pending_pos[seq_id] = positions[k];
+        mtp.pending_pos[seq_id] = positions[last_row_by_seq[seq_id]];
     }
 }
 
