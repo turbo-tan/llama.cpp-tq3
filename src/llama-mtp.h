@@ -11,7 +11,7 @@ struct llama_mtp {
     ggml_backend_buffer_t hook_batch_embd_buffer = nullptr;
     std::vector<llama_token> hook_tokens;
 
-    // Cross-ubatch carryover for the final hidden-state row.
-    std::vector<float> pending_h;   // [n_embd]
-    llama_pos          pending_pos = -1;
+    // Cross-ubatch carryover for the final hidden-state row, indexed by seq_id.
+    std::vector<float> pending_h;   // [n_seq_max * n_embd]
+    std::vector<llama_pos> pending_pos;
 };
