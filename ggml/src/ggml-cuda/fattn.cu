@@ -412,9 +412,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const bool asymm_tq3_v = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0) &&
                               V->type == GGML_TYPE_TQ3_0;
 
-    // Asymmetric tq3_0 V has a native vector path. Keep it off the f16
-    // temp-buffer FA paths used by tile/MMA kernels.
-    if (asymm_tq3_v) {
+    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_BLACKWELL && asymm_tq3_v) {
         return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
     }
 
