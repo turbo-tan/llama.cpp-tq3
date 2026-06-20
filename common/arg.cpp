@@ -2184,6 +2184,16 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples({LLAMA_EXAMPLE_PARALLEL}));
     add_opt(common_arg(
+        {"--rs-seq"}, "N",
+        string_format("number of recurrent-state snapshots per seq for rollback (default: %d, 0 = no rollback) [EXPERIMENTAL]", params.n_rs_seq),
+        [](common_params & params, int value) {
+            if (value < 0) {
+                throw std::invalid_argument("error: invalid value for rs-seq\n");
+            }
+            params.n_rs_seq = value;
+        }
+    ).set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_RS_SEQ"));
+    add_opt(common_arg(
         {"-cb", "--cont-batching"},
         {"-nocb", "--no-cont-batching"},
         string_format("whether to enable continuous batching (a.k.a dynamic batching) (default: %s)", params.cont_batching ? "enabled" : "disabled"),

@@ -371,6 +371,11 @@ struct common_params_speculative {
             return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
         });
 
+        if (has_mtp && draft.use_mtp_tree) {
+            // Tree mode needs recurrent state snapshots for partial rollback
+            return std::max(1, draft.mtp_tree_depth + 1);
+        }
+
         if (has_mtp) {
             return 0u; // MTP path: match old preserved binary behavior (0 rs_seq)
         }
@@ -441,6 +446,7 @@ struct common_params {
     int32_t n_chunks              =    -1; // max number of chunks to process (-1 = unlimited)
     int32_t n_parallel            =     1; // number of parallel sequences to decode
     int32_t n_sequences           =     1; // number of sequences to decode
+    int32_t n_rs_seq              =     0; // number of recurrent-state snapshots per seq for rollback (0 = no rollback)
     int32_t n_outputs_max         =     0; // max outputs in a batch (0 = n_batch)
     int32_t grp_attn_n            =     1; // group-attention factor
     int32_t grp_attn_w            =   512; // group-attention width
