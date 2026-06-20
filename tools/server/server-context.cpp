@@ -3710,6 +3710,7 @@ private:
                                 size_t best_accept = 0;
                                 float best_score = -1.0f;
                                 mtp_tree_candidate_path best_path;
+                                llama_tokens best_accepted;
 
                                 const llama_token root = slot.sampled;
                                 const int32_t tree_start_pos = slot.spec_ckpt.pos_max >= 0
@@ -3737,7 +3738,7 @@ private:
                                         best_accept = n_accept;
                                         best_score = path.score;
                                         best_path = path;
-                                        accepted_tree = std::move(result.accepted);
+                                        best_accepted = std::move(result.accepted);
                                         used_tree_verify = true;
                                     }
 
@@ -3747,25 +3748,7 @@ private:
                                 }
 
                                 if (used_tree_verify) {
-                                    mtp_tree_verify_result result;
-                                    common_sampler_ptr smpl_tree(common_sampler_clone(smpl_save.get()));
-
-                                    if (!mtp_tree_verify_path(
-                                            slot.ctx_tgt,
-                                            slot.spec_ckpt,
-                                            spec_ckpt_flags,
-                                            slot.id,
-                                            tree_start_pos,
-                                            root,
-                                            best_path,
-                                            smpl_tree.get(),
-                                            result) || result.accepted.empty()) {
-                                        used_tree_verify = false;
-                                        accepted_tree.clear();
-                                    } else {
-                                        accepted_tree = std::move(result.accepted);
-                                        slot.smpl = std::move(smpl_tree);
-                                    }
+                                    accepted_tree = std::move(best_accepted);
                                 }
                             }
                         }
