@@ -66,6 +66,155 @@ static uint32_t server_n_outputs_max(const common_params & params) {
     return std::max<uint32_t>(1, std::min<uint64_t>(n_batch, n_outputs));
 }
 
+struct mtp_tree_candidate_path {
+    llama_tokens tokens;
+    float score = 0.0f;
+};
+
+static bool mtp_tree_collect_candidates(
+        const common_speculative_mtp_tree_plan & plan,
+        size_t max_depth,
+        std::vector<mtp_tree_candidate_path> & paths) {
+    paths.clear();
+
+    if (plan.nodes.size() <= 1) {
+        return false;
+    }
+
+    for (size_t i = 1; i < plan.nodes.size(); ++i) {
+        const auto & node = plan.nodes[i];
+        if (node.depth <= 0 || node.depth > (int32_t) max_depth) {
+            continue;
+        }
+        if (node.parent < 0 || (size_t) node.parent >= plan.nodes.size()) {
+            continue;
+        }
+
+        llama_tokens tokens;
+        int32_t j = (int32_t) i;
+        while (j > 0 && (size_t) j < plan.nodes.size()) {
+            const auto & cur = plan.nodes[(size_t) j];
+            if (cur.depth <= 0) {
+                break;
+            }
+            tokens.push_back(cur.token);
+            j = cur.parent;
+        }
+
+        if (tokens.empty()) {
+            continue;
+        }
+
+        std::reverse(tokens.begin(), tokens.end());
+
+        paths.push_back({std::move(tokens), node.cum_prob});
+    }
+
+    if (paths.empty()) {
+        return false;
+    }
+
+    std::sort(paths.begin(), paths.end(), [](const mtp_tree_candidate_path & a, const mtp_tree_candidate_path & b) {
+        if (a.score != b.score) {
+            return a.score > b.score;
+        }
+        if (a.tokens.size() != b.tokens.size()) {
+            return a.tokens.size() > b.tokens.size();
+        }
+        return a.tokens < b.tokens;
+    });
+
+    return true;
+}
+
+struct mtp_tree_verify_result {
+    bool ok = false;
+    llama_tokens accepted;
+};
+
+static bool mtp_tree_seq_rm_with_fallback(
+        llama_context * ctx_tgt,
+        llama_seq_id seq_id,
+        llama_pos p0,
+        llama_pos p1) {
+    auto * mem = llama_get_memory(ctx_tgt);
+    if (mem == nullptr) {
+        return true;
+    }
+
+    if (llama_memory_seq_rm(mem, seq_id, p0, p1)) {
+        return true;
+    }
+
+    // The recurrent cache can reject large bounded rollbacks when asked to trim
+    // beyond the configured RS window. Fall back to trimming only the last token,
+    // which is enough to clear a stale pending row in this verification path.
+    const llama_pos pos_max = llama_memory_seq_pos_max(mem, seq_id);
+    if (p1 < 0 && pos_max >= 0 && p0 <= pos_max) {
+        return llama_memory_seq_rm(mem, seq_id, pos_max, -1);
+    }
+
+    return false;
+}
+
+static bool mtp_tree_verify_path(
+        llama_context * ctx_tgt,
+        const common_prompt_checkpoint & ckpt,
+        llama_state_seq_flags ckpt_flags,
+        llama_seq_id seq_id,
+        int32_t start_pos,
+        llama_token root,
+        const mtp_tree_candidate_path & path,
+        common_sampler * smpl,
+        mtp_tree_verify_result & result) {
+    if (!ctx_tgt || !smpl || path.tokens.empty()) {
+        return false;
+    }
+
+    ckpt.load_tgt(ctx_tgt, seq_id, ckpt_flags);
+    if (!mtp_tree_seq_rm_with_fallback(ctx_tgt, seq_id, ckpt.pos_max + 1, -1)) {
+        return false;
+    }
+
+    const int32_t n_tokens = (int32_t) path.tokens.size() + 1;
+    auto batch = llama_batch_init(n_tokens, 0, 1);
+    if (batch.n_tokens < 0) {
+        llama_batch_free(batch);
+        return false;
+    }
+
+    common_batch_add(batch, root, start_pos, { seq_id }, true);
+    for (int32_t i = 0; i < (int32_t) path.tokens.size(); ++i) {
+        common_batch_add(batch, path.tokens[(size_t) i], start_pos + i + 1, { seq_id }, true);
+    }
+
+    const int rc = llama_decode(ctx_tgt, batch);
+    llama_batch_free(batch);
+
+    if (rc != 0) {
+        return false;
+    }
+
+    result.accepted.clear();
+
+    for (size_t i = 0; i < path.tokens.size(); ++i) {
+        const llama_token id = common_sampler_sample(smpl, ctx_tgt, (int) i + 1, false);
+        common_sampler_accept(smpl, id, true);
+        result.accepted.push_back(id);
+
+        if (id != path.tokens[i]) {
+            result.ok = true;
+            return true;
+        }
+    }
+
+    const llama_token id = common_sampler_sample(smpl, ctx_tgt, (int) path.tokens.size(), false);
+    common_sampler_accept(smpl, id, true);
+    result.accepted.push_back(id);
+    result.ok = true;
+    return true;
+}
+
 static common_context_seq_rm_type server_seq_rm_type_for_startup(llama_context * ctx, bool warmup_enabled) {
     if (ctx == nullptr) {
         return COMMON_CONTEXT_SEQ_RM_TYPE_NO;
@@ -2665,7 +2814,9 @@ private:
                     ckpt.load_dft(ctx_dft.get(), slot.id, spec_ckpt_flags);
                 }
 
-                common_context_seq_rm(ctx_dft.get(), slot.id, ckpt.pos_max + 1, -1);
+                if (!mtp_tree_seq_rm_with_fallback(ctx_dft.get(), slot.id, ckpt.pos_max + 1, -1)) {
+                    SLT_WRN(slot, "failed to trim speculative draft rollback state (%d -> -1)\n", ckpt.pos_max + 1);
+                }
             }
 
             if (!draft.empty()) {
@@ -3532,25 +3683,116 @@ private:
                 GGML_ASSERT(n_draft > 0);
 
                 // verify and try to accept the draft
+                common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
                 {
                     // save the sampler sampler state in case we need to restore it
-                    common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
+                    const bool use_ckpt_tgt =
+                        ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
+                       (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_draft > llama_n_rs_seq(ctx_tgt));
+
+                    bool used_tree_verify = false;
+                    llama_tokens accepted_tree;
+
+                    if (params_base.speculative.draft.use_mtp_tree && use_ckpt_tgt && !slot.spec_ckpt.empty()) {
+                        common_speculative_mtp_tree_plan mtp_tree;
+                        if (common_speculative_get_mtp_tree_plan(spec.get(), slot.id, mtp_tree)) {
+                            if (trace > 0) {
+                                SLT_DBG(slot,
+                                        "mtp-tree draft: nodes=%zu max_nodes=%zu max_depth=%zu p_split=%.4g\n",
+                                        mtp_tree.nodes.size(),
+                                        mtp_tree.max_nodes,
+                                        mtp_tree.max_depth,
+                                        (double) mtp_tree.p_split);
+                            }
+
+                            std::vector<mtp_tree_candidate_path> tree_paths;
+                            if (mtp_tree_collect_candidates(mtp_tree, n_draft, tree_paths)) {
+                                size_t best_accept = 0;
+                                float best_score = -1.0f;
+                                mtp_tree_candidate_path best_path;
+
+                                const llama_token root = slot.sampled;
+                                const int32_t tree_start_pos = slot.spec_ckpt.pos_max >= 0
+                                    ? (int32_t) slot.spec_ckpt.pos_max + 1
+                                    : (int32_t) slot.spec_ckpt.n_tokens;
+                                for (const auto & path : tree_paths) {
+                                    mtp_tree_verify_result result;
+                                    common_sampler_ptr smpl_tree(common_sampler_clone(smpl_save.get()));
+
+                                    if (!mtp_tree_verify_path(
+                                            slot.ctx_tgt,
+                                            slot.spec_ckpt,
+                                            spec_ckpt_flags,
+                                            slot.id,
+                                            tree_start_pos,
+                                            root,
+                                            path,
+                                            smpl_tree.get(),
+                                            result) || result.accepted.empty()) {
+                                        continue;
+                                    }
+
+                                    const size_t n_accept = result.accepted.size() - 1;
+                                    if (n_accept > best_accept || (n_accept == best_accept && path.score > best_score)) {
+                                        best_accept = n_accept;
+                                        best_score = path.score;
+                                        best_path = path;
+                                        accepted_tree = std::move(result.accepted);
+                                        used_tree_verify = true;
+                                    }
+
+                                    if (best_accept >= n_draft) {
+                                        break;
+                                    }
+                                }
+
+                                if (used_tree_verify) {
+                                    mtp_tree_verify_result result;
+                                    common_sampler_ptr smpl_tree(common_sampler_clone(smpl_save.get()));
+
+                                    if (!mtp_tree_verify_path(
+                                            slot.ctx_tgt,
+                                            slot.spec_ckpt,
+                                            spec_ckpt_flags,
+                                            slot.id,
+                                            tree_start_pos,
+                                            root,
+                                            best_path,
+                                            smpl_tree.get(),
+                                            result) || result.accepted.empty()) {
+                                        used_tree_verify = false;
+                                        accepted_tree.clear();
+                                    } else {
+                                        accepted_tree = std::move(result.accepted);
+                                        slot.smpl = std::move(smpl_tree);
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
-                    auto accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
+                    llama_tokens accepted;
+                    if (used_tree_verify) {
+                        accepted = std::move(accepted_tree);
+                        if (trace > 0) {
+                            SLT_INF(slot, "accepted %2zu/%2zu draft tokens (tree)\n", accepted.size() - 1, n_draft);
+                        }
+                    } else {
+                        accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
+                        if (trace > 0) {
+                            SLT_INF(slot, "accepted %2zu/%2zu draft tokens\n", accepted.size() - 1, n_draft);
+                        }
+                    }
                     slot.spec_i_batch.clear();
 
                     GGML_ASSERT(accepted.size() >= 1);
 
                     const uint32_t n_rollback = slot.spec_draft.size() + 1 - accepted.size();
 
-                    const bool use_ckpt_tgt =
-                        ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
-                       (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_rollback > llama_n_rs_seq(ctx_tgt));
-
                     // check for partial draft acceptance
                     if (n_rollback > 0) {
-                        if (use_ckpt_tgt) {
+                        if (use_ckpt_tgt && !used_tree_verify) {
                             if (trace > 0) {
                                 SLT_INF(slot, "accepted %2zu/%2zu draft tokens (restore checkpoint)\n", accepted.size() - 1, slot.spec_draft.size());
                             }
@@ -3565,13 +3807,20 @@ private:
                             {
                                 ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags);
 
-                                common_context_seq_rm(slot.ctx_tgt, slot.id, ckpt.pos_max + 1, -1);
+                                if (!mtp_tree_seq_rm_with_fallback(slot.ctx_tgt, slot.id, ckpt.pos_max + 1, -1)) {
+                                    slot.smpl = std::move(smpl_save);
+                                    accepted.clear();
+                                    slot.spec_draft.clear();
+                                    continue;
+                                }
                             }
 
                             if (slot.ctx_dft) {
                                 ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags);
 
-                                common_context_seq_rm(slot.ctx_dft, slot.id, ckpt.pos_max + 1, -1);
+                                if (!mtp_tree_seq_rm_with_fallback(slot.ctx_dft, slot.id, ckpt.pos_max + 1, -1)) {
+                                    SLT_WRN(slot, "failed to trim draft rollback state for dft (%d -> -1)\n", ckpt.pos_max + 1);
+                                }
                             }
 
                             slot.prompt.tokens.keep_first(ckpt.n_tokens);
@@ -3606,9 +3855,18 @@ private:
                 slot.sampled = ids.back(); // last accepted token
                 SLT_DBG(slot, "add accepted tokens: sampled=%d, ids.size=%zu, n_draft=%zu\n", slot.sampled, ids.size(), n_draft);
 
-                common_context_seq_rm(slot.ctx_tgt, slot.id, slot.prompt.tokens.pos_next(), -1);
+                if (!mtp_tree_seq_rm_with_fallback(slot.ctx_tgt, slot.id, slot.prompt.tokens.pos_next(), -1)) {
+                    slot.prompt.tokens.keep_first(slot.prompt.n_tokens() - ids.size());
+                    slot.n_draft_accepted -= ids.size() - 1;
+                    slot.sampled = slot.prompt.tokens.get_tokens().back();
+                    slot.smpl = std::move(smpl_save);
+                    slot.spec_draft = {};
+                    continue;
+                }
                 if (slot.ctx_dft) {
-                    common_context_seq_rm(slot.ctx_dft, slot.id, slot.prompt.tokens.pos_next(), -1);
+                    if (!mtp_tree_seq_rm_with_fallback(slot.ctx_dft, slot.id, slot.prompt.tokens.pos_next(), -1)) {
+                        SLT_WRN(slot, "failed to trim draft rollback state for dft (%d -> -1)\n", (int) slot.prompt.tokens.pos_next());
+                    }
                 }
 
                 for (size_t i = 0; i < ids.size(); ++i) {

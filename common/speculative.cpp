@@ -159,6 +159,12 @@ struct common_speculative_impl {
 
     virtual void accept(llama_seq_id seq_id, uint16_t n_accepted, bool is_other) = 0;
 
+    virtual bool get_mtp_tree_plan(llama_seq_id seq_id, common_speculative_mtp_tree_plan & plan) const {
+        GGML_UNUSED(seq_id);
+        GGML_UNUSED(plan);
+        return false;
+    }
+
     // true if this implementation requires the target context to extract post-norm embeddings
     virtual bool need_embd() const = 0;
 
@@ -853,6 +859,99 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     // pre-advancement before process() mirrored the verify batch.
     std::vector<uint16_t> last_n_drafted;
 
+    struct mtp_tree_plan {
+        common_speculative_mtp_tree_plan plan;
+        int32_t main_tail = -1;
+
+        void clear() {
+            plan.nodes.clear();
+            main_tail = -1;
+        }
+
+        bool empty() const {
+            return plan.nodes.empty();
+        }
+
+        void configure(size_t nodes_cap, size_t depth_cap, float split_threshold) {
+            plan.max_nodes = std::max<size_t>(1, nodes_cap);
+            plan.max_depth = std::max<size_t>(1, depth_cap);
+            plan.p_split = split_threshold;
+        }
+
+        bool can_add_node(int32_t parent, int32_t depth) const {
+            if (plan.nodes.empty()) {
+                return false;
+            }
+            if (parent < 0 || parent >= (int32_t) plan.nodes.size()) {
+                return false;
+            }
+            if (plan.nodes.size() >= plan.max_nodes) {
+                return false;
+            }
+            if (depth > (int32_t) plan.max_depth) {
+                return false;
+            }
+            return true;
+        }
+
+        int32_t append_child(int32_t parent, int32_t depth, llama_token token, float prob, llama_seq_id seq_id, int32_t batch_pos) {
+            if (!can_add_node(parent, depth)) {
+                return -1;
+            }
+
+            const float parent_cum = plan.nodes[parent].cum_prob;
+            const common_speculative_mtp_tree_node node = {
+                token,
+                parent,
+                depth,
+                prob,
+                parent_cum * prob,
+                seq_id,
+                batch_pos
+            };
+            plan.nodes.push_back(node);
+            return (int32_t) plan.nodes.size() - 1;
+        }
+
+        bool try_add_alternatives(
+                int32_t parent,
+                const llama_token_data_array * cur_p,
+                int max_alternatives,
+                int32_t depth,
+                llama_seq_id seq_id,
+                int32_t batch_pos
+        ) {
+            if (!cur_p || cur_p->size <= 1 || max_alternatives <= 0) {
+                return false;
+            }
+            if (!can_add_node(parent, depth)) {
+                return false;
+            }
+
+            int added = 0;
+            for (size_t i = 1; i < cur_p->size && added < max_alternatives && plan.nodes.size() < plan.max_nodes; ++i) {
+                if (cur_p->data[i].p < plan.p_split) {
+                    break;
+                }
+                const auto child = append_child(parent, depth, cur_p->data[i].id, cur_p->data[i].p, seq_id, batch_pos);
+                if (child < 0) {
+                    break;
+                }
+                ++added;
+            }
+            return added > 0;
+        }
+
+        void begin(llama_token root, llama_seq_id seq_id, int32_t batch_pos) {
+            clear();
+            const common_speculative_mtp_tree_node root_node = {root, -1, 0, 1.0f, 1.0f, seq_id, batch_pos};
+            plan.nodes.push_back(root_node);
+            main_tail = 0;
+        }
+    };
+
+    std::vector<mtp_tree_plan> mtp_trees;
+
     common_speculative_impl_draft_mtp(const common_params_speculative & params, uint32_t n_seq)
         : common_speculative_impl(COMMON_SPECULATIVE_TYPE_DRAFT_MTP, n_seq)
         , params(params.draft)
@@ -874,6 +973,12 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 ctx_tgt ? "yes" : "no",
                 ctx_dft ? "yes" : "no",
                 common_speculative_get_devices_str(this->params.devices).c_str());
+        if (this->params.use_mtp_tree) {
+            LOG_INF("%s: MTP tree mode enabled\n", __func__);
+            LOG_INF("%s: - mtp_tree_nodes=%d, mtp_tree_depth=%d, mtp_tree_p_split=%.2f\n", __func__,
+                    this->params.mtp_tree_nodes, this->params.mtp_tree_depth,
+                    (double) this->params.mtp_tree_p_split);
+        }
 
         const int32_t n_b = (int32_t) llama_n_batch(ctx_dft);
         batch = llama_batch_init(/*n_tokens=*/ n_b, /*embd=*/ n_embd, /*n_seq_max=*/ 1);
@@ -924,6 +1029,10 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         verify_h_rows.assign(n_seq, 0);
 
         last_n_drafted.assign(n_seq, 0);
+        mtp_trees.assign(n_seq, {});
+        for (auto & plan : mtp_trees) {
+            plan.configure(std::max(1, this->params.mtp_tree_nodes), std::max(1, this->params.mtp_tree_depth), this->params.mtp_tree_p_split);
+        }
     }
 
     ~common_speculative_impl_draft_mtp() override {
@@ -953,6 +1062,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         verify_pos_first[seq_id] = -1;
         verify_h_rows[seq_id] = 0;
         last_n_drafted[seq_id] = 0;
+        if (params.use_mtp_tree) {
+            mtp_trees[seq_id].clear();
+            mtp_trees[seq_id].configure(
+                std::max(1, params.mtp_tree_nodes),
+                std::max(1, params.mtp_tree_depth),
+                params.mtp_tree_p_split);
+        }
 
         const int32_t N = (int32_t) prompt.size();
         if (N <= 0) {
@@ -1150,8 +1266,54 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 auto & dp = dparams.at(seq_id);
                 auto & result = *dp.result;
+                        const bool is_new_draft = result.empty();
 
                 result.push_back(id);
+
+                if (params.use_mtp_tree && cur_p->size > 0) {
+                    auto & plan = mtp_trees[seq_id];
+                    if (is_new_draft) {
+                        plan.configure(
+                            std::max(1, params.mtp_tree_nodes),
+                            std::max(1, params.mtp_tree_depth),
+                            params.mtp_tree_p_split);
+                        plan.begin(dp.id_last, seq_id, dp.n_past);
+                    } else {
+                        if (plan.empty()) {
+                            plan.configure(
+                                std::max(1, params.mtp_tree_nodes),
+                                std::max(1, params.mtp_tree_depth),
+                                params.mtp_tree_p_split);
+                            plan.begin(dp.id_last, seq_id, dp.n_past);
+                        }
+                    }
+
+                    const bool can_extend = result.size() <= plan.plan.max_depth;
+                        if (can_extend) {
+                            const int32_t depth = (int32_t) result.size();
+                            const auto child = plan.append_child(plan.main_tail, depth, id, cur_p->data[0].p, seq_id, dp.n_past + (int32_t) i + 1);
+                            if (child >= 0) {
+                                plan.main_tail = child;
+                            }
+
+                            const int max_alt = std::min(4, (int)cur_p->size - 1);
+                            const int32_t alt_parent = (child >= 0) ? child : plan.main_tail;
+                            if (plan.try_add_alternatives(alt_parent, cur_p, max_alt, depth, seq_id, dp.n_past + (int32_t) i + 1)) {
+                                LOG_DBG("%s: seq_id=%d tree depth=%d nodes=%d add root branches=%d\n",
+                                        __func__,
+                                        (int) seq_id,
+                                        (int) (plan.plan.nodes.empty() ? 0 : plan.plan.nodes.back().depth),
+                                        (int) max_alt,
+                                        max_alt);
+                            }
+                    } else {
+                        LOG_DBG("%s: seq_id=%d cannot extend mtp tree (depth=%d, nodes=%d)\n",
+                                __func__,
+                                (int) seq_id,
+                                (int) result.size(),
+                                (int) plan.plan.nodes.size());
+                    }
+                }
 
                 if (params.n_max <= (int) result.size()) {
                     drafting[seq_id] = false;
@@ -1211,6 +1373,15 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         const size_t row_bytes = (size_t) n_embd * sizeof(float);
         std::memcpy(pending_h[seq_id].data(), verify_h[seq_id].data() + (size_t) i_h * n_embd, row_bytes);
         pending_pos[seq_id] = verify_pos_first[seq_id] + i_h;
+    }
+
+    bool get_mtp_tree_plan(llama_seq_id seq_id, common_speculative_mtp_tree_plan & plan) const override {
+        if (seq_id < 0 || seq_id >= (llama_seq_id) n_seq || !params.use_mtp_tree) {
+            return false;
+        }
+
+        plan = mtp_trees[seq_id].plan;
+        return !plan.nodes.empty();
     }
 
     bool need_embd() const override {
@@ -1957,6 +2128,23 @@ void common_speculative_begin(common_speculative * spec, llama_seq_id seq_id, co
         impl->begin(seq_id, prompt);
         impl->n_call_begin++;
     }
+}
+
+bool common_speculative_get_mtp_tree_plan(
+        const common_speculative * spec,
+        llama_seq_id seq_id,
+        common_speculative_mtp_tree_plan & plan) {
+    if (spec == nullptr) {
+        return false;
+    }
+
+    for (const auto & impl : spec->impls) {
+        if (impl->get_mtp_tree_plan(seq_id, plan)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool common_speculative_process(common_speculative * spec, const llama_batch & batch) {

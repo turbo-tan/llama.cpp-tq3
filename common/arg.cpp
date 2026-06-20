@@ -3609,6 +3609,44 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_P_MIN"));
     add_opt(common_arg(
+        {"--spec-mtp-tree"},
+        {"--no-spec-mtp-tree"},
+        "enable dynamic token-tree speculative mode for MTP (default: disabled)",
+        [](common_params & params, bool value) {
+            params.speculative.draft.use_mtp_tree = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-nodes"}, "N",
+        string_format("maximum number of nodes in MTP token-tree mode (default: %d)", params.speculative.draft.mtp_tree_nodes),
+        [](common_params & params, int value) {
+            if (value < 1 || value > 1024) {
+                throw std::invalid_argument("spec-mtp-tree-nodes must be between 1 and 1024 inclusive");
+            }
+            params.speculative.draft.mtp_tree_nodes = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_NODES"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-depth"}, "D",
+        string_format("maximum token-tree depth for MTP tree mode (default: %d)", params.speculative.draft.mtp_tree_depth),
+        [](common_params & params, int value) {
+            if (value < 1 || value > 128) {
+                throw std::invalid_argument("spec-mtp-tree-depth must be between 1 and 128 inclusive");
+            }
+            params.speculative.draft.mtp_tree_depth = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_DEPTH"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-p-split"}, "P",
+        string_format("token-tree expansion minimum probability (default: %.2f)", (double)params.speculative.draft.mtp_tree_p_split),
+        [](common_params & params, const std::string & value) {
+            params.speculative.draft.mtp_tree_p_split = std::stof(value);
+            if (params.speculative.draft.mtp_tree_p_split < 0.0f || params.speculative.draft.mtp_tree_p_split > 1.0f) {
+                throw std::invalid_argument("spec-mtp-tree-p-split must be between 0 and 1");
+            }
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_P_SPLIT"));
+    add_opt(common_arg(
         {"--spec-draft-backend-sampling"},
         {"--no-spec-draft-backend-sampling"},
         string_format("offload draft sampling to the backend (default: %s)",

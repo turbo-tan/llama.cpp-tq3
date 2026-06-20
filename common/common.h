@@ -306,6 +306,11 @@ struct common_params_speculative_draft {
     float p_split = 0.1f; // speculative decoding split probability
     float p_min   = 0.0f; // minimum speculative decoding probability (greedy)
 
+    bool use_mtp_tree = false; // enable experimental dynamic token-tree mode for MTP
+    int32_t mtp_tree_nodes = 1; // maximum tree nodes to evaluate when tree mode is enabled
+    int32_t mtp_tree_depth = 1; // maximum tree depth when tree mode is enabled
+    float mtp_tree_p_split = 0.0f; // probability cutoff for tree expansion
+
     bool backend_sampling = true; // offload draft sampling to the backend (default: on)
 
     common_params_model mparams;
