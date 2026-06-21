@@ -165,6 +165,8 @@ struct common_speculative_impl {
         return false;
     }
 
+    virtual void sync_draft_sampler(llama_seq_id /*seq_id*/, common_sampler * /*smpl*/) {}
+
     // true if this implementation requires the target context to extract post-norm embeddings
     virtual bool need_embd() const = 0;
 
@@ -369,6 +371,11 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
                 dp.result->clear();
             }
         }
+    }
+
+    void sync_draft_sampler(llama_seq_id seq_id, common_sampler * smpl) override {
+        GGML_UNUSED(seq_id);
+        GGML_UNUSED(smpl);
     }
 
     void accept(llama_seq_id /*seq_id*/, uint16_t /*n_accepted*/, bool /*is_other*/) override {
@@ -1087,6 +1094,22 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         }
     }
 
+    void sync_draft_sampler(llama_seq_id seq_id, common_sampler * smpl) override {
+        GGML_ASSERT(seq_id >= 0 && seq_id < (llama_seq_id) n_seq);
+        if (smpl == nullptr) {
+            return;
+        }
+
+        if (!smpls[(size_t) seq_id]) {
+            return;
+        }
+
+        smpls[(size_t) seq_id].reset(common_sampler_clone(smpl));
+        if (!smpls[(size_t) seq_id]) {
+            LOG_ERR("%s: failed to clone target sampler for seq_id=%d\n", __func__, (int) seq_id);
+        }
+    }
+
     bool process(const llama_batch & batch_in) override {
         if (batch_in.n_tokens <= 0) {
             return true;
@@ -1273,7 +1296,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 if (params.use_mtp_tree && cur_p->size > 0) {
                     auto & plan = mtp_trees[seq_id];
                     if (is_new_draft) {
-                        LOG_INF("mtp_tree_build: initializing tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
+                        LOG_DBG("mtp_tree_build: initializing tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
                         plan.configure(
                             std::max(1, params.mtp_tree_nodes),
                             std::max(1, params.mtp_tree_depth),
@@ -1281,7 +1304,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                         plan.begin(dp.id_last, seq_id, dp.n_past);
                     } else {
                         if (plan.empty()) {
-                            LOG_INF("mtp_tree_build: re-initializing empty tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
+                            LOG_DBG("mtp_tree_build: re-initializing empty tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
                             plan.configure(
                                 std::max(1, params.mtp_tree_nodes),
                                 std::max(1, params.mtp_tree_depth),
@@ -1296,13 +1319,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                             const auto child = plan.append_child(plan.main_tail, depth, id, cur_p->data[0].p, seq_id, dp.n_past + (int32_t) i + 1);
                             if (child >= 0) {
                                 plan.main_tail = child;
-                                LOG_INF("mtp_tree_build: added main token=%d depth=%d parent=%d child=%d\n", (int)id, depth, (int)plan.main_tail, child);
+                                LOG_DBG("mtp_tree_build: added main token=%d depth=%d parent=%d child=%d\n", (int)id, depth, (int)plan.main_tail, child);
                             }
 
                             const int max_alt = std::min(4, (int)cur_p->size - 1);
                             const int32_t alt_parent = (child >= 0) ? child : plan.main_tail;
                             if (plan.try_add_alternatives(alt_parent, cur_p, max_alt, depth, seq_id, dp.n_past + (int32_t) i + 1)) {
-                                LOG_INF("mtp_tree_build: added %d alternatives at depth=%d\n", max_alt, depth);
+                                LOG_DBG("mtp_tree_build: added %d alternatives at depth=%d\n", max_alt, depth);
                             }
                     } else {
                         LOG_DBG("%s: seq_id=%d cannot extend mtp tree (depth=%d, nodes=%d)\n",
@@ -2143,6 +2166,19 @@ bool common_speculative_get_mtp_tree_plan(
     }
 
     return false;
+}
+
+void common_speculative_sync_draft_sampler(
+    common_speculative * spec,
+    llama_seq_id seq_id,
+    common_sampler * smpl_target) {
+    if (spec == nullptr) {
+        return;
+    }
+
+    for (auto & impl : spec->impls) {
+        impl->sync_draft_sampler(seq_id, smpl_target);
+    }
 }
 
 bool common_speculative_process(common_speculative * spec, const llama_batch & batch) {
