@@ -66,6 +66,20 @@ static uint32_t server_n_outputs_max(const common_params & params) {
     return std::max<uint32_t>(1, std::min<uint64_t>(n_batch, n_outputs));
 }
 
+static int32_t server_target_n_seq_max(const common_params & params) {
+    const bool spec_mtp = std::find(params.speculative.types.begin(), params.speculative.types.end(),
+                                    COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end()
+                       || std::find(params.speculative.types.begin(), params.speculative.types.end(),
+                                    COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
+    if (!spec_mtp || !params.speculative.draft.use_mtp_tree || !params.kv_unified) {
+        return params.n_parallel;
+    }
+
+    const int32_t tree_nodes = std::max(1, params.speculative.draft.mtp_tree_nodes);
+    const int32_t extra_verify_seq = std::min<int32_t>(2, std::max(0, tree_nodes - params.n_parallel));
+    return params.n_parallel + extra_verify_seq;
+}
+
 struct mtp_tree_candidate_path {
     llama_tokens tokens;
     float score = 0.0f;
@@ -1070,6 +1084,7 @@ private:
     // use server_context methods instead
 
     common_params params_base;
+    int32_t n_slots_user = 0;
 
     // note: keep these alive - they determine the lifetime of the model, context, etc.
     common_init_result_ptr llama_init;
@@ -1155,7 +1170,11 @@ private:
         SRV_INF("loading model '%s'\n", params.model.path.c_str());
 
         params_base = params;
+        n_slots_user = params_base.n_parallel;
         params_base.n_outputs_max = server_n_outputs_max(params_base);
+        const int32_t n_seq_max_tgt = server_target_n_seq_max(params_base);
+        common_params params_tgt = params_base;
+        params_tgt.n_parallel = n_seq_max_tgt;
 
         std::string & mmproj_path = params_base.mmproj.path;
         bool has_mmproj = !mmproj_path.empty();
@@ -1224,7 +1243,7 @@ private:
                     measure_model_bytes = false;
                 }
 
-                params_dft.n_outputs_max = params_base.n_parallel;
+                params_dft.n_outputs_max = n_slots_user;
 
                 auto mparams_dft = common_model_params_to_llama(params_dft);
                 auto cparams_dft = common_context_params_to_llama(params_dft);
@@ -1291,7 +1310,12 @@ private:
             }
         }
 
-        llama_init = common_init_from_params(params_base);
+        if (n_seq_max_tgt != n_slots_user) {
+            SRV_INF("reserving %d target sequences for MTP tree verification (user slots = %d)\n",
+                    n_seq_max_tgt, n_slots_user);
+        }
+
+        llama_init = common_init_from_params(params_tgt);
 
         model_tgt = llama_init->model();
         ctx_tgt   = llama_init->context();
@@ -1403,7 +1427,7 @@ private:
             cparams_mtp.type_k        = params_base.cache_type_k;
             cparams_mtp.type_v        = params_base.cache_type_v;
             cparams_mtp.n_rs_seq      = 0;
-            cparams_mtp.n_outputs_max = params_base.n_parallel;
+            cparams_mtp.n_outputs_max = n_slots_user;
             cparams_mtp.ctx_other = ctx_tgt;
 
             ctx_dft.reset(llama_init_from_model(model_dft.get(), cparams_mtp));
@@ -1464,7 +1488,7 @@ private:
         slot_prompt_similarity = params_base.slot_prompt_similarity;
 
         // setup slots
-        SRV_INF("initializing slots, n_slots = %d\n", params_base.n_parallel);
+        SRV_INF("initializing slots, n_slots = %d\n", n_slots_user);
 
         const int n_ctx_train = llama_model_n_ctx_train(model_tgt);
 
@@ -1486,14 +1510,14 @@ private:
         }
 
         // initialize slots
-        for (int i = 0; i < params_base.n_parallel; i++) {
+        for (int i = 0; i < n_slots_user; i++) {
             slots.emplace_back();
         }
 
         // try speculative decoding
         if (ctx_tgt_seq_rm_type != COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
             try {
-                spec.reset(common_speculative_init(params_base.speculative, params_base.n_parallel));
+                spec.reset(common_speculative_init(params_base.speculative, n_slots_user));
             } catch (const std::exception & e) {
                 SRV_ERR("failed to initialize speculative decoding context: %s\n", e.what());
             }
@@ -1509,7 +1533,7 @@ private:
             ctx_dft.reset();
         }
 
-        for (int i = 0; i < params_base.n_parallel; i++) {
+        for (int i = 0; i < n_slots_user; i++) {
             server_slot & slot = slots[i];
 
             slot.id      = i;
@@ -1552,7 +1576,7 @@ private:
         // note that n_batch can be > n_ctx (e.g. for non-causal attention models such as BERT where the KV cache is not used)
         {
             const int32_t n_batch = llama_n_batch(ctx_tgt);
-            batch = llama_batch_init(std::max(n_batch, params_base.n_parallel), 0, 1);
+            batch = llama_batch_init(std::max(n_batch, n_slots_user), 0, 1);
         }
 
         if (params_base.cache_ram_mib != 0) {
