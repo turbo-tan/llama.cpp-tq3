@@ -77,6 +77,8 @@ static bool mtp_tree_collect_candidates(
         std::vector<mtp_tree_candidate_path> & paths) {
     paths.clear();
 
+    LOG_INF("mtp_tree_collect_candidates: plan.nodes.size()=%zu max_depth=%zu\n", plan.nodes.size(), max_depth);
+
     if (plan.nodes.size() <= 1) {
         return false;
     }
@@ -106,6 +108,9 @@ static bool mtp_tree_collect_candidates(
         }
 
         std::reverse(tokens.begin(), tokens.end());
+
+        LOG_INF("mtp_tree_collect_candidates: path[%zu] tokens=%zu score=%.4f first_token=%d\n", 
+                paths.size(), tokens.size(), (double)node.cum_prob, (int)tokens[0]);
 
         paths.push_back({std::move(tokens), node.cum_prob});
     }
@@ -168,11 +173,13 @@ static bool mtp_tree_verify_path(
         common_sampler * smpl,
         mtp_tree_verify_result & result) {
     if (!ctx_tgt || !smpl || path.tokens.empty()) {
+        LOG_INF("mtp_tree_verify_path: invalid input (ctx=%p smpl=%p tokens=%zu)\n", ctx_tgt, smpl, path.tokens.size());
         return false;
     }
 
     ckpt.load_tgt(ctx_tgt, seq_id, ckpt_flags);
     if (!mtp_tree_seq_rm_with_fallback(ctx_tgt, seq_id, ckpt.pos_max + 1, -1)) {
+        LOG_INF("mtp_tree_verify_path: seq_rm failed (pos_max=%d)\n", (int)ckpt.pos_max);
         return false;
     }
 
@@ -180,6 +187,7 @@ static bool mtp_tree_verify_path(
     auto batch = llama_batch_init(n_tokens, 0, 1);
     if (batch.n_tokens < 0) {
         llama_batch_free(batch);
+        LOG_INF("mtp_tree_verify_path: batch_init failed (n_tokens=%d)\n", n_tokens);
         return false;
     }
 
@@ -192,6 +200,7 @@ static bool mtp_tree_verify_path(
     llama_batch_free(batch);
 
     if (rc != 0) {
+        LOG_INF("mtp_tree_verify_path: decode failed (rc=%d)\n", rc);
         return false;
     }
 
@@ -201,6 +210,8 @@ static bool mtp_tree_verify_path(
         const llama_token id = common_sampler_sample(smpl, ctx_tgt, (int) i + 1, false);
         common_sampler_accept(smpl, id, true);
         result.accepted.push_back(id);
+
+        LOG_INF("mtp_tree_verify_path: pos=%zu sampled=%d expected=%d match=%d\n", i, (int)id, (int)path.tokens[i], id == path.tokens[i] ? 1 : 0);
 
         if (id != path.tokens[i]) {
             result.ok = true;
@@ -3696,6 +3707,7 @@ private:
                     if (params_base.speculative.draft.use_mtp_tree && use_ckpt_tgt && !slot.spec_ckpt.empty()) {
                         common_speculative_mtp_tree_plan mtp_tree;
                         if (common_speculative_get_mtp_tree_plan(spec.get(), slot.id, mtp_tree)) {
+                            LOG_INF("slot %d: got tree plan with %zu nodes\n", slot.id, mtp_tree.nodes.size());
                             if (trace > 0) {
                                 SLT_DBG(slot,
                                         "mtp-tree draft: nodes=%zu max_nodes=%zu max_depth=%zu p_split=%.4g\n",
@@ -3707,11 +3719,13 @@ private:
 
                             std::vector<mtp_tree_candidate_path> tree_paths;
                             if (mtp_tree_collect_candidates(mtp_tree, n_draft, tree_paths)) {
+                                LOG_INF("slot %d: collected %zu candidate paths\n", slot.id, tree_paths.size());
                                 size_t best_accept = 0;
                                 float best_score = -1.0f;
                                 mtp_tree_candidate_path best_path;
 
                                 const llama_token root = slot.sampled;
+                                LOG_INF("slot %d: using root=%d for verification\n", slot.id, (int)root);
                                 const int32_t tree_start_pos = slot.spec_ckpt.pos_max >= 0
                                     ? (int32_t) slot.spec_ckpt.pos_max + 1
                                     : (int32_t) slot.spec_ckpt.n_tokens;

@@ -1273,6 +1273,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 if (params.use_mtp_tree && cur_p->size > 0) {
                     auto & plan = mtp_trees[seq_id];
                     if (is_new_draft) {
+                        LOG_INF("mtp_tree_build: initializing tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
                         plan.configure(
                             std::max(1, params.mtp_tree_nodes),
                             std::max(1, params.mtp_tree_depth),
@@ -1280,6 +1281,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                         plan.begin(dp.id_last, seq_id, dp.n_past);
                     } else {
                         if (plan.empty()) {
+                            LOG_INF("mtp_tree_build: re-initializing empty tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
                             plan.configure(
                                 std::max(1, params.mtp_tree_nodes),
                                 std::max(1, params.mtp_tree_depth),
@@ -1294,17 +1296,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                             const auto child = plan.append_child(plan.main_tail, depth, id, cur_p->data[0].p, seq_id, dp.n_past + (int32_t) i + 1);
                             if (child >= 0) {
                                 plan.main_tail = child;
+                                LOG_INF("mtp_tree_build: added main token=%d depth=%d parent=%d child=%d\n", (int)id, depth, (int)plan.main_tail, child);
                             }
 
                             const int max_alt = std::min(4, (int)cur_p->size - 1);
                             const int32_t alt_parent = (child >= 0) ? child : plan.main_tail;
                             if (plan.try_add_alternatives(alt_parent, cur_p, max_alt, depth, seq_id, dp.n_past + (int32_t) i + 1)) {
-                                LOG_DBG("%s: seq_id=%d tree depth=%d nodes=%d add root branches=%d\n",
-                                        __func__,
-                                        (int) seq_id,
-                                        (int) (plan.plan.nodes.empty() ? 0 : plan.plan.nodes.back().depth),
-                                        (int) max_alt,
-                                        max_alt);
+                                LOG_INF("mtp_tree_build: added %d alternatives at depth=%d\n", max_alt, depth);
                             }
                     } else {
                         LOG_DBG("%s: seq_id=%d cannot extend mtp tree (depth=%d, nodes=%d)\n",
