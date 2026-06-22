@@ -1295,8 +1295,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
 
                 // add drafted token for each sequence
-                GGML_ASSERT(cur_p->selected >= 0);
-                const auto & selected = cur_p->data[cur_p->selected];
+                const auto & selected = cur_p->data[0];
                 const llama_token id = selected.id;
 
                 // only collect very high-confidence draft tokens
