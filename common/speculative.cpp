@@ -9,6 +9,15 @@
 #include "ngram-mod.h"
 #include "sampling.h"
 
+#if __has_include(<nvtx3/nvToolsExt.h>)
+#    include <nvtx3/nvToolsExt.h>
+#elif __has_include(<nvToolsExt.h>)
+#    include <nvToolsExt.h>
+#else
+static inline int nvtxRangePushA(const char *) { return 0; }
+static inline int nvtxRangePop() { return 0; }
+#endif
+
 #include "../src/llama-ext.h" // staging API: llama_set_embeddings_nextn / llama_get_embeddings_nextn_ith (used by MTP)
 
 #include <algorithm>
@@ -321,10 +330,12 @@ struct common_speculative_impl_draft_simple : public common_speculative_impl {
                 }
 
                 // add drafted token for each sequence
-                const llama_token id = cur_p->data[0].id;
+                GGML_ASSERT(cur_p->selected >= 0);
+                const auto & selected = cur_p->data[cur_p->selected];
+                const llama_token id = selected.id;
 
                 // only collect very high-confidence draft tokens
-                if (cur_p->data[0].p < params.p_min) {
+                if (selected.p < params.p_min) {
                     drafting[seq_id] = false;
                     n_drafting--;
 
@@ -757,11 +768,13 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
                             common_token_to_piece(ctx_dft, cur_p->data[k].id).c_str());
                 }
 
-                const llama_token id = cur_p->data[0].id;
+                GGML_ASSERT(cur_p->selected >= 0);
+                const auto & selected = cur_p->data[cur_p->selected];
+                const llama_token id = selected.id;
 
                 // only collect very high-confidence draft tokens
                 // (configurable via --spec-draft-p-min, set to 0.0 to disable early-stop)
-                if (cur_p->data[0].p < params.p_min) {
+                if (selected.p < params.p_min) {
                     drafting[seq_id] = false;
                     n_drafting--;
 
@@ -883,6 +896,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             plan.max_nodes = std::max<size_t>(1, nodes_cap);
             plan.max_depth = std::max<size_t>(1, depth_cap);
             plan.p_split = split_threshold;
+            plan.nodes.reserve(plan.max_nodes);
         }
 
         bool can_add_node(int32_t parent, int32_t depth) const {
@@ -931,10 +945,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             if (!cur_p || cur_p->size <= 1 || max_alternatives <= 0) {
                 return false;
             }
-            if (!can_add_node(parent, depth)) {
-                return false;
-            }
 
+            nvtxRangePushA("mtp_tree:try_add_alt");
             int added = 0;
             for (size_t i = 1; i < cur_p->size && added < max_alternatives && plan.nodes.size() < plan.max_nodes; ++i) {
                 if (cur_p->data[i].p < plan.p_split) {
@@ -946,14 +958,18 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
                 ++added;
             }
+            nvtxRangePop();
             return added > 0;
         }
 
         void begin(llama_token root, llama_seq_id seq_id, int32_t batch_pos) {
+            nvtxRangePushA("mtp_tree:begin");
             clear();
+            plan.nodes.reserve(plan.max_nodes);
             const common_speculative_mtp_tree_node root_node = {root, -1, 0, 1.0f, 1.0f, seq_id, batch_pos};
             plan.nodes.push_back(root_node);
             main_tail = 0;
+            nvtxRangePop();
         }
     };
 
@@ -1095,12 +1111,15 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
     }
 
     void sync_draft_sampler(llama_seq_id seq_id, common_sampler * smpl) override {
+        nvtxRangePushA("sync_draft_sampler");
         GGML_ASSERT(seq_id >= 0 && seq_id < (llama_seq_id) n_seq);
         if (smpl == nullptr) {
+            nvtxRangePop();
             return;
         }
 
         if (!smpls[(size_t) seq_id]) {
+            nvtxRangePop();
             return;
         }
 
@@ -1108,6 +1127,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         if (!smpls[(size_t) seq_id]) {
             LOG_ERR("%s: failed to clone target sampler for seq_id=%d\n", __func__, (int) seq_id);
         }
+        nvtxRangePop();
     }
 
     bool process(const llama_batch & batch_in) override {
@@ -1275,10 +1295,12 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
 
                 // add drafted token for each sequence
-                const llama_token id = cur_p->data[0].id;
+                GGML_ASSERT(cur_p->selected >= 0);
+                const auto & selected = cur_p->data[cur_p->selected];
+                const llama_token id = selected.id;
 
                 // only collect very high-confidence draft tokens
-                if (cur_p->data[0].p < params.p_min) {
+                if (selected.p < params.p_min) {
                     drafting[seq_id] = false;
                     n_drafting--;
 
@@ -1294,6 +1316,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 result.push_back(id);
 
                 if (params.use_mtp_tree && cur_p->size > 0) {
+                    nvtxRangePushA("mtp_tree:draft_build");
                     auto & plan = mtp_trees[seq_id];
                     if (is_new_draft) {
                         LOG_DBG("mtp_tree_build: initializing tree with root=%d n_past=%d\n", (int)dp.id_last, (int)dp.n_past);
@@ -1316,7 +1339,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     const bool can_extend = result.size() <= plan.plan.max_depth;
                         if (can_extend) {
                             const int32_t depth = (int32_t) result.size();
-                            const auto child = plan.append_child(plan.main_tail, depth, id, cur_p->data[0].p, seq_id, dp.n_past + (int32_t) i + 1);
+                            const auto child = plan.append_child(plan.main_tail, depth, id, selected.p, seq_id, dp.n_past + (int32_t) i + 1);
                             if (child >= 0) {
                                 plan.main_tail = child;
                                 LOG_DBG("mtp_tree_build: added main token=%d depth=%d parent=%d child=%d\n", (int)id, depth, (int)plan.main_tail, child);
@@ -1351,6 +1374,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
                 std::memcpy(batch.embd + n_embd*(batch.n_tokens - 1), h_row, row_bytes);
             }
+            nvtxRangePop();
 
             if (batch.n_tokens == 0) {
                 break;
@@ -2155,16 +2179,20 @@ bool common_speculative_get_mtp_tree_plan(
         const common_speculative * spec,
         llama_seq_id seq_id,
         common_speculative_mtp_tree_plan & plan) {
+    nvtxRangePushA("get_mtp_tree_plan");
     if (spec == nullptr) {
+        nvtxRangePop();
         return false;
     }
 
     for (const auto & impl : spec->impls) {
         if (impl->get_mtp_tree_plan(seq_id, plan)) {
+            nvtxRangePop();
             return true;
         }
     }
 
+    nvtxRangePop();
     return false;
 }
 
@@ -2172,13 +2200,16 @@ void common_speculative_sync_draft_sampler(
     common_speculative * spec,
     llama_seq_id seq_id,
     common_sampler * smpl_target) {
+    nvtxRangePushA("spec_sync_draft_sampler");
     if (spec == nullptr) {
+        nvtxRangePop();
         return;
     }
 
     for (auto & impl : spec->impls) {
         impl->sync_draft_sampler(seq_id, smpl_target);
     }
+    nvtxRangePop();
 }
 
 bool common_speculative_process(common_speculative * spec, const llama_batch & batch) {

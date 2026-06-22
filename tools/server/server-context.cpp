@@ -9,6 +9,14 @@
 #include "common.h"
 #include "fit.h"
 #include "llama.h"
+#if __has_include(<nvtx3/nvToolsExt.h>)
+#    include <nvtx3/nvToolsExt.h>
+#elif __has_include(<nvToolsExt.h>)
+#    include <nvToolsExt.h>
+#else
+static inline int nvtxRangePushA(const char *) { return 0; }
+static inline int nvtxRangePop() { return 0; }
+#endif
 #include "log.h"
 #include "sampling.h"
 #include "speculative.h"
@@ -79,7 +87,9 @@ static bool mtp_tree_collect_candidates(
 
     LOG_DBG("mtp_tree_collect_candidates: plan.nodes.size()=%zu max_depth=%zu\n", plan.nodes.size(), max_depth);
 
+    nvtxRangePushA("mtp_tree:collect_candidates");
     if (plan.nodes.size() <= 1) {
+        nvtxRangePop();
         return false;
     }
 
@@ -109,7 +119,7 @@ static bool mtp_tree_collect_candidates(
 
         std::reverse(tokens.begin(), tokens.end());
 
-        LOG_DBG("mtp_tree_collect_candidates: path[%zu] tokens=%zu score=%.4f first_token=%d\n",
+    LOG_DBG("mtp_tree_collect_candidates: path[%zu] tokens=%zu score=%.4f first_token=%d\n",
                 paths.size(), tokens.size(), (double)node.cum_prob, (int)tokens[0]);
 
         paths.push_back({std::move(tokens), node.cum_prob});
@@ -129,6 +139,7 @@ static bool mtp_tree_collect_candidates(
         return a.tokens < b.tokens;
     });
 
+    nvtxRangePop();
     return true;
 }
 
@@ -170,10 +181,13 @@ static bool mtp_tree_verify_paths(
         std::vector<mtp_tree_verify_paths_result> & results,
         common_sampler_ptr & smpl_best,
         size_t & best_path_index,
-        mtp_tree_verify_paths_result & best_result) {
+        mtp_tree_verify_paths_result & best_result,
+        bool & kv_needs_restore) {
     if (!ctx_tgt || !smpl || paths.empty()) {
         return false;
     }
+
+    nvtxRangePushA("mtp_tree:verify_paths");
 
     const size_t max_candidates = mtp_tree_candidate_slots_available(ctx_tgt);
     if (max_candidates == 0) {
@@ -186,13 +200,28 @@ static bool mtp_tree_verify_paths(
 
     LOG_DBG("mtp_tree_verify_paths: restore and batch verify %zu/%zu candidates\n", n_candidates, paths.size());
 
-    ckpt.load_tgt(ctx_tgt, seq_id, ckpt_flags);
+    if (kv_needs_restore) {
+        ckpt.load_tgt(ctx_tgt, seq_id, ckpt_flags);
+        kv_needs_restore = false;
+    }
     if (!mtp_tree_seq_rm_with_fallback(ctx_tgt, seq_id, ckpt.pos_max + 1, -1)) {
         LOG_DBG("mtp_tree_verify_paths: source seq trim failed (pos_max=%d)\n", (int)ckpt.pos_max);
         return false;
     }
 
-    llama_batch batch = llama_batch_init(1, 0, llama_n_seq_max(ctx_tgt));
+    // pre-compute total tokens for the batch to avoid assertion failure (batch does not auto-resize)
+    // keep in sync with build loop below
+    size_t total_tokens = 0;
+    size_t n_paths_pre = 0;
+    for (size_t i = 0; i < paths.size() && n_paths_pre < n_candidates; ++i) {
+        if (paths[i].tokens.empty()) {
+            continue;
+        }
+        total_tokens += 1 + paths[i].tokens.size();
+        ++n_paths_pre;
+    }
+
+    llama_batch batch = llama_batch_init((int32_t) std::max(total_tokens, (size_t) 1), 0, llama_n_seq_max(ctx_tgt));
     if (batch.n_tokens < 0) {
         llama_batch_free(batch);
         LOG_DBG("mtp_tree_verify_paths: batch_init failed\n");
@@ -229,7 +258,9 @@ static bool mtp_tree_verify_paths(
         ++seq_id_probe;
 
         common_context_seq_rm(ctx_tgt, seq, -1, -1);
-        common_context_seq_cp(ctx_tgt, seq_id, seq, ckpt.pos_min, -1);
+        // seq_cp requires copying from position 0 (is_full assert in KV cache);
+        common_context_seq_cp(ctx_tgt, seq_id, seq, 0, -1);
+        // prefix trim disabled: investigate ckpt.pos_min effect on GX10 logits
 
         const size_t n_offset = (size_t) batch.n_tokens;
 
@@ -273,13 +304,17 @@ static bool mtp_tree_verify_paths(
         auto & smpl_path = samplers[i];
 
         const int base_pos = (int) info.batch_offset;
+        fprintf(stderr, "mtp-tree-verify: path[%zu] seq=%d expecting %zu tokens: ", info.path_index, (int)info.seq_id, path.tokens.size());
+        for (size_t k = 0; k < path.tokens.size(); ++k) { fprintf(stderr, "%d ", path.tokens[k]); }
+        fprintf(stderr, "\n");
         for (size_t j = 0; j < path.tokens.size(); ++j) {
-            const int sample_pos = base_pos + 1 + (int) j;
+            const int sample_pos = base_pos + (int) j;
             const llama_token id = common_sampler_sample(smpl_path.get(), ctx_tgt, sample_pos, false);
             common_sampler_accept(smpl_path.get(), id, true);
             result.accepted.push_back(id);
 
             if (id != path.tokens[j]) {
+                fprintf(stderr, "mtp-tree-verify: MISMATCH path[%zu] pos=%zu expected=%d got=%d\n", info.path_index, j+1, path.tokens[j], id);
                 break;
             }
         }
@@ -307,17 +342,23 @@ static bool mtp_tree_verify_paths(
         }
     }
 
-    // Clear temporary sequences and restore the source sequence position window.
+    // Copy best temp sequence KV back to the main sequence before cleanup,
+    // so the accepted tokens survive in the main KV cache.
+    if (best_result.ok) {
+        for (const auto & info : active) {
+            if (info.path_index == best_path_index) {
+                common_context_seq_cp(ctx_tgt, info.seq_id, seq_id, 0, -1);
+                break;
+            }
+        }
+    }
+
+    // Clear temporary sequences.
     for (const auto & info : active) {
         common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
     }
-    if (!mtp_tree_seq_rm_with_fallback(ctx_tgt, seq_id, ckpt.pos_max + 1, -1)) {
-        LOG_DBG("mtp_tree_verify_paths: failed to restore source rollback window (pos_max=%d)\n", (int) ckpt.pos_max);
-        llama_batch_free(batch);
-        return false;
-    }
-
     llama_batch_free(batch);
+    nvtxRangePop();
     return true;
 }
 
@@ -335,12 +376,18 @@ static bool mtp_tree_seq_rm_with_fallback(
         return true;
     }
 
-    // The recurrent cache can reject large bounded rollbacks when asked to trim
-    // beyond the configured RS window. Fall back to trimming only the last token,
-    // which is enough to clear a stale pending row in this verification path.
-    const llama_pos pos_max = llama_memory_seq_pos_max(mem, seq_id);
-    if (p1 < 0 && pos_max >= 0 && p0 <= pos_max) {
-        return llama_memory_seq_rm(mem, seq_id, pos_max, -1);
+    // The recurrent cache can reject large bounded rollbacks.
+    // Fall back to removing tokens one at a time from the end until
+    // all entries from p0 onwards are cleared.
+    if (p1 < 0) {
+        llama_pos pos_max = llama_memory_seq_pos_max(mem, seq_id);
+        while (pos_max >= 0 && pos_max >= p0) {
+            if (!llama_memory_seq_rm(mem, seq_id, pos_max, -1)) {
+                break;
+            }
+            pos_max = llama_memory_seq_pos_max(mem, seq_id);
+        }
+        return llama_memory_seq_pos_max(mem, seq_id) < p0;
     }
 
     return false;
@@ -403,7 +450,7 @@ static bool mtp_tree_verify_path(
     result.accepted.clear();
 
     for (size_t i = 0; i < path.tokens.size(); ++i) {
-        const llama_token id = common_sampler_sample(smpl, ctx_tgt, (int) i + 1, false);
+        const llama_token id = common_sampler_sample(smpl, ctx_tgt, (int) i, false);
         common_sampler_accept(smpl, id, true);
         result.accepted.push_back(id);
 
@@ -475,6 +522,7 @@ struct server_slot {
     llama_tokens spec_prompt;
     std::vector<int32_t> spec_i_batch;
     common_prompt_checkpoint spec_ckpt;
+    bool kv_needs_restore = false; // reset by ckpt.update_tgt() before each draft round; guards load_tgt in mtp_tree_verify_paths
 
     // TODO: move members that belong to the task (such as `generated_text`, `has_new_line`) to task_results_state
     //       see https://github.com/ggml-org/llama.cpp/pull/18283#issuecomment-3710175837
@@ -1478,6 +1526,7 @@ private:
         slots.clear();
 
         ctx_tgt_seq_rm_type = server_seq_rm_type_for_startup(ctx_tgt, params_base.warmup);
+
         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
             SRV_WRN("%s", "speculative decoding not supported by this context\n");
         }
@@ -3034,15 +3083,16 @@ private:
             if (!draft.empty()) {
                 const bool use_ckpt_tgt =
                     ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
-                   (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_tgt));
+                   (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() >= llama_n_rs_seq(ctx_tgt));
 
                 const bool use_ckpt_dft =
-                   (ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() > llama_n_rs_seq(ctx_dft.get()));
+                   (ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && draft.size() >= llama_n_rs_seq(ctx_dft.get()));
 
                 if (use_ckpt_tgt) {
                     //const int64_t t_start = ggml_time_us();
 
                     ckpt.update_tgt(ctx_tgt, slot.id, spec_ckpt_flags);
+                    slot.kv_needs_restore = false;
 
                     //const int64_t t_total = ggml_time_us() - t_start;
                     //printf("checkpoint total: %f ms\n", t_total / 1000.0);
@@ -3897,10 +3947,9 @@ private:
             // verify and try to accept the draft
                 common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
                 {
-                    // save the sampler sampler state in case we need to restore it
                     const bool use_ckpt_tgt =
                         ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
-                       (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_draft > llama_n_rs_seq(ctx_tgt));
+                       (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_draft >= llama_n_rs_seq(ctx_tgt));
 
                     bool used_tree_verify = false;
                     llama_tokens accepted_tree;
@@ -3908,11 +3957,14 @@ private:
                     const bool can_use_tree = params_base.speculative.draft.use_mtp_tree
                         && use_ckpt_tgt
                         && !slot.spec_ckpt.empty()
-                        && n_draft <= 16;
+                        && mtp_tree_candidate_slots_available(slot.ctx_tgt) > 0;
 
+                    SLT_INF(slot, "can_use_tree: use_mtp=%d ckpt_tgt=%d ckpt_empty=%d cand_slots=%zu n_seq=%d rm_type=%d n_draft=%d n_rs=%d\n", (int)params_base.speculative.draft.use_mtp_tree, (int)use_ckpt_tgt, (int)slot.spec_ckpt.empty(), mtp_tree_candidate_slots_available(slot.ctx_tgt), (int)llama_n_seq_max(slot.ctx_tgt), (int)ctx_tgt_seq_rm_type, (int)n_draft, (int)llama_n_rs_seq(slot.ctx_tgt));
                     if (can_use_tree) {
+                        nvtxRangePushA("server:can_use_tree");
                         common_speculative_mtp_tree_plan mtp_tree;
                         if (common_speculative_get_mtp_tree_plan(spec.get(), slot.id, mtp_tree)) {
+
                             LOG_DBG("slot %d: got tree plan with %zu nodes\n", slot.id, mtp_tree.nodes.size());
                             if (trace > 0) {
                                 SLT_DBG(slot,
@@ -3936,6 +3988,7 @@ private:
                                 mtp_tree_verify_paths_result best_path_result;
                                 common_sampler_ptr best_path_smpl;
                                 std::vector<mtp_tree_verify_paths_result> verify_results;
+
                                 const bool tree_verified = mtp_tree_verify_paths(
                                         slot.ctx_tgt,
                                         slot.spec_ckpt,
@@ -3948,7 +4001,8 @@ private:
                                         verify_results,
                                         best_path_smpl,
                                         best_path_index,
-                                        best_path_result);
+                                        best_path_result,
+                                        slot.kv_needs_restore);
 
                                 if (tree_verified && best_path_result.ok && best_path_smpl) {
                                     accepted_tree = std::move(best_path_result.accepted);
@@ -3957,6 +4011,7 @@ private:
                                 }
                             }
                         }
+                        nvtxRangePop();
                     }
 
                     GGML_ASSERT(slot.spec_i_batch.size() == n_draft + 1);
@@ -3971,11 +4026,14 @@ private:
 
                     if (used_tree_verify) {
                         accepted = std::move(accepted_tree);
+
                         if (trace > 0) {
                             SLT_INF(slot, "accepted %2zu/%2zu draft tokens (tree)\n", accepted.size() - 1, n_draft);
                         }
+
                     } else {
                         accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
+                        slot.kv_needs_restore = true;
                         if (trace > 0) {
                             SLT_INF(slot, "accepted %2zu/%2zu draft tokens\n", accepted.size() - 1, n_draft);
                         }
@@ -4002,6 +4060,7 @@ private:
 
                             {
                                 ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags);
+                                slot.kv_needs_restore = false;
 
                                 if (!mtp_tree_seq_rm_with_fallback(slot.ctx_tgt, slot.id, ckpt.pos_max + 1, -1)) {
                                     slot.smpl = std::move(smpl_save);

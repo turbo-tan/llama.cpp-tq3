@@ -6,6 +6,14 @@
 #include "reasoning-budget.h"
 
 #include "ggml.h"
+#if __has_include(<nvtx3/nvToolsExt.h>)
+#    include <nvtx3/nvToolsExt.h>
+#elif __has_include(<nvToolsExt.h>)
+#    include <nvToolsExt.h>
+#else
+static inline int nvtxRangePushA(const char *) { return 0; }
+static inline int nvtxRangePop() { return 0; }
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -470,7 +478,8 @@ void common_sampler_reset(struct common_sampler * gsmpl) {
 }
 
 struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
-    return new common_sampler {
+    nvtxRangePushA("sampler_clone");
+    struct common_sampler * result = new common_sampler {
         /* .params  = */ gsmpl->params,
         /* .grmr    = */ llama_sampler_clone(gsmpl->grmr),
         /* .rbudget = */ llama_sampler_clone(gsmpl->rbudget),
@@ -479,6 +488,8 @@ struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
         /* .cur     = */ gsmpl->cur,
         /* .cur_p   = */ gsmpl->cur_p,
     };
+    nvtxRangePop();
+    return result;
 }
 
 void common_perf_print(const struct llama_context * ctx, const struct common_sampler * gsmpl) {
