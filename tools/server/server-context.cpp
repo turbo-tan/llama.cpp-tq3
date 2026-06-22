@@ -195,6 +195,136 @@ struct mtp_tree_inline_state {
     }
 };
 
+struct mtp_tree_cost_state {
+    double linear_tps_ema = 0.0;
+    double tree_tps_ema   = 0.0;
+
+    int32_t requests_seen = 0;
+    int32_t cooldown_left = 0;
+    int32_t requests_since_tree = 0;
+
+    bool request_decided = false;
+    bool request_use_tree = false;
+    bool request_used_tree = false;
+
+    int32_t request_tree_rounds = 0;
+    int32_t request_tree_accepted = 0;
+    int32_t request_tree_generated = 0;
+
+    float min_gain = 1.05f;
+    float min_tps = 0.0f;
+    int32_t warmup = 3;
+    int32_t cooldown = 8;
+
+    static double ema_update(double old_value, double value) {
+        constexpr double alpha = 0.25;
+        return old_value <= 0.0 ? value : old_value * (1.0 - alpha) + value * alpha;
+    }
+
+    void reset_request() {
+        request_decided = false;
+        request_use_tree = false;
+        request_used_tree = false;
+        request_tree_rounds = 0;
+        request_tree_accepted = 0;
+        request_tree_generated = 0;
+    }
+
+    bool should_use_tree(const common_params_speculative_draft & params) {
+        min_gain = params.mtp_tree_cost_min_gain;
+        min_tps = params.mtp_tree_cost_min_tps;
+        warmup = params.mtp_tree_cost_warmup;
+        cooldown = params.mtp_tree_cost_cooldown;
+
+        if (!params.mtp_tree_cost_aware) {
+            request_decided = true;
+            request_use_tree = true;
+            return true;
+        }
+
+        if (request_decided) {
+            return request_use_tree;
+        }
+
+        request_decided = true;
+        request_use_tree = false;
+
+        if (cooldown_left > 0) {
+            return false;
+        }
+
+        if (requests_seen < warmup) {
+            return false;
+        }
+
+        if (linear_tps_ema <= 0.0 || tree_tps_ema <= 0.0) {
+            request_use_tree = true;
+            return true;
+        }
+
+        const double required_gain = std::max(1.0f, min_gain);
+        if (tree_tps_ema >= linear_tps_ema * required_gain) {
+            request_use_tree = true;
+            return true;
+        }
+
+        if (requests_since_tree >= cooldown) {
+            request_use_tree = true;
+            return true;
+        }
+
+        return false;
+    }
+
+    void record_tree_round(int32_t n_accepted, int32_t n_generated) {
+        request_used_tree = true;
+        request_tree_rounds++;
+        request_tree_accepted += std::max(0, n_accepted);
+        request_tree_generated += std::max(0, n_generated);
+    }
+
+    void record_tree_attempt() {
+        request_used_tree = true;
+    }
+
+    bool finish_request(
+            int32_t n_decoded,
+            double t_token_generation_ms) {
+        if (n_decoded <= 0 || t_token_generation_ms <= 0.0) {
+            reset_request();
+            return false;
+        }
+
+        const double tps = 1e3 * n_decoded / t_token_generation_ms;
+        bool disabled_tree = false;
+
+        if (request_used_tree) {
+            tree_tps_ema = ema_update(tree_tps_ema, tps);
+            requests_since_tree = 0;
+
+            const bool below_absolute = min_tps > 0.0f && tps < min_tps;
+            const bool below_linear =
+                linear_tps_ema > 0.0 &&
+                tree_tps_ema < linear_tps_ema * std::max(1.0f, min_gain);
+
+            if (below_absolute || below_linear) {
+                cooldown_left = cooldown;
+                disabled_tree = true;
+            }
+        } else {
+            linear_tps_ema = ema_update(linear_tps_ema, tps);
+            requests_since_tree++;
+            if (cooldown_left > 0) {
+                cooldown_left--;
+            }
+        }
+
+        requests_seen++;
+        reset_request();
+        return disabled_tree;
+    }
+};
+
 static size_t mtp_tree_candidate_slots_available(llama_context * ctx_tgt) {
     const int32_t n_seq_max = llama_n_seq_max(ctx_tgt);
     if (n_seq_max <= 1) {
@@ -656,6 +786,8 @@ struct server_slot {
     std::vector<int32_t> spec_i_batch;
     common_prompt_checkpoint spec_ckpt;
     mtp_tree_inline_state spec_tree_inline;
+    mtp_tree_cost_state spec_tree_cost;
+    mtp_tree_cost_state * spec_tree_cost_shared = nullptr;
     bool kv_needs_restore = false; // reset by ckpt.update_tgt() before each draft round; guards load_tgt in mtp_tree_verify_paths
 
     // TODO: move members that belong to the task (such as `generated_text`, `has_new_line`) to task_results_state
@@ -888,6 +1020,10 @@ struct server_slot {
         return !!spec;
     }
 
+    mtp_tree_cost_state & tree_cost() {
+        return spec_tree_cost_shared ? *spec_tree_cost_shared : spec_tree_cost;
+    }
+
     void add_token(const completion_token_output & token) {
         if (!is_processing()) {
             SLT_WRN(*this, "%s", "slot is not processing\n");
@@ -929,6 +1065,9 @@ struct server_slot {
             return false;
         }
         if (!draft_params.use_mtp_tree || !draft_params.mtp_tree_target_verify) {
+            return false;
+        }
+        if (!tree_cost().should_use_tree(draft_params)) {
             return false;
         }
 
@@ -1050,8 +1189,42 @@ struct server_slot {
 
             t_last_used        =  ggml_time_us();
             t_token_generation = (ggml_time_us() - t_start_generation) / 1e3;
+            bool clear_after_cost_probe = false;
+            if (can_speculate()) {
+                auto & cost = tree_cost();
+                const bool had_tree = cost.request_used_tree;
+                const int32_t n_tree_rounds = cost.request_tree_rounds;
+                const int32_t n_tree_accepted = cost.request_tree_accepted;
+                const int32_t n_tree_generated = cost.request_tree_generated;
+                const bool disabled_tree = cost.finish_request(n_decoded, t_token_generation);
+                if (disabled_tree) {
+                    const double tps = n_decoded > 0 && t_token_generation > 0.0 ? 1e3 * n_decoded / t_token_generation : 0.0;
+                    SLT_INF(*this,
+                            "cost-aware MTP tree disabled: tps=%.2f, linear_ema=%.2f, tree_ema=%.2f, tree_rounds=%d, tree_accept=%d/%d, cooldown=%d\n",
+                            tps,
+                            cost.linear_tps_ema,
+                            cost.tree_tps_ema,
+                            n_tree_rounds,
+                            n_tree_accepted,
+                            n_tree_generated,
+                            cost.cooldown_left);
+                    clear_after_cost_probe = true;
+                } else if (had_tree) {
+                    SLT_DBG(*this,
+                            "cost-aware MTP tree kept: linear_ema=%.2f, tree_ema=%.2f, tree_rounds=%d, tree_accept=%d/%d\n",
+                            cost.linear_tps_ema,
+                            cost.tree_tps_ema,
+                            n_tree_rounds,
+                            n_tree_accepted,
+                            n_tree_generated);
+                }
+            }
 
             state = SLOT_STATE_IDLE;
+
+            if (clear_after_cost_probe) {
+                prompt_clear(false);
+            }
 
             // do not keep context of the child slots - the parent's context is enough
             if (task->is_child()) {
@@ -1360,6 +1533,7 @@ private:
     common_context_seq_rm_type ctx_dft_seq_rm_type = COMMON_CONTEXT_SEQ_RM_TYPE_NO;
 
     common_speculative_ptr spec;
+    mtp_tree_cost_state spec_tree_cost;
 
     bool add_bos_token = true;
 
@@ -1792,6 +1966,7 @@ private:
             slot.ctx_tgt = ctx_tgt;
             slot.ctx_dft = ctx_dft.get();
             slot.spec    = spec.get();
+            slot.spec_tree_cost_shared = &spec_tree_cost;
             slot.n_ctx   = n_ctx_slot;
 
             slot.mctx                   = mctx;
@@ -3260,6 +3435,13 @@ private:
 
                         slot.spec_prompt = slot.prompt.tokens.get_text_tokens();
 
+                        const bool mtp_tree_enabled =
+                            params_base.speculative.draft.use_mtp_tree &&
+                            slot.tree_cost().should_use_tree(params_base.speculative.draft);
+                        if (mtp_tree_enabled) {
+                            slot.tree_cost().record_tree_attempt();
+                        }
+
                         common_speculative_get_draft_params(spec.get(), slot.id) = {
                             /* .drafting = */ true,
                             /* .n_max    = */ n_draft_max,
@@ -3267,9 +3449,10 @@ private:
                             /* .id_last  = */ slot.sampled,
                             /* .prompt   = */ &slot.spec_prompt,
                             /* .result   = */ &slot.spec_draft,
+                            /* .mtp_tree_enabled = */ mtp_tree_enabled,
                         };
 
-                        if (spec != nullptr && params_base.speculative.draft.use_mtp_tree) {
+                        if (spec != nullptr && mtp_tree_enabled) {
                             common_speculative_sync_draft_sampler(spec.get(), slot.id, slot.smpl.get());
                         }
 
@@ -4188,6 +4371,7 @@ private:
 
                     if (!slot.spec_tree_inline.empty()) {
                         nvtxRangePushA("server:mtp_tree_inline_accept");
+                        size_t n_tree_accepted = 0;
 
                         llama_seq_id best_seq_id = -1;
                         size_t best_path_index = 0;
@@ -4208,6 +4392,7 @@ private:
                                 slot.smpl = std::move(best_path_smpl);
                                 slot.kv_needs_restore = false;
                                 used_tree_verify = true;
+                                n_tree_accepted = accepted_tree.size() > 0 ? accepted_tree.size() - 1 : 0;
 
                                 if (trace > 0) {
                                     SLT_INF(slot, "accepted %2zu/%2zu draft tokens (tree inline)\n", accepted_tree.size() - 1, n_draft);
@@ -4215,6 +4400,7 @@ private:
                             }
                         }
 
+                        slot.tree_cost().record_tree_round((int32_t) n_tree_accepted, (int32_t) n_draft);
                         mtp_tree_inline_clear_context(slot.ctx_tgt, slot.spec_tree_inline);
                         nvtxRangePop();
                     }

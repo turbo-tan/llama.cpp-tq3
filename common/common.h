@@ -311,6 +311,11 @@ struct common_params_speculative_draft {
     int32_t mtp_tree_nodes = 1; // maximum tree nodes to evaluate when tree mode is enabled
     int32_t mtp_tree_depth = 1; // maximum tree depth when tree mode is enabled
     float mtp_tree_p_split = 0.0f; // probability cutoff for tree expansion
+    bool mtp_tree_cost_aware = false; // enable measured cost-aware MTP tree gating
+    float mtp_tree_cost_min_gain = 1.05f; // required tree tok/s gain over linear EMA
+    float mtp_tree_cost_min_tps = 0.0f; // absolute minimum tree tok/s, disabled when <= 0
+    int32_t mtp_tree_cost_warmup = 3; // linear requests before first tree probe
+    int32_t mtp_tree_cost_cooldown = 8; // linear requests after a losing tree probe
 
     bool backend_sampling = true; // offload draft sampling to the backend (default: on)
 

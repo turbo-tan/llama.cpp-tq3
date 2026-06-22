@@ -3665,6 +3665,54 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_P_SPLIT"));
     add_opt(common_arg(
+        {"--spec-mtp-tree-cost-aware"},
+        {"--no-spec-mtp-tree-cost-aware"},
+        "enable measured cost-aware MTP tree gating (default: disabled)",
+        [](common_params & params, bool value) {
+            params.speculative.draft.mtp_tree_cost_aware = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_COST_AWARE"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-cost-min-gain"}, "P",
+        string_format("minimum tree tok/s EMA gain over linear EMA (default: %.2f)", (double)params.speculative.draft.mtp_tree_cost_min_gain),
+        [](common_params & params, const std::string & value) {
+            params.speculative.draft.mtp_tree_cost_min_gain = std::stof(value);
+            if (params.speculative.draft.mtp_tree_cost_min_gain < 1.0f) {
+                throw std::invalid_argument("spec-mtp-tree-cost-min-gain must be >= 1");
+            }
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_COST_MIN_GAIN"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-cost-min-tps"}, "N",
+        string_format("minimum request tok/s for keeping tree enabled (default: %.2f, disabled)", (double)params.speculative.draft.mtp_tree_cost_min_tps),
+        [](common_params & params, const std::string & value) {
+            params.speculative.draft.mtp_tree_cost_min_tps = std::stof(value);
+            if (params.speculative.draft.mtp_tree_cost_min_tps < 0.0f) {
+                throw std::invalid_argument("spec-mtp-tree-cost-min-tps must be >= 0");
+            }
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_COST_MIN_TPS"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-cost-warmup"}, "N",
+        string_format("linear requests before first cost-aware tree probe (default: %d)", params.speculative.draft.mtp_tree_cost_warmup),
+        [](common_params & params, int value) {
+            if (value < 0 || value > 1024) {
+                throw std::invalid_argument("spec-mtp-tree-cost-warmup must be between 0 and 1024 inclusive");
+            }
+            params.speculative.draft.mtp_tree_cost_warmup = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_COST_WARMUP"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-cost-cooldown"}, "N",
+        string_format("linear requests after a losing cost-aware tree probe (default: %d)", params.speculative.draft.mtp_tree_cost_cooldown),
+        [](common_params & params, int value) {
+            if (value < 0 || value > 1024) {
+                throw std::invalid_argument("spec-mtp-tree-cost-cooldown must be between 0 and 1024 inclusive");
+            }
+            params.speculative.draft.mtp_tree_cost_cooldown = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_COST_COOLDOWN"));
+    add_opt(common_arg(
         {"--spec-draft-backend-sampling"},
         {"--no-spec-draft-backend-sampling"},
         string_format("offload draft sampling to the backend (default: %s)",

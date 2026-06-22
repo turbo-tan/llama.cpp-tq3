@@ -1001,6 +1001,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             LOG_INF("%s: - mtp_tree_nodes=%d, mtp_tree_depth=%d, mtp_tree_p_split=%.2f\n", __func__,
                     this->params.mtp_tree_nodes, this->params.mtp_tree_depth,
                     (double) this->params.mtp_tree_p_split);
+            if (this->params.mtp_tree_cost_aware) {
+                LOG_INF("%s: - mtp_tree_cost_aware=1, min_gain=%.2f, min_tps=%.2f, warmup=%d, cooldown=%d\n", __func__,
+                        (double) this->params.mtp_tree_cost_min_gain,
+                        (double) this->params.mtp_tree_cost_min_tps,
+                        this->params.mtp_tree_cost_warmup,
+                        this->params.mtp_tree_cost_cooldown);
+            }
         }
 
         const int32_t n_b = (int32_t) llama_n_batch(ctx_dft);
@@ -1384,7 +1391,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 auto & result = *dp.result;
                 const bool is_new_draft = result.empty();
                 const llama_pos next_pos = is_mem_shared ? dp.n_past : dp.n_past + i + 1;
-                const size_t selected_i = is_new_draft
+                const size_t selected_i = is_new_draft && dp.mtp_tree_enabled
                     ? scout_select_first(seq_id, next_pos, cur_p, smpl, h_row)
                     : 0;
 
@@ -1404,7 +1411,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 result.push_back(id);
 
-                if (params.use_mtp_tree && params.mtp_tree_target_verify && cur_p->size > 0) {
+                if (params.use_mtp_tree && params.mtp_tree_target_verify && dp.mtp_tree_enabled && cur_p->size > 0) {
                     nvtxRangePushA("mtp_tree:draft_build");
                     auto & plan = mtp_trees[seq_id];
                     if (is_new_draft) {
@@ -1446,6 +1453,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                                 (int) result.size(),
                                 (int) plan.plan.nodes.size());
                     }
+                    nvtxRangePop();
+                } else if (params.use_mtp_tree && params.mtp_tree_target_verify && !dp.mtp_tree_enabled) {
+                    mtp_trees[seq_id].clear();
                 }
 
                 if (params.n_max <= (int) result.size()) {
@@ -1463,7 +1473,6 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 }
                 std::memcpy(batch.embd + n_embd*(batch.n_tokens - 1), h_row, row_bytes);
             }
-            nvtxRangePop();
 
             if (batch.n_tokens == 0) {
                 break;
