@@ -210,12 +210,68 @@ static bool mtp_tree_verify_paths(
     best_path_index = 0;
 
     LOG_DBG("mtp_tree_verify_paths: restore and batch verify %zu/%zu candidates\n", n_candidates, paths.size());
-    common_sampler_ptr replay_smpl;
+    if (kv_needs_restore) {
+        ckpt.load_tgt(ctx_tgt, seq_id, ckpt_flags);
+        kv_needs_restore = false;
+    }
+    if (!mtp_tree_seq_rm_with_fallback(ctx_tgt, seq_id, ckpt.pos_max + 1, -1)) {
+        LOG_DBG("mtp_tree_verify_paths: source seq trim failed (pos_max=%d)\n", (int) ckpt.pos_max);
+        nvtxRangePop();
+        return false;
+    }
 
-    for (size_t i = 0; i < paths.size() && i < n_candidates; ++i) {
+    size_t total_tokens = 0;
+    size_t n_paths_pre = 0;
+    for (size_t i = 0; i < paths.size() && n_paths_pre < n_candidates; ++i) {
+        if (paths[i].tokens.empty()) {
+            continue;
+        }
+        total_tokens += 1 + paths[i].tokens.size();
+        ++n_paths_pre;
+    }
+
+    llama_batch batch = llama_batch_init((int32_t) std::max(total_tokens, (size_t) 1), 0, llama_n_seq_max(ctx_tgt));
+    if (batch.n_tokens < 0) {
+        LOG_DBG("mtp_tree_verify_paths: batch_init failed\n");
+        nvtxRangePop();
+        return false;
+    }
+
+    struct batched_path {
+        size_t path_index = 0;
+        llama_seq_id seq_id = -1;
+        size_t batch_offset = 0;
+    };
+
+    std::vector<batched_path> active;
+    std::vector<common_sampler_ptr> samplers;
+    active.reserve(n_candidates);
+    samplers.reserve(n_candidates);
+
+    size_t seq_id_probe = 0;
+    for (size_t i = 0; i < paths.size() && active.size() < n_candidates; ++i) {
         const auto & path = paths[i];
         if (path.tokens.empty()) {
             continue;
+        }
+
+        while ((llama_seq_id) seq_id_probe == seq_id) {
+            ++seq_id_probe;
+        }
+        if (seq_id_probe >= (size_t) llama_n_seq_max(ctx_tgt)) {
+            break;
+        }
+
+        const llama_seq_id seq = (llama_seq_id) seq_id_probe;
+        ++seq_id_probe;
+
+        common_context_seq_rm(ctx_tgt, seq, -1, -1);
+        common_context_seq_cp(ctx_tgt, seq_id, seq, 0, -1);
+
+        const size_t n_offset = (size_t) batch.n_tokens;
+        common_batch_add(batch, root, start_pos, { seq }, true);
+        for (size_t j = 0; j < path.tokens.size(); ++j) {
+            common_batch_add(batch, path.tokens[j], start_pos + (int32_t) j + 1, { seq }, true);
         }
 
         common_sampler_ptr path_smpl(common_sampler_clone(smpl));
@@ -225,49 +281,86 @@ static bool mtp_tree_verify_paths(
             continue;
         }
 
-        mtp_tree_verify_result path_result;
-        if (!mtp_tree_verify_path(ctx_tgt, ckpt, ckpt_flags, seq_id, start_pos, root, path, path_smpl.get(), path_result)) {
-            LOG_DBG("mtp_tree_verify_paths: path verify failed for path=%zu\n", i);
+        active.push_back({ i, seq, n_offset });
+        samplers.push_back(std::move(path_smpl));
+    }
+
+    if (active.empty()) {
+        llama_batch_free(batch);
+        LOG_DBG("mtp_tree_verify_paths: no active candidates\n");
+        nvtxRangePop();
+        return false;
+    }
+
+    const int rc = llama_decode(ctx_tgt, batch);
+    llama_batch_free(batch);
+    if (rc != 0) {
+        LOG_DBG("mtp_tree_verify_paths: decode failed (rc=%d)\n", rc);
+        nvtxRangePop();
+        return false;
+    }
+
+    for (size_t i = 0; i < active.size(); ++i) {
+        const auto & info = active[i];
+        const auto & path = paths[info.path_index];
+        auto & result = results[info.path_index];
+        auto & smpl_path = samplers[i];
+
+        const int base_pos = (int) info.batch_offset;
+        for (size_t j = 0; j < path.tokens.size(); ++j) {
+            const int sample_pos = base_pos + (int) j;
+            const llama_token id = common_sampler_sample(smpl_path.get(), ctx_tgt, sample_pos, false);
+            common_sampler_accept(smpl_path.get(), id, true);
+            result.accepted.push_back(id);
+
+            if (id != path.tokens[j]) {
+                break;
+            }
+        }
+
+        if (!result.accepted.empty() && result.accepted.size() == path.tokens.size()) {
+            const int sample_pos = base_pos + (int) path.tokens.size();
+            const llama_token id = common_sampler_sample(smpl_path.get(), ctx_tgt, sample_pos, false);
+            common_sampler_accept(smpl_path.get(), id, true);
+            result.accepted.push_back(id);
+        }
+
+        if (!result.accepted.empty()) {
+            result.ok = true;
+            result.n_accept = result.accepted.size() - 1;
+        }
+
+        if (!result.ok) {
             continue;
         }
 
-        auto & result = results[i];
-        result.ok = path_result.ok;
-        result.accepted = std::move(path_result.accepted);
-        result.n_accept = result.accepted.empty() ? 0 : result.accepted.size() - 1;
-
-        if (result.ok &&
-                (result.n_accept > best_result.n_accept ||
-                 (result.n_accept == best_result.n_accept && path.score > paths[best_path_index].score))) {
+        if (result.n_accept > best_result.n_accept ||
+                (result.n_accept == best_result.n_accept && path.score > paths[best_path_index].score)) {
             best_result = result;
-            best_path_index = i;
-            smpl_best = std::move(path_smpl);
+            best_path_index = info.path_index;
+            smpl_best = std::move(smpl_path);
         }
     }
 
     if (!best_result.ok) {
+        for (const auto & info : active) {
+            common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
+        }
         nvtxRangePop();
         return false;
     }
 
-    // Replay the winning path so the main sequence ends in the accepted state.
-    replay_smpl.reset(common_sampler_clone(smpl));
-    if (!replay_smpl) {
-        nvtxRangePop();
-        return false;
+    for (const auto & info : active) {
+        if (info.path_index == best_path_index) {
+            common_context_seq_cp(ctx_tgt, info.seq_id, seq_id, 0, -1);
+            break;
+        }
     }
 
-    mtp_tree_verify_result replay_result;
-    if (!mtp_tree_verify_path(ctx_tgt, ckpt, ckpt_flags, seq_id, start_pos, root, paths[best_path_index], replay_smpl.get(), replay_result)) {
-        nvtxRangePop();
-        return false;
+    for (const auto & info : active) {
+        common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
     }
 
-    best_result.ok = replay_result.ok;
-    best_result.accepted = std::move(replay_result.accepted);
-    best_result.n_accept = best_result.accepted.empty() ? 0 : best_result.accepted.size() - 1;
-
-    smpl_best = std::move(replay_smpl);
     results[best_path_index] = best_result;
     kv_needs_restore = false;
     nvtxRangePop();
