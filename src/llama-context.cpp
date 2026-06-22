@@ -3893,6 +3893,38 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
     return ctx->get_embeddings_layer_inp(lid);
 }
 
+llama_token llama_get_sampled_token_ith_no_sync(llama_context * ctx, int32_t i) {
+    return ctx->get_sampled_token_ith(i);
+}
+
+float * llama_get_sampled_probs_ith_no_sync(llama_context * ctx, int32_t i) {
+    return ctx->get_sampled_probs_ith(i);
+}
+
+uint32_t llama_get_sampled_probs_count_ith_no_sync(llama_context * ctx, int32_t i) {
+    return static_cast<uint32_t>(ctx->get_sampled_probs_count(i));
+}
+
+float * llama_get_sampled_logits_ith_no_sync(llama_context * ctx, int32_t i) {
+    return ctx->get_sampled_logits_ith(i);
+}
+
+uint32_t llama_get_sampled_logits_count_ith_no_sync(llama_context * ctx, int32_t i) {
+    return static_cast<uint32_t>(ctx->get_sampled_logits_count(i));
+}
+
+llama_token * llama_get_sampled_candidates_ith_no_sync(llama_context * ctx, int32_t i) {
+    return const_cast<llama_token *>(ctx->get_sampled_candidates_ith(i));
+}
+
+uint32_t llama_get_sampled_candidates_count_ith_no_sync(llama_context * ctx, int32_t i) {
+    return static_cast<uint32_t>(ctx->get_sampled_candidates_count(i));
+}
+
+float * llama_get_logits_ith_no_sync(llama_context * ctx, int32_t i) {
+    return ctx->get_logits_ith(i);
+}
+
 bool llama_set_sampler(llama_context * ctx, llama_seq_id seq_id, llama_sampler * smpl) {
     return ctx->set_sampler(seq_id, smpl);
 }

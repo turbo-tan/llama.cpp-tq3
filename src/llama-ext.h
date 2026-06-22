@@ -114,6 +114,15 @@ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uin
 
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 
+LLAMA_API llama_token llama_get_sampled_token_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_sampled_probs_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API uint32_t llama_get_sampled_probs_count_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_sampled_logits_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API uint32_t llama_get_sampled_logits_count_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API llama_token * llama_get_sampled_candidates_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API uint32_t llama_get_sampled_candidates_count_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_logits_ith_no_sync(struct llama_context * ctx, int32_t i);
+
 //
 // model/context data extraction
 //
