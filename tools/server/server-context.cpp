@@ -1204,7 +1204,6 @@ private:
 
         params_base = params;
         params_base.n_outputs_max = server_n_outputs_max(params_base);
-        common_params params_tgt = params_base;
 
         std::string & mmproj_path = params_base.mmproj.path;
         bool has_mmproj = !mmproj_path.empty();
@@ -1340,7 +1339,7 @@ private:
             }
         }
 
-        llama_init = common_init_from_params(params_tgt);
+        llama_init = common_init_from_params(params_base);
 
         model_tgt = llama_init->model();
         ctx_tgt   = llama_init->context();
