@@ -3621,11 +3621,19 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     add_opt(common_arg(
         {"--spec-mtp-tree"},
         {"--no-spec-mtp-tree"},
-        "enable dynamic token-tree speculative mode for MTP (default: disabled)",
+        "enable draft-side dynamic token-tree scouting for MTP (default: disabled)",
         [](common_params & params, bool value) {
             params.speculative.draft.use_mtp_tree = value;
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE"));
+    add_opt(common_arg(
+        {"--spec-mtp-tree-target-verify"},
+        {"--no-spec-mtp-tree-target-verify"},
+        "enable target-side MTP tree verification (diagnostic; default: disabled)",
+        [](common_params & params, bool value) {
+            params.speculative.draft.mtp_tree_target_verify = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_SPEC_MTP_TREE_TARGET_VERIFY"));
     add_opt(common_arg(
         {"--spec-mtp-tree-nodes"}, "N",
         string_format("maximum number of nodes in MTP token-tree mode (default: %d)", params.speculative.draft.mtp_tree_nodes),

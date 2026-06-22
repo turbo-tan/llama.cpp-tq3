@@ -3976,11 +3976,12 @@ private:
                     llama_tokens accepted_tree;
 
                     const bool can_use_tree = params_base.speculative.draft.use_mtp_tree
+                        && params_base.speculative.draft.mtp_tree_target_verify
                         && use_ckpt_tgt
                         && !slot.spec_ckpt.empty()
-                        && mtp_tree_candidate_slots_available(slot.ctx_tgt) > 0;
+                        && mtp_tree_candidate_slots_available(slot.ctx_tgt) > 1;
 
-                    SLT_INF(slot, "can_use_tree: use_mtp=%d ckpt_tgt=%d ckpt_empty=%d cand_slots=%zu n_seq=%d rm_type=%d n_draft=%d n_rs=%d\n", (int)params_base.speculative.draft.use_mtp_tree, (int)use_ckpt_tgt, (int)slot.spec_ckpt.empty(), mtp_tree_candidate_slots_available(slot.ctx_tgt), (int)llama_n_seq_max(slot.ctx_tgt), (int)ctx_tgt_seq_rm_type, (int)n_draft, (int)llama_n_rs_seq(slot.ctx_tgt));
+                    SLT_INF(slot, "can_use_tree: use_mtp=%d target_verify=%d ckpt_tgt=%d ckpt_empty=%d cand_slots=%zu n_seq=%d rm_type=%d n_draft=%d n_rs=%d\n", (int)params_base.speculative.draft.use_mtp_tree, (int)params_base.speculative.draft.mtp_tree_target_verify, (int)use_ckpt_tgt, (int)slot.spec_ckpt.empty(), mtp_tree_candidate_slots_available(slot.ctx_tgt), (int)llama_n_seq_max(slot.ctx_tgt), (int)ctx_tgt_seq_rm_type, (int)n_draft, (int)llama_n_rs_seq(slot.ctx_tgt));
                     if (can_use_tree) {
                         nvtxRangePushA("server:can_use_tree");
                         common_speculative_mtp_tree_plan mtp_tree;

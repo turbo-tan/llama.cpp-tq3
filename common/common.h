@@ -307,6 +307,7 @@ struct common_params_speculative_draft {
     float p_min   = 0.0f; // minimum speculative decoding probability (greedy)
 
     bool use_mtp_tree = false; // enable experimental dynamic token-tree mode for MTP
+    bool mtp_tree_target_verify = false; // enable target-side MTP tree verification
     int32_t mtp_tree_nodes = 1; // maximum tree nodes to evaluate when tree mode is enabled
     int32_t mtp_tree_depth = 1; // maximum tree depth when tree mode is enabled
     float mtp_tree_p_split = 0.0f; // probability cutoff for tree expansion
@@ -371,7 +372,7 @@ struct common_params_speculative {
             return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
         });
 
-        if (has_mtp && draft.use_mtp_tree) {
+        if (has_mtp && draft.use_mtp_tree && draft.mtp_tree_target_verify) {
             // Tree mode needs recurrent state snapshots for partial rollback
             return std::max(1, draft.mtp_tree_depth + 1);
         }
