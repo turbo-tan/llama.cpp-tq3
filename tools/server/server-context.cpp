@@ -210,6 +210,7 @@ static bool mtp_tree_verify_paths(
     best_path_index = 0;
 
     LOG_DBG("mtp_tree_verify_paths: restore and batch verify %zu/%zu candidates\n", n_candidates, paths.size());
+    const int64_t t_verify_begin = ggml_time_us();
     if (kv_needs_restore) {
         ckpt.load_tgt(ctx_tgt, seq_id, ckpt_flags);
         kv_needs_restore = false;
@@ -248,6 +249,7 @@ static bool mtp_tree_verify_paths(
     active.reserve(n_candidates);
     samplers.reserve(n_candidates);
 
+    const int64_t t_prepare_begin = ggml_time_us();
     size_t seq_id_probe = 0;
     for (size_t i = 0; i < paths.size() && active.size() < n_candidates; ++i) {
         const auto & path = paths[i];
@@ -284,6 +286,7 @@ static bool mtp_tree_verify_paths(
         active.push_back({ i, seq, n_offset });
         samplers.push_back(std::move(path_smpl));
     }
+    const int64_t t_prepare_end = ggml_time_us();
 
     if (active.empty()) {
         llama_batch_free(batch);
@@ -292,7 +295,9 @@ static bool mtp_tree_verify_paths(
         return false;
     }
 
+    const int64_t t_decode_begin = ggml_time_us();
     const int rc = llama_decode(ctx_tgt, batch);
+    const int64_t t_decode_end = ggml_time_us();
     llama_batch_free(batch);
     if (rc != 0) {
         LOG_DBG("mtp_tree_verify_paths: decode failed (rc=%d)\n", rc);
@@ -300,6 +305,7 @@ static bool mtp_tree_verify_paths(
         return false;
     }
 
+    const int64_t t_sample_begin = ggml_time_us();
     for (size_t i = 0; i < active.size(); ++i) {
         const auto & info = active[i];
         const auto & path = paths[info.path_index];
@@ -341,6 +347,7 @@ static bool mtp_tree_verify_paths(
             smpl_best = std::move(smpl_path);
         }
     }
+    const int64_t t_sample_end = ggml_time_us();
 
     if (!best_result.ok) {
         for (const auto & info : active) {
@@ -350,6 +357,7 @@ static bool mtp_tree_verify_paths(
         return false;
     }
 
+    const int64_t t_commit_begin = ggml_time_us();
     for (const auto & info : active) {
         if (info.path_index == best_path_index) {
             common_context_seq_cp(ctx_tgt, info.seq_id, seq_id, 0, -1);
@@ -360,9 +368,18 @@ static bool mtp_tree_verify_paths(
     for (const auto & info : active) {
         common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
     }
+    const int64_t t_commit_end = ggml_time_us();
 
     results[best_path_index] = best_result;
     kv_needs_restore = false;
+    LOG_INF("mtp_tree_verify_paths: n_candidates=%zu accepted=%zu prepare=%.3f decode=%.3f sample=%.3f commit=%.3f total=%.3f ms\n",
+            active.size(),
+            best_result.n_accept,
+            (t_prepare_end - t_prepare_begin) / 1000.0,
+            (t_decode_end - t_decode_begin) / 1000.0,
+            (t_sample_end - t_sample_begin) / 1000.0,
+            (t_commit_end - t_commit_begin) / 1000.0,
+            (t_commit_end - t_verify_begin) / 1000.0);
     nvtxRangePop();
     return true;
 }
