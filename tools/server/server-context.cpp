@@ -171,6 +171,30 @@ struct mtp_tree_verify_paths_result {
     bool ok = false;
 };
 
+struct mtp_tree_inline_candidate {
+    size_t path_index = 0;
+    llama_seq_id seq_id = -1;
+    size_t batch_offset = 0;
+};
+
+struct mtp_tree_inline_state {
+    std::vector<mtp_tree_candidate_path> paths;
+    std::vector<mtp_tree_inline_candidate> active;
+    llama_token root = LLAMA_TOKEN_NULL;
+    llama_pos start_pos = 0;
+
+    void clear() {
+        paths.clear();
+        active.clear();
+        root = LLAMA_TOKEN_NULL;
+        start_pos = 0;
+    }
+
+    bool empty() const {
+        return active.empty();
+    }
+};
+
 static size_t mtp_tree_candidate_slots_available(llama_context * ctx_tgt) {
     const int32_t n_seq_max = llama_n_seq_max(ctx_tgt);
     if (n_seq_max <= 1) {
@@ -178,6 +202,93 @@ static size_t mtp_tree_candidate_slots_available(llama_context * ctx_tgt) {
     }
 
     return (size_t) std::max(0, n_seq_max - 1);
+}
+
+static void mtp_tree_inline_clear_context(
+        llama_context * ctx_tgt,
+        mtp_tree_inline_state & state) {
+    if (ctx_tgt == nullptr) {
+        state.clear();
+        return;
+    }
+
+    for (const auto & info : state.active) {
+        if (info.seq_id >= 0) {
+            common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
+        }
+    }
+    state.clear();
+}
+
+static bool mtp_tree_inline_accept(
+        llama_context * ctx_tgt,
+        const mtp_tree_inline_state & state,
+        common_sampler * smpl,
+        common_sampler_ptr & smpl_best,
+        llama_seq_id & best_seq_id,
+        size_t & best_path_index,
+        mtp_tree_verify_paths_result & best_result) {
+    if (ctx_tgt == nullptr || smpl == nullptr || state.empty()) {
+        return false;
+    }
+
+    best_seq_id = -1;
+    best_path_index = 0;
+    best_result = {};
+
+    for (const auto & info : state.active) {
+        if (info.path_index >= state.paths.size()) {
+            continue;
+        }
+
+        const auto & path = state.paths[info.path_index];
+        if (path.tokens.empty()) {
+            continue;
+        }
+
+        common_sampler_ptr smpl_path(common_sampler_clone(smpl));
+        if (!smpl_path) {
+            continue;
+        }
+
+        mtp_tree_verify_paths_result cur_result;
+        const int base_pos = (int) info.batch_offset;
+        bool full_match = true;
+
+        for (size_t j = 0; j < path.tokens.size(); ++j) {
+            const int sample_pos = base_pos + (int) j;
+            const llama_token id = common_sampler_sample(smpl_path.get(), ctx_tgt, sample_pos, false);
+            common_sampler_accept(smpl_path.get(), id, true);
+            cur_result.accepted.push_back(id);
+
+            if (id != path.tokens[j]) {
+                full_match = false;
+                break;
+            }
+        }
+
+        if (!full_match) {
+            continue;
+        }
+
+        const int sample_pos = base_pos + (int) path.tokens.size();
+        const llama_token id = common_sampler_sample(smpl_path.get(), ctx_tgt, sample_pos, false);
+        common_sampler_accept(smpl_path.get(), id, true);
+        cur_result.accepted.push_back(id);
+        cur_result.ok = true;
+        cur_result.n_accept = path.tokens.size();
+
+        if (!best_result.ok ||
+                cur_result.n_accept > best_result.n_accept ||
+                (cur_result.n_accept == best_result.n_accept && path.score > state.paths[best_path_index].score)) {
+            best_result = std::move(cur_result);
+            best_seq_id = info.seq_id;
+            best_path_index = info.path_index;
+            smpl_best = std::move(smpl_path);
+        }
+    }
+
+    return best_result.ok && best_seq_id >= 0 && smpl_best != nullptr;
 }
 
 static bool mtp_tree_verify_paths(
@@ -544,6 +655,7 @@ struct server_slot {
     llama_tokens spec_prompt;
     std::vector<int32_t> spec_i_batch;
     common_prompt_checkpoint spec_ckpt;
+    mtp_tree_inline_state spec_tree_inline;
     bool kv_needs_restore = false; // reset by ckpt.update_tgt() before each draft round; guards load_tgt in mtp_tree_verify_paths
 
     // TODO: move members that belong to the task (such as `generated_text`, `has_new_line`) to task_results_state
@@ -680,6 +792,7 @@ struct server_slot {
             spec_draft.clear();
             spec_i_batch.clear();
             spec_ckpt.clear();
+            mtp_tree_inline_clear_context(ctx_tgt, spec_tree_inline);
         }
         generated_tokens.clear();
         generated_token_probs.clear();
@@ -803,6 +916,98 @@ struct server_slot {
         SLT_DBG(*this, "max possible draft: %d\n", n_draft_max);
 
         return n_draft_max;
+    }
+
+    bool prepare_mtp_tree_inline(
+            common_speculative * spec_impl,
+            const common_params_speculative_draft & draft_params,
+            int32_t batch_n_tokens,
+            int32_t n_batch) {
+        mtp_tree_inline_clear_context(ctx_tgt, spec_tree_inline);
+
+        if (spec_impl == nullptr || spec_draft.empty()) {
+            return false;
+        }
+        if (!draft_params.use_mtp_tree || !draft_params.mtp_tree_target_verify) {
+            return false;
+        }
+
+        const size_t max_candidates = mtp_tree_candidate_slots_available(ctx_tgt);
+        if (max_candidates == 0) {
+            return false;
+        }
+
+        common_speculative_mtp_tree_plan mtp_tree;
+        if (!common_speculative_get_mtp_tree_plan(spec_impl, id, mtp_tree)) {
+            return false;
+        }
+
+        if (!mtp_tree_collect_candidates(mtp_tree, spec_draft.size(), spec_tree_inline.paths)) {
+            spec_tree_inline.clear();
+            return false;
+        }
+
+        const int32_t n_main_rows = (int32_t) spec_draft.size() + 1;
+        int32_t n_capacity = n_batch - batch_n_tokens - n_main_rows;
+        if (n_capacity <= 0) {
+            spec_tree_inline.clear();
+            return false;
+        }
+
+        spec_tree_inline.root = sampled;
+        spec_tree_inline.start_pos = prompt.tokens.pos_next();
+
+        size_t seq_id_probe = 0;
+        for (size_t i = 0; i < spec_tree_inline.paths.size() && spec_tree_inline.active.size() < max_candidates; ++i) {
+            const auto & path = spec_tree_inline.paths[i];
+            if (path.tokens.empty()) {
+                continue;
+            }
+
+            const int32_t n_path_rows = (int32_t) path.tokens.size() + 1;
+            if (n_path_rows > n_capacity) {
+                continue;
+            }
+
+            while ((llama_seq_id) seq_id_probe == id) {
+                ++seq_id_probe;
+            }
+            if (seq_id_probe >= (size_t) llama_n_seq_max(ctx_tgt)) {
+                break;
+            }
+
+            const llama_seq_id seq = (llama_seq_id) seq_id_probe;
+            ++seq_id_probe;
+
+            common_context_seq_rm(ctx_tgt, seq, -1, -1);
+            common_context_seq_cp(ctx_tgt, id, seq, 0, -1);
+
+            spec_tree_inline.active.push_back({ i, seq, 0 });
+            n_capacity -= n_path_rows;
+        }
+
+        if (spec_tree_inline.active.empty()) {
+            spec_tree_inline.clear();
+            return false;
+        }
+
+        return true;
+    }
+
+    void append_mtp_tree_inline_batch(llama_batch & batch) {
+        if (spec_tree_inline.empty()) {
+            return;
+        }
+
+        for (auto & info : spec_tree_inline.active) {
+            const auto & path = spec_tree_inline.paths[info.path_index];
+            info.batch_offset = (size_t) batch.n_tokens;
+
+            common_batch_add(batch, spec_tree_inline.root, spec_tree_inline.start_pos, { info.seq_id }, true);
+            for (size_t j = 0; j < path.tokens.size(); ++j) {
+                common_batch_add(batch, path.tokens[j], spec_tree_inline.start_pos + (llama_pos) j + 1, { info.seq_id }, true);
+            }
+        }
     }
 
     void update_batch(llama_batch & batch) {
@@ -3130,16 +3335,22 @@ private:
             }
         }
 
+        // process in chunks of params.n_batch
+        int32_t n_batch  = llama_n_batch(ctx_tgt);
+        int32_t n_ubatch = llama_n_ubatch(ctx_tgt);
+
         // update the batch with the sampled/drafted tokens
         for (auto * slot_ptr : generating) {
             auto & slot = *slot_ptr;
 
+            slot.prepare_mtp_tree_inline(
+                    spec.get(),
+                    params_base.speculative.draft,
+                    batch.n_tokens,
+                    n_batch);
             slot.update_batch(batch);
+            slot.append_mtp_tree_inline_batch(batch);
         }
-
-        // process in chunks of params.n_batch
-        int32_t n_batch  = llama_n_batch(ctx_tgt);
-        int32_t n_ubatch = llama_n_ubatch(ctx_tgt);
 
         float  alora_scale       = -1.0f;
         size_t alora_disabled_id = 0;
@@ -3975,64 +4186,36 @@ private:
                     bool used_tree_verify = false;
                     llama_tokens accepted_tree;
 
-                    const bool can_use_tree = params_base.speculative.draft.use_mtp_tree
-                        && params_base.speculative.draft.mtp_tree_target_verify
-                        && use_ckpt_tgt
-                        && !slot.spec_ckpt.empty()
-                        && mtp_tree_candidate_slots_available(slot.ctx_tgt) > 1;
+                    if (!slot.spec_tree_inline.empty()) {
+                        nvtxRangePushA("server:mtp_tree_inline_accept");
 
-                    SLT_INF(slot, "can_use_tree: use_mtp=%d target_verify=%d ckpt_tgt=%d ckpt_empty=%d cand_slots=%zu n_seq=%d rm_type=%d n_draft=%d n_rs=%d\n", (int)params_base.speculative.draft.use_mtp_tree, (int)params_base.speculative.draft.mtp_tree_target_verify, (int)use_ckpt_tgt, (int)slot.spec_ckpt.empty(), mtp_tree_candidate_slots_available(slot.ctx_tgt), (int)llama_n_seq_max(slot.ctx_tgt), (int)ctx_tgt_seq_rm_type, (int)n_draft, (int)llama_n_rs_seq(slot.ctx_tgt));
-                    if (can_use_tree) {
-                        nvtxRangePushA("server:can_use_tree");
-                        common_speculative_mtp_tree_plan mtp_tree;
-                        if (common_speculative_get_mtp_tree_plan(spec.get(), slot.id, mtp_tree)) {
+                        llama_seq_id best_seq_id = -1;
+                        size_t best_path_index = 0;
+                        mtp_tree_verify_paths_result best_path_result;
+                        common_sampler_ptr best_path_smpl;
 
-                            LOG_DBG("slot %d: got tree plan with %zu nodes\n", slot.id, mtp_tree.nodes.size());
-                            if (trace > 0) {
-                                SLT_DBG(slot,
-                                        "mtp-tree draft: nodes=%zu max_nodes=%zu max_depth=%zu p_split=%.4g\n",
-                                        mtp_tree.nodes.size(),
-                                        mtp_tree.max_nodes,
-                                        mtp_tree.max_depth,
-                                        (double) mtp_tree.p_split);
-                            }
+                        if (mtp_tree_inline_accept(
+                                    slot.ctx_tgt,
+                                    slot.spec_tree_inline,
+                                    smpl_save.get(),
+                                    best_path_smpl,
+                                    best_seq_id,
+                                    best_path_index,
+                                    best_path_result)) {
+                            if (mtp_tree_seq_rm_with_fallback(slot.ctx_tgt, slot.id, slot.spec_tree_inline.start_pos, -1)) {
+                                common_context_seq_cp(slot.ctx_tgt, best_seq_id, slot.id, 0, -1);
+                                accepted_tree = std::move(best_path_result.accepted);
+                                slot.smpl = std::move(best_path_smpl);
+                                slot.kv_needs_restore = false;
+                                used_tree_verify = true;
 
-                            std::vector<mtp_tree_candidate_path> tree_paths;
-                            if (mtp_tree_collect_candidates(mtp_tree, n_draft, tree_paths)) {
-                                LOG_DBG("slot %d: collected %zu candidate paths\n", slot.id, tree_paths.size());
-                                const llama_token root = slot.sampled;
-                                const int32_t tree_start_pos = slot.spec_ckpt.pos_max >= 0
-                                    ? (int32_t) slot.spec_ckpt.pos_max + 1
-                                    : (int32_t) slot.spec_ckpt.n_tokens;
-                                LOG_DBG("slot %d: using root=%d for verification\n", slot.id, (int)root);
-
-                                size_t best_path_index = 0;
-                                mtp_tree_verify_paths_result best_path_result;
-                                common_sampler_ptr best_path_smpl;
-                                std::vector<mtp_tree_verify_paths_result> verify_results;
-
-                                const bool tree_verified = mtp_tree_verify_paths(
-                                        slot.ctx_tgt,
-                                        slot.spec_ckpt,
-                                        spec_ckpt_flags,
-                                        slot.id,
-                                        tree_start_pos,
-                                        root,
-                                        tree_paths,
-                                        smpl_save.get(),
-                                        verify_results,
-                                        best_path_smpl,
-                                        best_path_index,
-                                        best_path_result,
-                                        slot.kv_needs_restore);
-
-                                if (tree_verified && best_path_result.ok && best_path_smpl) {
-                                    accepted_tree = std::move(best_path_result.accepted);
-                                    slot.smpl = std::move(best_path_smpl);
-                                    used_tree_verify = true;
+                                if (trace > 0) {
+                                    SLT_INF(slot, "accepted %2zu/%2zu draft tokens (tree inline)\n", accepted_tree.size() - 1, n_draft);
                                 }
                             }
                         }
+
+                        mtp_tree_inline_clear_context(slot.ctx_tgt, slot.spec_tree_inline);
                         nvtxRangePop();
                     }
 
