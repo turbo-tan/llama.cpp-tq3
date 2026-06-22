@@ -342,16 +342,21 @@ static bool mtp_tree_verify_paths(
         }
     }
 
-    // Clear temporary sequences and restore the source sequence position window.
+    // Copy best temp sequence KV back to the main sequence before cleanup,
+    // so the accepted tokens survive in the main KV cache.
+    if (best_result.ok) {
+        for (const auto & info : active) {
+            if (info.path_index == best_path_index) {
+                common_context_seq_cp(ctx_tgt, info.seq_id, seq_id, 0, -1);
+                break;
+            }
+        }
+    }
+
+    // Clear temporary sequences.
     for (const auto & info : active) {
         common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
     }
-    if (!mtp_tree_seq_rm_with_fallback(ctx_tgt, seq_id, ckpt.pos_max + 1, -1)) {
-        LOG_DBG("mtp_tree_verify_paths: failed to restore source rollback window (pos_max=%d)\n", (int) ckpt.pos_max);
-        llama_batch_free(batch);
-        return false;
-    }
-
     llama_batch_free(batch);
     nvtxRangePop();
     return true;
