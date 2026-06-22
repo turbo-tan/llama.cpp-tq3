@@ -1130,6 +1130,92 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         nvtxRangePop();
     }
 
+    size_t scout_select_first(
+            llama_seq_id seq_id,
+            llama_pos pos,
+            const llama_token_data_array * cur_p,
+            common_sampler * smpl,
+            const float * h_row) {
+        if (!params.use_mtp_tree || params.mtp_tree_target_verify || cur_p == nullptr || smpl == nullptr || h_row == nullptr) {
+            return 0;
+        }
+        if (cur_p->size <= 1 || n_seq <= 1) {
+            return 0;
+        }
+
+        const int32_t n_eval = std::min<int32_t>({
+            (int32_t) cur_p->size,
+            std::max<int32_t>(1, params.mtp_tree_nodes),
+            (int32_t) n_seq - 1,
+            4,
+        });
+        if (n_eval <= 1) {
+            return 0;
+        }
+
+        auto * ctx_dft = params.ctx_dft;
+        const size_t row_bytes = (size_t) n_embd * sizeof(float);
+        std::vector<llama_seq_id> seqs;
+        seqs.reserve(n_eval);
+
+        common_batch_clear(batch);
+        for (llama_seq_id cand_seq = 0; cand_seq < (llama_seq_id) n_seq && (int32_t) seqs.size() < n_eval; ++cand_seq) {
+            if (cand_seq == seq_id) {
+                continue;
+            }
+
+            common_context_seq_rm(ctx_dft, cand_seq, -1, -1);
+            common_context_seq_cp(ctx_dft, seq_id, cand_seq, 0, -1);
+            common_batch_add(batch, cur_p->data[seqs.size()].id, pos, { cand_seq }, true);
+            std::memcpy(batch.embd + (size_t) n_embd * (batch.n_tokens - 1), h_row, row_bytes);
+            seqs.push_back(cand_seq);
+        }
+
+        if (seqs.empty()) {
+            return 0;
+        }
+
+        const int ret = llama_decode(ctx_dft, batch);
+        if (ret != 0) {
+            LOG_DBG("%s: scout decode failed rc=%d\n", __func__, ret);
+            for (llama_seq_id cand_seq : seqs) {
+                common_context_seq_rm(ctx_dft, cand_seq, -1, -1);
+            }
+            return 0;
+        }
+
+        size_t best = 0;
+        float best_score = -1.0f;
+        for (size_t i = 0; i < seqs.size(); ++i) {
+            common_sampler_ptr smpl_path(common_sampler_clone(smpl));
+            if (!smpl_path) {
+                continue;
+            }
+
+            const llama_token first = cur_p->data[i].id;
+            common_sampler_accept(smpl_path.get(), first, false);
+            common_sampler_sample(smpl_path.get(), ctx_dft, (int) i, true);
+            const auto * next_p = common_sampler_get_candidates(smpl_path.get(), true);
+            const float next_score = next_p && next_p->size > 0 ? next_p->data[0].p : 0.0f;
+            const float score = cur_p->data[i].p * next_score;
+            if (score > best_score) {
+                best_score = score;
+                best = i;
+            }
+        }
+
+        for (llama_seq_id cand_seq : seqs) {
+            common_context_seq_rm(ctx_dft, cand_seq, -1, -1);
+        }
+
+        if (best != 0) {
+            LOG_DBG("%s: selected candidate %zu over greedy (score=%.6f, greedy=%.6f)\n",
+                    __func__, best, (double) best_score, (double) cur_p->data[0].p);
+        }
+
+        return best;
+    }
+
     bool process(const llama_batch & batch_in) override {
         if (batch_in.n_tokens <= 0) {
             return true;
@@ -1294,8 +1380,16 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                             common_token_to_piece(ctx_dft, cur_p->data[k].id).c_str());
                 }
 
+                auto & dp = dparams.at(seq_id);
+                auto & result = *dp.result;
+                const bool is_new_draft = result.empty();
+                const llama_pos next_pos = is_mem_shared ? dp.n_past : dp.n_past + i + 1;
+                const size_t selected_i = is_new_draft
+                    ? scout_select_first(seq_id, next_pos, cur_p, smpl, h_row)
+                    : 0;
+
                 // add drafted token for each sequence
-                const auto & selected = cur_p->data[0];
+                const auto & selected = cur_p->data[selected_i];
                 const llama_token id = selected.id;
 
                 // only collect very high-confidence draft tokens
@@ -1308,13 +1402,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 common_sampler_accept(smpl, id, false);
 
-                auto & dp = dparams.at(seq_id);
-                auto & result = *dp.result;
-                        const bool is_new_draft = result.empty();
-
                 result.push_back(id);
 
-                if (params.use_mtp_tree && cur_p->size > 0) {
+                if (params.use_mtp_tree && params.mtp_tree_target_verify && cur_p->size > 0) {
                     nvtxRangePushA("mtp_tree:draft_build");
                     auto & plan = mtp_trees[seq_id];
                     if (is_new_draft) {
