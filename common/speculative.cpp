@@ -1155,6 +1155,12 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             (int32_t) n_seq - 1,
             4,
         });
+        // If the best alternative has < 10% of greedy's probability, skip scout
+        // Evaluate ratio of top-2 to top-1 to avoid expensive decode for weak alternatives
+        if (cur_p->data[1].p < cur_p->data[0].p * 0.1f) {
+            return 0;
+        }
+
         if (n_eval <= 1) {
             return 0;
         }

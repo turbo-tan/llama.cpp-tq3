@@ -1086,6 +1086,25 @@ struct server_slot {
             return false;
         }
 
+
+        // Skip tree verification when no alternative path has meaningful cumulative
+        // probability - the target model is unlikely to accept weak alternatives
+        if (!spec_tree_inline.paths.empty()) {
+            const auto & greedy_first = spec_tree_inline.paths[0].tokens[0];
+            float best_alt_score = 0.0f;
+            for (size_t i = 1; i < spec_tree_inline.paths.size(); ++i) {
+                const auto & path = spec_tree_inline.paths[i];
+                if (!path.tokens.empty() && path.tokens[0] != greedy_first) {
+                    best_alt_score = path.score;
+                    break;
+                }
+            }
+            if (best_alt_score < 0.3f) {
+                spec_tree_inline.clear();
+                return false;
+            }
+        }
+
         const int32_t n_main_rows = (int32_t) spec_draft.size() + 1;
         int32_t n_capacity = n_batch - batch_n_tokens - n_main_rows;
         if (n_capacity <= 0) {
