@@ -987,6 +987,21 @@ llama_token llama_context::get_sampled_token_ith(int32_t idx) {
     }
 }
 
+llama_token llama_context::get_sampled_token_ith_no_sync(int32_t idx) {
+    if (!sampling.sampled.has_data()) {
+        return LLAMA_TOKEN_NULL;
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        GGML_ASSERT(row < (int64_t) sampling.sampled.size);
+        return sampling.sampled.data[row];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled token id %d, reason: %s\n", __func__, idx, err.what());
+        return LLAMA_TOKEN_NULL;
+    }
+}
+
 float * llama_context::get_sampled_probs_ith(int32_t idx) {
     output_reorder();
 
@@ -1003,6 +1018,40 @@ float * llama_context::get_sampled_probs_ith(int32_t idx) {
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: invalid backend sampled probs id %d, reason: %s\n", __func__, idx, err.what());
         return nullptr;
+    }
+}
+
+float * llama_context::get_sampled_probs_ith_no_sync(int32_t idx) {
+    if (!sampling.probs.has_data()) {
+        return nullptr;
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        if ((size_t) row >= sampling.probs_count.size() || sampling.probs_count[row] == 0) {
+            return nullptr;
+        }
+        return sampling.probs.data + row*model.vocab.n_tokens();
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled probs id %d, reason: %s\n", __func__, idx, err.what());
+        return nullptr;
+    }
+}
+
+size_t llama_context::get_sampled_probs_count_no_sync(int32_t idx) {
+    if (!sampling.probs.has_data()) {
+        return 0;
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        if ((size_t) row >= sampling.probs_count.size()) {
+            return 0;
+        }
+        return sampling.probs_count[row];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled probs count id %d, reason: %s\n", __func__, idx, err.what());
+        return 0;
     }
 }
 
@@ -1025,6 +1074,40 @@ float * llama_context::get_sampled_logits_ith(int32_t idx) {
     }
 }
 
+float * llama_context::get_sampled_logits_ith_no_sync(int32_t idx) {
+    if (!sampling.logits.has_data()) {
+        return nullptr;
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        if ((size_t) row >= sampling.logits_count.size() || sampling.logits_count[row] == 0) {
+            return nullptr;
+        }
+        return sampling.logits.data + row*model.vocab.n_tokens();
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled logits id %d, reason: %s\n", __func__, idx, err.what());
+        return nullptr;
+    }
+}
+
+size_t llama_context::get_sampled_logits_count_no_sync(int32_t idx) {
+    if (!sampling.logits.has_data()) {
+        return model.vocab.n_tokens();
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        if ((size_t) row >= sampling.logits_count.size()) {
+            return 0;
+        }
+        return sampling.logits_count[row];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled logits count id %d, reason: %s\n", __func__, idx, err.what());
+        return 0;
+    }
+}
+
 const llama_token * llama_context::get_sampled_candidates_ith(int32_t idx) {
     output_reorder();
 
@@ -1041,6 +1124,38 @@ const llama_token * llama_context::get_sampled_candidates_ith(int32_t idx) {
     }
 
     return sampling.token_ids_full_vocab.data();
+}
+
+const llama_token * llama_context::get_sampled_candidates_ith_no_sync(int32_t idx) {
+    try {
+        const int64_t row = output_resolve_row(idx);
+        if (sampling.candidates.has_data() &&
+            (size_t) row < sampling.candidates_count.size() &&
+            sampling.candidates_count[row] > 0) {
+            return sampling.candidates.data + row*model.vocab.n_tokens();
+        }
+    } catch (const std::exception & err) {
+        GGML_UNUSED(err);
+    }
+
+    return sampling.token_ids_full_vocab.data();
+}
+
+size_t llama_context::get_sampled_candidates_count_no_sync(int32_t idx) {
+    if (!sampling.candidates.has_data()) {
+        return 0;
+    }
+
+    try {
+        const int64_t row = output_resolve_row(idx);
+        if ((size_t) row >= sampling.candidates_count.size()) {
+            return 0;
+        }
+        return sampling.candidates_count[row];
+    } catch (const std::exception & err) {
+        LLAMA_LOG_ERROR("%s: invalid backend sampled candidates count id %d, reason: %s\n", __func__, idx, err.what());
+        return 0;
+    }
 }
 
 size_t llama_context::get_sampled_candidates_count(int32_t idx) {
@@ -3898,31 +4013,31 @@ float * llama_get_embeddings_layer_inp(llama_context * ctx, uint32_t lid) {
 }
 
 llama_token llama_get_sampled_token_ith_no_sync(llama_context * ctx, int32_t i) {
-    return ctx->get_sampled_token_ith(i);
+    return ctx->get_sampled_token_ith_no_sync(i);
 }
 
 float * llama_get_sampled_probs_ith_no_sync(llama_context * ctx, int32_t i) {
-    return ctx->get_sampled_probs_ith(i);
+    return ctx->get_sampled_probs_ith_no_sync(i);
 }
 
 uint32_t llama_get_sampled_probs_count_ith_no_sync(llama_context * ctx, int32_t i) {
-    return static_cast<uint32_t>(ctx->get_sampled_probs_count(i));
+    return static_cast<uint32_t>(ctx->get_sampled_probs_count_no_sync(i));
 }
 
 float * llama_get_sampled_logits_ith_no_sync(llama_context * ctx, int32_t i) {
-    return ctx->get_sampled_logits_ith(i);
+    return ctx->get_sampled_logits_ith_no_sync(i);
 }
 
 uint32_t llama_get_sampled_logits_count_ith_no_sync(llama_context * ctx, int32_t i) {
-    return static_cast<uint32_t>(ctx->get_sampled_logits_count(i));
+    return static_cast<uint32_t>(ctx->get_sampled_logits_count_no_sync(i));
 }
 
 llama_token * llama_get_sampled_candidates_ith_no_sync(llama_context * ctx, int32_t i) {
-    return const_cast<llama_token *>(ctx->get_sampled_candidates_ith(i));
+    return const_cast<llama_token *>(ctx->get_sampled_candidates_ith_no_sync(i));
 }
 
 uint32_t llama_get_sampled_candidates_count_ith_no_sync(llama_context * ctx, int32_t i) {
-    return static_cast<uint32_t>(ctx->get_sampled_candidates_count(i));
+    return static_cast<uint32_t>(ctx->get_sampled_candidates_count_no_sync(i));
 }
 
 float * llama_get_logits_ith_no_sync(llama_context * ctx, int32_t i) {
