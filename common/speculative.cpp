@@ -1375,7 +1375,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 auto * smpl = smpls[seq_id].get();
 
-                common_sampler_sample(smpl, ctx_dft, i_batch, true);
+                common_sampler_sample_no_sync(smpl, ctx_dft, i_batch, true);
                 h_row = llama_get_embeddings_nextn_ith_no_sync(ctx_dft, i_batch);
                 ++i_batch;
 
@@ -1478,12 +1478,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 break;
             }
 
-            // evaluate the drafted tokens on the draft model
+            // evaluate the drafted tokens on the draft model, then pay one sync
+            // boundary for the whole round before reading sampled outputs.
             ret = llama_decode(ctx_dft, batch);
             if (ret != 0) {
                 LOG_WRN("%s: llama_decode[%d] returned %d\n", __func__, i, ret);
                 break;
             }
+            llama_synchronize(ctx_dft);
 
             ++i;
         }
