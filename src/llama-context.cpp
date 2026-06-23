@@ -1247,8 +1247,10 @@ void llama_context::handle_mtp_for_ubatch(
     GGML_ASSERT(t->ne[0] == n_embd);
     const uint32_t n_seq_max = mtp.ctx_mtp->n_seq_max();
     const size_t row_bytes = (size_t) n_embd * sizeof(float);
+    ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
+    GGML_ASSERT(backend_t != nullptr);
 
-    synchronize();
+    ggml_backend_synchronize(backend_t);
 
     llama_seq_id single_seq_id = -1;
     bool single_seq = true;
@@ -1278,9 +1280,6 @@ void llama_context::handle_mtp_for_ubatch(
     std::vector<int32_t> last_row_by_seq(n_seq_max, -1);
 
     if (decode_mtp && single_seq) {
-        ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
-        GGML_ASSERT(backend_t != nullptr);
-
         const llama_seq_id seq_id = single_seq_id;
         const llama_pos pos_start = positions[0];
         const bool pending_continues = mtp.pending_pos[seq_id] >= 0 && mtp.pending_pos[seq_id] + 1 == pos_start;
@@ -1325,7 +1324,7 @@ void llama_context::handle_mtp_for_ubatch(
             GGML_ASSERT(out_idx == n_out);
             mtp.hook_batch.n_tokens = n_out;
 
-            synchronize();
+            ggml_backend_synchronize(backend_t);
 
             const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
             if (rc_dec != 0) {
@@ -1347,9 +1346,6 @@ void llama_context::handle_mtp_for_ubatch(
     }
 
     if (decode_mtp) {
-        ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
-        GGML_ASSERT(backend_t != nullptr);
-
         int out_idx = 0;
         for (int32_t k = 0; k < n_tokens; ++k) {
             const llama_seq_id seq_id = seq_ids[k][0];
@@ -1394,7 +1390,7 @@ void llama_context::handle_mtp_for_ubatch(
         mtp.hook_batch.n_tokens = out_idx;
 
         if (out_idx > 0) {
-            synchronize();
+            ggml_backend_synchronize(backend_t);
 
             const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
             if (rc_dec != 0) {
@@ -1404,8 +1400,6 @@ void llama_context::handle_mtp_for_ubatch(
         }
     }
 
-    ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
-    GGML_ASSERT(backend_t != nullptr);
     for (uint32_t seq_id = 0; seq_id < n_seq_max; ++seq_id) {
         if (last_row_by_seq[seq_id] < 0) {
             continue;
