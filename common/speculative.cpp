@@ -1203,7 +1203,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             common_sampler_accept(smpl_path.get(), first, false);
             common_sampler_sample_no_sync(smpl_path.get(), ctx_dft, (int) i, true);
             const auto * next_p = common_sampler_get_candidates(smpl_path.get(), false);
-            const float next_score = next_p && next_p->selected >= 0 ? next_p->data[next_p->selected].p : 0.0f;
+            const float next_score = next_p && next_p->size > 0 ? next_p->data[0].p : 0.0f;
             const float score = cur_p->data[i].p * next_score;
             if (score > best_score) {
                 best_score = score;
