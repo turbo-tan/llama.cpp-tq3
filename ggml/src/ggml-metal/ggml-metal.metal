@@ -119,18 +119,25 @@ static inline float tq3_4s_decode_scale(uint8_t sb) {
     return as_type<float>(bits);
 }
 
-// Extract the r-th (0..7) 3-bit index from a 3-byte group qp[0..2].
-static inline uint8_t tq3_4s_unpack3(device const uint8_t * qp, ushort r) {
-    switch (r) {
-        case 0:  return  qp[0]        & 7;
-        case 1:  return (qp[0] >> 3)  & 7;
-        case 2:  return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
-        case 3:  return (qp[1] >> 1)  & 7;
-        case 4:  return (qp[1] >> 4)  & 7;
-        case 5:  return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
-        case 6:  return (qp[2] >> 2)  & 7;
-        default: return (qp[2] >> 5)  & 7;
+// Fast path: a whole 16-byte block loaded as one aligned uint4 (avoids slow
+// byte-addressed loads). Layout: raw.x = d[0..3] (E3M5 scales), raw.yzw = qs[12].
+// Because each group packs 8 indices in exactly 3 bytes (24 bits), the index of
+// element j sits at bit 3*j of the 96-bit little-endian qs stream.
+static inline uint8_t tq3_4s_idx_from_block(uint4 raw, ushort j) {
+    const uint bitpos = 3u * (uint) j;
+    const uint w      = bitpos >> 5;   // qs word: 0,1,2
+    const uint off    = bitpos & 31u;
+    const uint cur = (w == 0u) ? raw.y : ((w == 1u) ? raw.z : raw.w);
+    uint v = cur >> off;
+    if (off > 29u && w < 2u) {         // 3-bit field straddles two words
+        const uint nxt = (w == 0u) ? raw.z : raw.w;
+        v |= nxt << (32u - off);
     }
+    return (uint8_t) (v & 7u);
+}
+
+static inline float tq3_4s_scale_from_block(uint4 raw, ushort g) {
+    return tq3_4s_decode_scale((raw.x >> (8u * (uint) g)) & 0xffu);
 }
 
 // NOTE: this is not dequantizing - we are simply fitting the template
@@ -9371,7 +9378,6 @@ void kernel_mul_mv_tq3_4s_f32_impl(
 
     const ushort j    = tiisg;      // lane == element index within a K-block
     const ushort g    = j / 8;
-    const ushort r3b  = j % 8;
     const float  sign = TQ3_0_SIGNS_M[j];
     const float  norm = 1.0f / sqrt(32.0f);
 
@@ -9387,12 +9393,10 @@ void kernel_mul_mv_tq3_4s_f32_impl(
         yf *= norm;
 
         for (short row = 0; row < nr0; ++row) {
-            device const block_tq3_4s * b = (device const block_tq3_4s *) (cx + row*args.nb01) + ib;
-            device const uint8_t * qp = b->qs + g*3;
-            // 8 indices of a group are (packed >> (3*r)) & 7, r = 0..7
-            const uint packed = (uint) qp[0] | ((uint) qp[1] << 8) | ((uint) qp[2] << 16);
-            const uint8_t idx = (packed >> (3*r3b)) & 7;
-            const float c = TQ3_0_CENTROIDS_M[idx] * tq3_4s_decode_scale(b->d[g]);
+            device const uint4 * bp = (device const uint4 *) (cx + row*args.nb01) + ib;
+            const uint4 raw = bp[0];
+            const uint8_t idx = tq3_4s_idx_from_block(raw, j);
+            const float c = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
             sumf[row] += c * yf;
         }
     }
@@ -9446,15 +9450,14 @@ kernel void kernel_get_rows_tq3_4s(
     const int    nb   = args.ne00 / QK_TQ3_0; // 32-element blocks in the row
     const ushort j    = tiisg;                // lane == element index within block
     const ushort g    = j / 8;
-    const ushort r3b  = j % 8;
     const float  sign = TQ3_0_SIGNS_M[j];
     const float  norm = 1.0f / sqrt(32.0f);
 
     for (int ib = 0; ib < nb; ++ib) {
-        device const block_tq3_4s * b = psrc + ib;
+        const uint4 raw = ((device const uint4 *) psrc)[ib];
 
-        const uint8_t idx = tq3_4s_unpack3(b->qs + g*3, r3b);
-        float val = TQ3_0_CENTROIDS_M[idx] * tq3_4s_decode_scale(b->d[g]);
+        const uint8_t idx = tq3_4s_idx_from_block(raw, j);
+        float val = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
 
         // inverse randomized Hadamard transform across the 32 lanes
         for (ushort step = 1; step < 32; step <<= 1) {
