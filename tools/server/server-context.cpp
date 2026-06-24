@@ -3471,7 +3471,9 @@ private:
                             /* .mtp_tree_enabled = */ mtp_tree_enabled,
                         };
 
-                        if (spec != nullptr && mtp_tree_enabled) {
+                        // Only clone the target sampler for target-verify tree mode
+                        // Scout mode uses the simple top-k draft sampler (much faster)
+                        if (spec != nullptr && mtp_tree_enabled && params_base.speculative.draft.mtp_tree_target_verify) {
                             common_speculative_sync_draft_sampler(spec.get(), slot.id, slot.smpl.get());
                         }
 
