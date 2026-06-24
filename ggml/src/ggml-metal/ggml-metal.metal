@@ -9338,15 +9338,44 @@ kernel void kernel_mul_mv_mxfp4_f32(
     kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
 }
 
+// Pre-pass for TQ3_4S mat-mul: forward randomized Hadamard transform of the
+// activation, per 32-element block along K, written to a contiguous f32 buffer.
+// By RHT orthogonality, dot(W_dequant_row, x) == dot(centroid*scale, RHT_fwd(x)),
+// so after this pass the mat-vec needs only a local codebook lookup on the
+// weights (no per-weight butterfly), which frees the lane mapping to do fully
+// coalesced weight loads. One 32-element block maps to one 32-lane SIMD-group.
+kernel void kernel_tq3_4s_rht_f32(
+        constant ggml_metal_kargs_tq3_rht & args,
+        device const char * src1,
+        device       char * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+    const int    ib  = tgpig.x;            // 32-element block along K
+    const int    i11 = tgpig.y;            // activation column
+    const int    b   = tgpig.z;            // flattened batch (i12 + i13*ne12)
+    const int    i12 = b % args.ne12;
+    const int    i13 = b / args.ne12;
+    const ushort j   = tiisg;              // element within the block
+
+    device const float * y = (device const float *) (src1 + i13*args.nb13 + i12*args.nb12 + i11*args.nb11) + ib*QK_TQ3_0 + j;
+
+    float v = y[0] * TQ3_0_SIGNS_M[j];
+    for (ushort step = 1; step < 32; step <<= 1) {
+        const float o = simd_shuffle_xor(v, step);
+        v = (j & step) ? (o - v) : (o + v);
+    }
+    v *= 1.0f / sqrt(32.0f);
+
+    device float * o = (device float *) (dst + i13*args.ob13 + i12*args.ob12 + i11*args.ob11) + ib*QK_TQ3_0 + j;
+    o[0] = v;
+}
+
 // Matrix-vector product for TQ3_4S weights.
 //
-// Uses the orthogonality of the randomized Hadamard transform (RHT): the
-// dequantized weight is w = SIGN * (1/sqrt(32)) * WHT(centroid*scale), so
-//   dot(w, y) = sum_j centroid_j*scale_j * RHT_forward(y)_j .
-// Therefore the (expensive) butterfly is applied ONCE per K-block to the
-// activation column (shared by all output rows of the SIMD-group), after which
-// each row only does a local codebook lookup + scale. One 32-element K-block
-// maps to the 32-lane SIMD-group; the WHT butterfly uses simd_shuffle_xor.
+// src1 here is the RHT-pre-transformed activation (see kernel_tq3_4s_rht_f32),
+// so the weights only need a local codebook lookup + per-group scale. Each lane
+// owns whole 32-element K-blocks, strided by the SIMD-group width, so the 32
+// lanes read 32 consecutive 16-byte blocks per step -> fully coalesced loads.
 template<int nr0, typename args_t>
 void kernel_mul_mv_tq3_4s_f32_impl(
         args_t args,
@@ -9374,30 +9403,37 @@ void kernel_mul_mv_tq3_4s_f32_impl(
     const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
 
     device const char  * cx = src0 + offset0;
-    device const float * y  = (device const float *) (src1 + offset1);
-
-    const ushort j    = tiisg;      // lane == element index within a K-block
-    const ushort g    = j / 8;
-    const float  sign = TQ3_0_SIGNS_M[j];
-    const float  norm = 1.0f / sqrt(32.0f);
+    device const float * y  = (device const float *) (src1 + offset1); // RHT-pre-transformed activation
 
     float sumf[nr0] = {0.f};
 
-    for (int ib = 0; ib < nb; ++ib) {
-        // forward RHT of the activation block (shared across the nr0 rows)
-        float yf = y[ib*QK_TQ3_0 + j] * sign;
-        for (ushort step = 1; step < 32; step <<= 1) {
-            const float o = simd_shuffle_xor(yf, step);
-            yf = (j & step) ? (o - yf) : (o + yf);
-        }
-        yf *= norm;
+    for (int ib = tiisg; ib < nb; ib += 32) {
+        device const float * ya = y + ib*QK_TQ3_0; // 32 pre-transformed activations
 
         for (short row = 0; row < nr0; ++row) {
             device const uint4 * bp = (device const uint4 *) (cx + row*args.nb01) + ib;
             const uint4 raw = bp[0];
-            const uint8_t idx = tq3_4s_idx_from_block(raw, j);
-            const float c = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
-            sumf[row] += c * yf;
+
+            const float s0 = tq3_4s_decode_scale((raw.x      ) & 0xffu);
+            const float s1 = tq3_4s_decode_scale((raw.x >>  8) & 0xffu);
+            const float s2 = tq3_4s_decode_scale((raw.x >> 16) & 0xffu);
+            const float s3 = tq3_4s_decode_scale((raw.x >> 24) & 0xffu);
+
+            // 24-bit packed indices per group of 8 (qs = raw.yzw, little-endian)
+            const uint p0 =  (raw.y                       ) & 0xFFFFFFu;
+            const uint p1 = ((raw.y >> 24) | (raw.z <<  8)) & 0xFFFFFFu;
+            const uint p2 = ((raw.z >> 16) | (raw.w << 16)) & 0xFFFFFFu;
+            const uint p3 =  (raw.w >>  8                 ) & 0xFFFFFFu;
+
+            float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
+            for (short r = 0; r < 8; ++r) {
+                a0 += TQ3_0_CENTROIDS_M[(p0 >> (3*r)) & 7] * ya[     r];
+                a1 += TQ3_0_CENTROIDS_M[(p1 >> (3*r)) & 7] * ya[ 8 + r];
+                a2 += TQ3_0_CENTROIDS_M[(p2 >> (3*r)) & 7] * ya[16 + r];
+                a3 += TQ3_0_CENTROIDS_M[(p3 >> (3*r)) & 7] * ya[24 + r];
+            }
+
+            sumf[row] += s0*a0 + s1*a1 + s2*a2 + s3*a3;
         }
     }
 
