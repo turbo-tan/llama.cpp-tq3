@@ -85,6 +85,54 @@ static inline float sum(float4 x) {
     return x[0] + x[1] + x[2] + x[3];
 }
 
+// ---------------------------------------------------------------------------
+// TurboQuant TQ3_4S (ggml type 46) helpers
+// block_tq3_4s (see ggml-common.h): uint8_t d[4] (E3M5 scales / group of 8)
+//                                   uint8_t qs[12] (32 x 3-bit packed indices)
+// Dequant = 8-level codebook lookup * per-group scale, then inverse randomized
+// Hadamard transform (sign flip + Walsh-Hadamard + 1/sqrt(32) norm) over the
+// 32-element block. Mirrors the CPU reference (ggml-quants.c) and the CUDA
+// kernel (ggml-cuda/convert.cu). The block size QK_TQ3_0 == 32 maps to one
+// 32-lane SIMD-group so the WHT butterfly is done with simd_shuffle_xor.
+// ---------------------------------------------------------------------------
+constant float TQ3_0_CENTROIDS_M[8] = {
+    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+     0.230106f,  0.725222f,  1.277503f,  1.988943f
+};
+
+constant float TQ3_0_SIGNS_M[32] = {
+    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+};
+
+// E3M5 mini-float scale decode: scale = 2^((sb>>5)-9) * (1 + (sb&31)/32).
+// Implemented via direct IEEE-754 bit construction (matches CUDA MMQ path):
+//   exponent field = (sb>>5) + 118  (bias 127 => actual exp (sb>>5)-9)
+//   top 5 mantissa bits = (sb&31)
+static inline float tq3_4s_decode_scale(uint8_t sb) {
+    if (sb == 0) {
+        return 0.0f;
+    }
+    const uint bits = (((uint)(sb >> 5) + 118u) << 23) | ((uint)(sb & 31u) << 18);
+    return as_type<float>(bits);
+}
+
+// Extract the r-th (0..7) 3-bit index from a 3-byte group qp[0..2].
+static inline uint8_t tq3_4s_unpack3(device const uint8_t * qp, ushort r) {
+    switch (r) {
+        case 0:  return  qp[0]        & 7;
+        case 1:  return (qp[0] >> 3)  & 7;
+        case 2:  return ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+        case 3:  return (qp[1] >> 1)  & 7;
+        case 4:  return (qp[1] >> 4)  & 7;
+        case 5:  return ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+        case 6:  return (qp[2] >> 2)  & 7;
+        default: return (qp[2] >> 5)  & 7;
+    }
+}
+
 // NOTE: this is not dequantizing - we are simply fitting the template
 template <typename type4x4>
 void dequantize_f32(device const float4x4 * src, short il, thread type4x4 & reg) {
@@ -9261,6 +9309,141 @@ kernel void kernel_mul_mv_mxfp4_f32(
         ushort sgitg[[simdgroup_index_in_threadgroup]]) {
 
     kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
+}
+
+// Matrix-vector product for TQ3_4S weights.
+//
+// Uses the orthogonality of the randomized Hadamard transform (RHT): the
+// dequantized weight is w = SIGN * (1/sqrt(32)) * WHT(centroid*scale), so
+//   dot(w, y) = sum_j centroid_j*scale_j * RHT_forward(y)_j .
+// Therefore the (expensive) butterfly is applied ONCE per K-block to the
+// activation column (shared by all output rows of the SIMD-group), after which
+// each row only does a local codebook lookup + scale. One 32-element K-block
+// maps to the 32-lane SIMD-group; the WHT butterfly uses simd_shuffle_xor.
+template<int nr0, typename args_t>
+void kernel_mul_mv_tq3_4s_f32_impl(
+        args_t args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        threadgroup  char * shmem,
+        uint3  tgpig,
+        ushort tiisg,
+        ushort sgitg) {
+    const short NSG = FC_mul_mv_nsg;
+
+    const int nb = args.ne00 / QK_TQ3_0; // number of 32-element K-blocks
+
+    const int r0 = tgpig.x;
+    const int r1 = tgpig.y;
+    const int im = tgpig.z;
+
+    const int first_row = (r0 * NSG + sgitg) * nr0;
+
+    const uint i12 = im%FC_mul_mv_ne12;
+    const uint i13 = im/FC_mul_mv_ne12;
+
+    const uint64_t offset0 = first_row*args.nb01 + (i12/FC_mul_mv_r2)*args.nb02 + (i13/FC_mul_mv_r3)*args.nb03;
+    const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
+
+    device const char  * cx = src0 + offset0;
+    device const float * y  = (device const float *) (src1 + offset1);
+
+    const ushort j    = tiisg;      // lane == element index within a K-block
+    const ushort g    = j / 8;
+    const ushort r3b  = j % 8;
+    const float  sign = TQ3_0_SIGNS_M[j];
+    const float  norm = 1.0f / sqrt(32.0f);
+
+    float sumf[nr0] = {0.f};
+
+    for (int ib = 0; ib < nb; ++ib) {
+        // forward RHT of the activation block (shared across the nr0 rows)
+        float yf = y[ib*QK_TQ3_0 + j] * sign;
+        for (ushort step = 1; step < 32; step <<= 1) {
+            const float o = simd_shuffle_xor(yf, step);
+            yf = (j & step) ? (o - yf) : (o + yf);
+        }
+        yf *= norm;
+
+        for (short row = 0; row < nr0; ++row) {
+            device const block_tq3_4s * b = (device const block_tq3_4s *) (cx + row*args.nb01) + ib;
+            device const uint8_t * qp = b->qs + g*3;
+            // 8 indices of a group are (packed >> (3*r)) & 7, r = 0..7
+            const uint packed = (uint) qp[0] | ((uint) qp[1] << 8) | ((uint) qp[2] << 16);
+            const uint8_t idx = (packed >> (3*r3b)) & 7;
+            const float c = TQ3_0_CENTROIDS_M[idx] * tq3_4s_decode_scale(b->d[g]);
+            sumf[row] += c * yf;
+        }
+    }
+
+    device float * dst_f32 = (device float *) dst + (int64_t)im*args.ne0*args.ne1 + (int64_t)r1*args.ne0;
+
+    for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
+        const float sum_all = simd_sum(sumf[row]);
+        if (tiisg == 0) {
+            dst_f32[first_row + row] = sum_all;
+        }
+    }
+}
+
+[[host_name("kernel_mul_mv_tq3_4s_f32")]]
+kernel void kernel_mul_mv_tq3_4s_f32(
+        constant ggml_metal_kargs_mul_mv & args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+
+    kernel_mul_mv_tq3_4s_f32_impl<N_R0_TQ3_4S, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
+}
+
+// Custom get_rows for TQ3_4S: the generic template dequantizes per-thread which
+// cannot do the block-wide inverse RHT. Dispatched as one 32-lane SIMD-group per
+// gathered row (see ggml_metal_op_get_rows); the simd-group loops over the row's
+// 32-element blocks and applies the inverse RHT via simd_shuffle_xor.
+kernel void kernel_get_rows_tq3_4s(
+        constant ggml_metal_kargs_get_rows & args,
+        device const void * src0,
+        device const void * src1,
+        device       void * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+    const int32_t i10 = tgpig.x;
+    const int32_t i11 = tgpig.y;
+    const int32_t i12 = tgpig.z;
+
+    const int32_t r = ((const device int32_t *) ((const device char *) src1 + i12*args.nb12 + i11*args.nb11 + i10*args.nb10))[0];
+
+    const int32_t i02 = i11;
+    const int32_t i03 = i12;
+
+    device const block_tq3_4s * psrc = (device const block_tq3_4s *) ((const device char *) src0 + i03*args.nb03 + i02*args.nb02 + r*args.nb01);
+    device       float        * pdst = (device       float        *) ((      device char *) dst  + i12*args.nb3  + i11*args.nb2  + i10*args.nb1);
+
+    const int    nb   = args.ne00 / QK_TQ3_0; // 32-element blocks in the row
+    const ushort j    = tiisg;                // lane == element index within block
+    const ushort g    = j / 8;
+    const ushort r3b  = j % 8;
+    const float  sign = TQ3_0_SIGNS_M[j];
+    const float  norm = 1.0f / sqrt(32.0f);
+
+    for (int ib = 0; ib < nb; ++ib) {
+        device const block_tq3_4s * b = psrc + ib;
+
+        const uint8_t idx = tq3_4s_unpack3(b->qs + g*3, r3b);
+        float val = TQ3_0_CENTROIDS_M[idx] * tq3_4s_decode_scale(b->d[g]);
+
+        // inverse randomized Hadamard transform across the 32 lanes
+        for (ushort step = 1; step < 32; step <<= 1) {
+            const float o = simd_shuffle_xor(val, step);
+            val = (j & step) ? (o - val) : (o + val);
+        }
+
+        pdst[ib*QK_TQ3_0 + j] = val * sign * norm;
+    }
 }
 
 template<typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread float4x4 &)>
