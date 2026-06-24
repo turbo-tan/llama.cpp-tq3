@@ -1170,9 +1170,17 @@ int ggml_metal_op_get_rows(ggml_metal_op_t ctx, int idx) {
         /*.nb3   =*/ nb3,
     };
 
-    const int nth = std::min(args.ne00t, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
+    int nth = std::min(args.ne00t, ggml_metal_pipeline_max_theads_per_threadgroup(pipeline));
 
-    const int nw0 = (args.ne00t + nth - 1)/nth;
+    int nw0 = (args.ne00t + nth - 1)/nth;
+
+    // TQ3_4S uses a custom kernel that processes one 32-element block per 32-lane
+    // SIMD-group (inverse RHT via simd_shuffle_xor). Dispatch exactly one
+    // SIMD-group per gathered row so each row is handled by a single threadgroup.
+    if (op->src[0]->type == GGML_TYPE_TQ3_4S) {
+        nth = 32;
+        nw0 = 1;
+    }
 
     ggml_metal_encoder_set_pipeline(enc, pipeline);
     ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
@@ -2165,6 +2173,9 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
         !ggml_is_transposed(op->src[1]) &&
         // for now the matrix-matrix multiplication kernel only works on A14+/M1+ SoCs
         // AMD GPU and older A-chips will reuse matrix-vector multiplication kernel
+        // TQ3_4S has no mat-mat kernel yet (the block-wide inverse RHT only lives
+        // in the mat-vec kernel), so force it through the mat-vec path below.
+        op->src[0]->type != GGML_TYPE_TQ3_4S &&
         props_dev->has_simdgroup_mm && ne00 >= 64 && ne11 > ne11_mm_min) {
         //GGML_LOG_INFO("matrix: ne00 = %6d, ne01 = %6d, ne02 = %6d, ne11 = %6d, ne12 = %6d\n", ne00, ne01, ne02, ne11, ne12);
 

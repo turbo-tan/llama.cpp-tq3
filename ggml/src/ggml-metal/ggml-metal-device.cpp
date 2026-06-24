@@ -909,6 +909,11 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                 nr0 = N_R0_IQ4_XS;
                 smem = 32*sizeof(float);
             } break;
+        case GGML_TYPE_TQ3_4S:
+            {
+                nsg = N_SG_TQ3_4S;
+                nr0 = N_R0_TQ3_4S;
+            } break;
         default:
             {
                 GGML_LOG_ERROR("Asserting on type %d\n", (int) tsrc0);
