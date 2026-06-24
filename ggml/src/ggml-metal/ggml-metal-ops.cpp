@@ -2107,11 +2107,51 @@ static int ggml_metal_op_mul_mat_tq3_4s(ggml_metal_op_t ctx, int idx) {
         ggml_metal_encoder_dispatch_threadgroups(enc, ne10/32, ne11, ne12*ne13, 32, 1, 1);
     }
 
-    // the mat-vec must wait for the transformed activation
+    // the matmul must wait for the transformed activation
     ggml_metal_op_concurrency_reset(ctx);
 
-    // 2) coalesced mat-vec over local-dequant weights, reading the transformed activation
-    {
+    // 2) matmul over local-dequant weights, reading the transformed activation.
+    //    Batch (ne11 > 1: prefill or speculative-decode verification) -> simdgroup
+    //    GEMM, which amortizes the weight reads across the batch. Single column
+    //    (decode) -> the coalesced mat-vec.
+    const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
+    const bool use_mm = props_dev->has_simdgroup_mm && ne00 >= 64 && ne11 > 1;
+
+    if (use_mm) {
+        auto pipeline = ggml_metal_library_get_pipeline_mul_mm(lib, op);
+
+        ggml_metal_kargs_mul_mm args = {
+            /*.ne00 =*/ ne00,
+            /*.ne02 =*/ ne02,
+            /*.nb01 =*/ nb01,
+            /*.nb02 =*/ nb02,
+            /*.nb03 =*/ nb03,
+            /*.ne12 =*/ ne12,
+            /*.nb10 =*/ sizeof(float),
+            /*.nb11 =*/ ob11,
+            /*.nb12 =*/ ob12,
+            /*.nb13 =*/ ob13,
+            /*.ne0  =*/ ne0,
+            /*.ne1  =*/ ne1,
+            /*.r2   =*/ r2,
+            /*.r3   =*/ r3,
+        };
+
+        ggml_metal_encoder_set_pipeline(enc, pipeline);
+        ggml_metal_encoder_set_bytes   (enc, &args, sizeof(args), 0);
+        ggml_metal_encoder_set_buffer  (enc, bid_src0, 1);
+        ggml_metal_encoder_set_buffer  (enc, bid_w1,   2);
+        ggml_metal_encoder_set_buffer  (enc, bid_dst,  3);
+
+        const size_t smem = pipeline.smem;
+        ggml_metal_encoder_set_threadgroup_memory_size(enc, smem, 0);
+
+        const int nr0 = pipeline.nr0;
+        const int nr1 = pipeline.nr1;
+        const int nsg = pipeline.nsg;
+
+        ggml_metal_encoder_dispatch_threadgroups(enc, ((ne11 + nr1 - 1)/nr1), ((ne01 + nr0 - 1)/nr0), ne12*ne13, 32, nsg, 1);
+    } else {
         auto pipeline = ggml_metal_library_get_pipeline_mul_mv(lib, op);
 
         const int nr0 = pipeline.nr0;
