@@ -10,7 +10,9 @@
 #include "llama-impl.h"
 #include "llama-batch.h"
 #include "llama-io.h"
+#include "llama-kv-cache-iswa.h"
 #include "llama-memory.h"
+#include "llama-memory-hybrid.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
 #include "llama-ext.h"
@@ -4555,4 +4557,31 @@ void llama_set_mtp(struct llama_context * ctx_target, struct llama_context * ctx
 
 llama_context * llama_get_ctx_other(struct llama_context * ctx) {
     return ctx->get_cparams().ctx_other;
+}
+
+bool llama_memory_seq_keep_tree_path(
+        struct llama_context * ctx,
+        llama_seq_id seq_id,
+        llama_pos p0,
+        const int32_t * keep_nodes,
+        size_t n_keep_nodes) {
+    if (ctx == nullptr || keep_nodes == nullptr) {
+        return false;
+    }
+
+    std::vector<int32_t> nodes(keep_nodes, keep_nodes + n_keep_nodes);
+
+    auto * mem = llama_get_memory(ctx);
+    if (auto * kv = dynamic_cast<llama_kv_cache *>(mem)) {
+        return kv->seq_keep_tree_path(seq_id, p0, nodes);
+    }
+    if (auto * kv_iswa = dynamic_cast<llama_kv_cache_iswa *>(mem)) {
+        return kv_iswa->get_base()->seq_keep_tree_path(seq_id, p0, nodes) &&
+               kv_iswa->get_swa ()->seq_keep_tree_path(seq_id, p0, nodes);
+    }
+    if (auto * mem_hybrid = dynamic_cast<llama_memory_hybrid *>(mem)) {
+        return mem_hybrid->get_mem_attn()->seq_keep_tree_path(seq_id, p0, nodes);
+    }
+
+    return false;
 }

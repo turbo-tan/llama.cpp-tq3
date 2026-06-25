@@ -354,16 +354,7 @@ static size_t mtp_tree_candidate_slots_available(llama_context * ctx_tgt) {
 static void mtp_tree_inline_clear_context(
         llama_context * ctx_tgt,
         mtp_tree_inline_state & state) {
-    if (ctx_tgt == nullptr) {
-        state.clear();
-        return;
-    }
-
-    for (const auto & info : state.active) {
-        if (info.seq_id >= 0) {
-            common_context_seq_rm(ctx_tgt, info.seq_id, -1, -1);
-        }
-    }
+    GGML_UNUSED(ctx_tgt);
     state.clear();
 }
 
@@ -481,31 +472,27 @@ static int32_t mtp_tree_find_child(
     return -1;
 }
 
-static bool mtp_tree_decode_accepted_path(
-        llama_context * ctx_tgt,
-        llama_seq_id seq_id,
-        llama_pos start_pos,
-        llama_token root,
-        const llama_tokens & accepted) {
-    if (ctx_tgt == nullptr || accepted.empty()) {
+static bool mtp_tree_collect_keep_nodes(
+        const mtp_tree_inline_state & state,
+        size_t path_index,
+        std::vector<int32_t> & keep_nodes) {
+    keep_nodes.clear();
+    if (path_index >= state.paths.size() || state.plan.nodes.empty()) {
         return false;
     }
 
-    const int32_t n_tokens = (int32_t) accepted.size();
-    llama_batch batch = llama_batch_init(n_tokens, 0, 1);
-    if (batch.n_tokens < 0) {
-        llama_batch_free(batch);
-        return false;
+    keep_nodes.push_back(0);
+
+    int32_t node = 0;
+    for (const llama_token token : state.paths[path_index].tokens) {
+        node = mtp_tree_find_child(state.plan, node, token);
+        if (node < 0) {
+            return false;
+        }
+        keep_nodes.push_back(node);
     }
 
-    common_batch_add(batch, root, start_pos, { seq_id }, true);
-    for (int32_t i = 0; i + 1 < (int32_t) accepted.size(); ++i) {
-        common_batch_add(batch, accepted[(size_t) i], start_pos + i + 1, { seq_id }, true);
-    }
-
-    const int rc = llama_decode(ctx_tgt, batch);
-    llama_batch_free(batch);
-    return rc == 0;
+    return true;
 }
 
 static bool mtp_tree_verify_paths(
@@ -4564,22 +4551,22 @@ private:
 	                                    best_seq_id,
 	                                    best_path_index,
 	                                    best_path_result)) {
-	                            if (mtp_tree_seq_rm_with_fallback(slot.ctx_tgt, slot.id, slot.spec_tree_inline.start_pos, -1)) {
-                                    if (mtp_tree_decode_accepted_path(
-                                                slot.ctx_tgt,
-                                                slot.id,
-                                                slot.spec_tree_inline.start_pos,
-                                                slot.spec_tree_inline.root,
-                                                best_path_result.accepted)) {
-                                        accepted_tree = std::move(best_path_result.accepted);
-                                        slot.smpl = std::move(best_path_smpl);
-                                        slot.kv_needs_restore = false;
-                                        used_tree_verify = true;
-                                        n_tree_accepted = accepted_tree.size() > 0 ? accepted_tree.size() - 1 : 0;
+	                            std::vector<int32_t> keep_nodes;
+	                            if (mtp_tree_collect_keep_nodes(slot.spec_tree_inline, best_path_index, keep_nodes) &&
+	                                    llama_memory_seq_keep_tree_path(
+	                                        slot.ctx_tgt,
+	                                        slot.id,
+	                                        slot.spec_tree_inline.start_pos,
+	                                        keep_nodes.data(),
+	                                        keep_nodes.size())) {
+                                    accepted_tree = std::move(best_path_result.accepted);
+                                    slot.smpl = std::move(best_path_smpl);
+                                    slot.kv_needs_restore = false;
+                                    used_tree_verify = true;
+                                    n_tree_accepted = accepted_tree.size() > 0 ? accepted_tree.size() - 1 : 0;
 
-                                        if (trace > 0) {
-                                            SLT_INF(slot, "accepted %2zu/%2zu draft tokens (tree inline)\n", accepted_tree.size() - 1, n_draft);
-                                        }
+                                    if (trace > 0) {
+                                        SLT_INF(slot, "accepted %2zu/%2zu draft tokens (tree inline)\n", accepted_tree.size() - 1, n_draft);
                                     }
 	                            }
 	                        }

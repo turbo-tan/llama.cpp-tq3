@@ -115,6 +115,13 @@ LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uin
 
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
 
+LLAMA_API bool llama_memory_seq_keep_tree_path(
+        struct llama_context * ctx,
+        llama_seq_id seq_id,
+        llama_pos p0,
+        const int32_t * keep_nodes,
+        size_t n_keep_nodes);
+
 LLAMA_API llama_token llama_get_sampled_token_ith_no_sync(struct llama_context * ctx, int32_t i);
 LLAMA_API float * llama_get_sampled_probs_ith_no_sync(struct llama_context * ctx, int32_t i);
 LLAMA_API uint32_t llama_get_sampled_probs_count_ith_no_sync(struct llama_context * ctx, int32_t i);
