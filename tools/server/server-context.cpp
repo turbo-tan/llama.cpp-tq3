@@ -31,6 +31,7 @@ static inline int nvtxRangePop() { return 0; }
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
+#include <cmath>
 #include <cstring>
 #include <exception>
 #include <memory>
@@ -109,6 +110,9 @@ static bool mtp_tree_collect_candidates(
             continue;
         }
         if (node.parent < 0 || (size_t) node.parent >= plan.nodes.size()) {
+            continue;
+        }
+        if (!std::isfinite(node.cum_prob) || node.cum_prob <= 0.0f) {
             continue;
         }
 
@@ -1207,6 +1211,9 @@ struct server_slot {
         for (size_t i = 0; i < spec_tree_inline.paths.size(); ++i) {
             const auto & path = spec_tree_inline.paths[i];
             if (mtp_tree_path_is_prefix(path, spec_draft)) {
+                if (!std::isfinite(path.score) || path.score <= 0.0f) {
+                    continue;
+                }
                 if (main_path < 0 || path.tokens.size() > spec_tree_inline.paths[(size_t) main_path].tokens.size()) {
                     main_path = (int32_t) i;
                     main_score = path.score;
@@ -1214,6 +1221,9 @@ struct server_slot {
                 continue;
             }
 
+            if (!std::isfinite(path.score) || path.score <= 0.0f) {
+                continue;
+            }
             if (best_alt < 0 || path.score > best_alt_score) {
                 best_alt = (int32_t) i;
                 best_alt_score = path.score;
