@@ -8,6 +8,8 @@
 #include <set>
 #include <vector>
 
+llama_ubatch llama_ubatch_recurrent_without_tree_aux(const llama_ubatch & ubatch);
+
 //
 // llama_memory_recurrent
 //

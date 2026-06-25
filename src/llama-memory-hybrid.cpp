@@ -3,6 +3,7 @@
 #include "llama-impl.h"
 #include "llama-model.h"
 #include "llama-context.h"
+#include "llama-memory-recurrent.h"
 
 //
 // llama_memory_hybrid
@@ -101,8 +102,17 @@ llama_memory_context_ptr llama_memory_hybrid::init_batch(llama_batch_allocr & ba
             break;
         }
 
+        std::vector<llama_ubatch> ubatches_recr;
+        ubatches_recr.reserve(ubatches.size());
+        for (const auto & ubatch : ubatches) {
+            llama_ubatch ubatch_recr = llama_ubatch_recurrent_without_tree_aux(ubatch);
+            if (ubatch_recr.n_tokens > 0) {
+                ubatches_recr.push_back(std::move(ubatch_recr));
+            }
+        }
+
         // prepare the recurrent batches first
-        if (!mem_recr->prepare(ubatches)) {
+        if (!mem_recr->prepare(ubatches_recr)) {
             // TODO: will the recurrent cache be in an undefined context at this point?
             LLAMA_LOG_ERROR("%s: failed to prepare recurrent ubatches\n", __func__);
             return std::make_unique<llama_memory_hybrid_context>(LLAMA_MEMORY_STATUS_FAILED_PREPARE);
@@ -116,7 +126,7 @@ llama_memory_context_ptr llama_memory_hybrid::init_batch(llama_batch_allocr & ba
         }
 
         return std::make_unique<llama_memory_hybrid_context>(
-                this, std::move(heads_attn), std::move(ubatches));
+                this, std::move(heads_attn), std::move(ubatches), std::move(ubatches_recr));
     } while(false);
 
     return std::make_unique<llama_memory_hybrid_context>(LLAMA_MEMORY_STATUS_FAILED_PREPARE);
@@ -229,11 +239,12 @@ llama_memory_hybrid_context::llama_memory_hybrid_context(
 llama_memory_hybrid_context::llama_memory_hybrid_context(
               llama_memory_hybrid * mem,
                   slot_info_vec_t   sinfos_attn,
-        std::vector<llama_ubatch>   ubatches) :
+        std::vector<llama_ubatch>   ubatches,
+        std::vector<llama_ubatch>   ubatches_recr) :
     ubatches(std::move(ubatches)),
     // note: here we copy the ubatches. not sure if this is ideal
     ctx_attn(new llama_kv_cache_context(mem->get_mem_attn(), std::move(sinfos_attn), this->ubatches)),
-    ctx_recr(new llama_memory_recurrent_context(mem->get_mem_recr(), this->ubatches)),
+    ctx_recr(new llama_memory_recurrent_context(mem->get_mem_recr(), std::move(ubatches_recr))),
     status(llama_memory_status_combine(ctx_attn->get_status(), ctx_recr->get_status())) {
 }
 

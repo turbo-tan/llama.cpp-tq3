@@ -110,7 +110,8 @@ public:
     llama_memory_hybrid_context(
               llama_memory_hybrid * mem,
                   slot_info_vec_t   sinfos_attn,
-        std::vector<llama_ubatch>   ubatches);
+        std::vector<llama_ubatch>   ubatches,
+        std::vector<llama_ubatch>   ubatches_recr);
 
     ~llama_memory_hybrid_context() = default;
 
