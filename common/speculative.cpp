@@ -22,6 +22,7 @@ static inline int nvtxRangePop() { return 0; }
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <map>
@@ -52,6 +53,14 @@ static std::string common_speculative_get_devices_str(const std::vector<ggml_bac
         result += ggml_backend_dev_name(devices[i]);
     }
     return result.empty() ? "default" : result;
+}
+
+static bool common_speculative_mtp_round_timing_enabled() {
+    static const bool enabled = [] {
+        const char * value = std::getenv("TQ3_MTP_ROUND_TIMING");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    return enabled;
 }
 
 struct common_speculative_config {
@@ -1452,6 +1461,18 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                             if (plan.try_add_alternatives(parent, cur_p, max_alt, depth, seq_id, dp.n_past + (int32_t) i + 1)) {
                                 LOG_DBG("mtp_tree_build: added %d alternatives at depth=%d\n", max_alt, depth);
                             }
+
+                            if (common_speculative_mtp_round_timing_enabled()) {
+                                LOG_INF("mtp_tree_plan: seq=%d depth=%d nodes=%zu max_nodes=%zu max_depth=%zu split=%.3f main_tail=%d selected_p=%.6f\n",
+                                        (int) seq_id,
+                                        depth,
+                                        plan.plan.nodes.size(),
+                                        plan.plan.max_nodes,
+                                        plan.plan.max_depth,
+                                        (double) plan.plan.p_split,
+                                        plan.main_tail,
+                                        (double) selected.p);
+                            }
                     } else {
                         LOG_DBG("%s: seq_id=%d cannot extend mtp tree (depth=%d, nodes=%d)\n",
                                 __func__,
@@ -2297,6 +2318,33 @@ bool common_speculative_get_mtp_tree_plan(
     }
 
     nvtxRangePop();
+    return false;
+}
+
+bool common_speculative_mtp_tree_is_ancestor(
+        const common_speculative_mtp_tree_plan & plan,
+        int32_t node,
+        int32_t ancestor) {
+    if (node < 0 || ancestor < 0) {
+        return false;
+    }
+
+    if ((size_t) node >= plan.nodes.size() || (size_t) ancestor >= plan.nodes.size()) {
+        return false;
+    }
+
+    for (int32_t cur = node; cur >= 0;) {
+        if (cur == ancestor) {
+            return true;
+        }
+
+        if ((size_t) cur >= plan.nodes.size()) {
+            return false;
+        }
+
+        cur = plan.nodes[(size_t) cur].parent;
+    }
+
     return false;
 }
 

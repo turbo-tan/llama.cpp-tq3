@@ -98,6 +98,11 @@ bool common_speculative_get_mtp_tree_plan(
     llama_seq_id seq_id,
     common_speculative_mtp_tree_plan & plan);
 
+bool common_speculative_mtp_tree_is_ancestor(
+    const common_speculative_mtp_tree_plan & plan,
+    int32_t node,
+    int32_t ancestor);
+
 // print statistics about the speculative decoding
 void common_speculative_print_stats(const common_speculative * spec);
 
