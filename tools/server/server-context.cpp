@@ -1237,7 +1237,7 @@ struct server_slot {
 
         // Target tree verification costs one full target row per retained node.
         // On GX10 this is only worth probing when scout finds a close alternate.
-        if (best_alt_score < main_score * 0.90f) {
+        if (best_alt_score <= main_score * 1.05f) {
             spec_tree_inline.clear();
             return false;
         }
