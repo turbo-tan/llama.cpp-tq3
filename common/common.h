@@ -377,11 +377,6 @@ struct common_params_speculative {
             return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
         });
 
-        if (has_mtp && draft.use_mtp_tree && draft.mtp_tree_target_verify) {
-            // Tree mode needs recurrent state snapshots for partial rollback
-            return std::max(1, draft.mtp_tree_depth + 1);
-        }
-
         if (has_mtp) {
             return 0u; // MTP path: match old preserved binary behavior (0 rs_seq)
         }
