@@ -4203,6 +4203,8 @@ private:
                 batch.n_seq_id + i,
                 batch.seq_id   + i,
                 batch.logits   + i,
+                batch.tree_node   ? batch.tree_node   + i : nullptr,
+                batch.tree_parent ? batch.tree_parent + i : nullptr,
             };
 
             const bool mtp_timing = mtp_round_timing_enabled();

@@ -145,6 +145,16 @@ bool llama_batch_allocr::init(
         }
     }
 
+    if (!batch.tree_node) {
+        tree_node.resize(batch.n_tokens, -1);
+        batch.tree_node = tree_node.data();
+    }
+
+    if (!batch.tree_parent) {
+        tree_parent.resize(batch.n_tokens, -1);
+        batch.tree_parent = tree_parent.data();
+    }
+
     //
     // compute stats
     //
@@ -224,6 +234,8 @@ bool llama_batch_allocr::init(
             /*.seq_id_unq   =*/ this->seq_id_unq.data(),
             /*.seq_idx      =*/ this->seq_idx.data(),
             /*.output       =*/ batch.logits,
+            /*.tree_node    =*/ batch.tree_node,
+            /*.tree_parent  =*/ batch.tree_parent,
             /*.data         =*/ {},
         };
 
@@ -406,6 +418,8 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
     udata->seq_id_unq.resize(0);
     udata->seq_idx   .resize(LLAMA_MAX_SEQ, -1);
     udata->output    .resize(n_tokens);
+    udata->tree_node .resize(n_tokens, -1);
+    udata->tree_parent.resize(n_tokens, -1);
 
     for (uint32_t s = 0; s < n_seqs; ++s) {
         udata->seq_idx[s] = s;
@@ -428,6 +442,8 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
         /*.seq_id_unq   =*/ udata->seq_id_unq.data(),
         /*.seq_idx      =*/ udata->seq_idx.data(),
         /*.output       =*/ udata->output.data(),
+        /*.tree_node    =*/ udata->tree_node.data(),
+        /*.tree_parent  =*/ udata->tree_parent.data(),
         /*.data         =*/ std::move(udata),
     };
 
@@ -696,6 +712,8 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
     udata->seq_id_unq.resize(0);
     udata->seq_idx   .resize(LLAMA_MAX_SEQ, -1);
     udata->output    .resize(n_tokens);
+    udata->tree_node .resize(n_tokens, -1);
+    udata->tree_parent.resize(n_tokens, -1);
 
     udata->seq_id_data.reserve(n_tokens);
 
@@ -721,6 +739,8 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
 
         udata->n_seq_id[i] = batch.n_seq_id[idxs[i]];
         udata->output[i]   = batch.logits[idxs[i]];
+        udata->tree_node[i]   = batch.tree_node[idxs[i]];
+        udata->tree_parent[i] = batch.tree_parent[idxs[i]];
 
         for (int s = 0; s < udata->n_seq_id[i]; ++s) {
             const llama_seq_id seq_id = batch.seq_id[idxs[i]][s];
@@ -763,6 +783,8 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         /*.seq_id_unq   =*/ udata->seq_id_unq.data(),
         /*.seq_idx      =*/ udata->seq_idx.data(),
         /*.output       =*/ udata->output.data(),
+        /*.tree_node    =*/ udata->tree_node.data(),
+        /*.tree_parent  =*/ udata->tree_parent.data(),
         /*.data         =*/ std::move(udata),
     };
 
@@ -871,6 +893,8 @@ struct llama_batch llama_batch_get_one(
         /*n_seq_id =*/ nullptr,
         /*seq_id   =*/ nullptr,
         /*logits   =*/ nullptr,
+        /*tree_node =*/ nullptr,
+        /*tree_parent =*/ nullptr,
     };
 }
 
@@ -883,6 +907,8 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
         /*n_seq_id =*/ nullptr,
         /*seq_id   =*/ nullptr,
         /*logits   =*/ nullptr,
+        /*tree_node =*/ nullptr,
+        /*tree_parent =*/ nullptr,
     };
 
     if (embd) {
@@ -900,6 +926,12 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
     batch.seq_id[n_tokens_alloc] = nullptr;
 
     batch.logits   = (int8_t *)        malloc(sizeof(int8_t)         * n_tokens_alloc);
+    batch.tree_node   = (int32_t *)    malloc(sizeof(int32_t)        * n_tokens_alloc);
+    batch.tree_parent = (int32_t *)    malloc(sizeof(int32_t)        * n_tokens_alloc);
+    for (int i = 0; i < n_tokens_alloc; ++i) {
+        batch.tree_node[i] = -1;
+        batch.tree_parent[i] = -1;
+    }
 
     return batch;
 }
@@ -916,4 +948,6 @@ void llama_batch_free(struct llama_batch batch) {
         free(batch.seq_id);
     }
     if (batch.logits)   free(batch.logits);
+    if (batch.tree_node)   free(batch.tree_node);
+    if (batch.tree_parent) free(batch.tree_parent);
 }

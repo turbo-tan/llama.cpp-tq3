@@ -1631,6 +1631,12 @@ void common_batch_add(
         batch.seq_id[batch.n_tokens][i] = seq_ids[i];
     }
     batch.logits  [batch.n_tokens] = logits;
+    if (batch.tree_node) {
+        batch.tree_node[batch.n_tokens] = -1;
+    }
+    if (batch.tree_parent) {
+        batch.tree_parent[batch.n_tokens] = -1;
+    }
 
     batch.n_tokens++;
 }

@@ -251,6 +251,8 @@ extern "C" {
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
         int8_t       *  logits;   // TODO: rename this to "output"
+        int32_t      *  tree_node;
+        int32_t      *  tree_parent;
     } llama_batch;
 
     enum llama_model_kv_override_type {
