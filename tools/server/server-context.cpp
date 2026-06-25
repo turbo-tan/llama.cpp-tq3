@@ -51,6 +51,16 @@ using json = nlohmann::ordered_json;
 
 constexpr int HTTP_POLLING_SECONDS = 1;
 
+static bool mtp_round_timing_enabled() {
+    static const bool enabled = [] {
+        const char * value = getenv("TQ3_MTP_ROUND_TIMING");
+
+        return value != nullptr && strcmp(value, "0") != 0 && strcmp(value, "false") != 0;
+    }();
+
+    return enabled;
+}
+
 static uint32_t server_n_outputs_max(const common_params & params) {
     const uint32_t n_batch  = params.n_batch;
 
@@ -3488,7 +3498,25 @@ private:
 
         // generate the actual drafts (if any)
         {
+            const bool mtp_timing = mtp_round_timing_enabled();
+            const int64_t t_start = mtp_timing ? ggml_time_us() : 0;
+
             common_speculative_draft(spec.get());
+
+            if (mtp_timing && !drafting.empty()) {
+                int32_t n_slots_drafting = 0;
+                size_t n_draft_total = 0;
+
+                for (const auto * slot_ptr : drafting) {
+                    const auto & slot = *slot_ptr;
+                    n_slots_drafting++;
+                    n_draft_total += slot.spec_draft.size();
+                }
+
+                const int64_t t_total = ggml_time_us() - t_start;
+                LOG_INF("mtp_round_timing: draft slots=%d tokens=%zu total=%.3f ms\n",
+                        n_slots_drafting, n_draft_total, t_total / 1000.0);
+            }
         }
 
         // make checkpoints if needed
@@ -3500,17 +3528,28 @@ private:
 
             slot.n_draft_total += draft.size();
 
+            const bool mtp_timing = mtp_round_timing_enabled();
+            const int64_t t_ckpt_start = mtp_timing ? ggml_time_us() : 0;
+            int64_t t_dft_restore_us = 0;
+            int64_t t_dft_trim_us = 0;
+            int64_t t_tgt_ckpt_us = 0;
+            int64_t t_dft_ckpt_us = 0;
+
             // TODO: avoid restoring the draft context and re-evaluating the drafted tokens when not needed [TAG_SPEC_AVOID_DRAFT_REEVAL]
             const bool use_ckpt_dft = ctx_dft_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
 
             if (ctx_dft) {
                 if (use_ckpt_dft) {
+                    const int64_t t_op = mtp_timing ? ggml_time_us() : 0;
                     ckpt.load_dft(ctx_dft.get(), slot.id, spec_ckpt_flags);
+                    t_dft_restore_us += mtp_timing ? ggml_time_us() - t_op : 0;
                 }
 
+                const int64_t t_op = mtp_timing ? ggml_time_us() : 0;
                 if (!mtp_tree_seq_rm_with_fallback(ctx_dft.get(), slot.id, ckpt.pos_max + 1, -1)) {
                     SLT_WRN(slot, "failed to trim speculative draft rollback state (%d -> -1)\n", ckpt.pos_max + 1);
                 }
+                t_dft_trim_us += mtp_timing ? ggml_time_us() - t_op : 0;
             }
 
             if (!draft.empty()) {
@@ -3524,7 +3563,9 @@ private:
                 if (use_ckpt_tgt) {
                     //const int64_t t_start = ggml_time_us();
 
+                    const int64_t t_op = mtp_timing ? ggml_time_us() : 0;
                     ckpt.update_tgt(ctx_tgt, slot.id, spec_ckpt_flags);
+                    t_tgt_ckpt_us += mtp_timing ? ggml_time_us() - t_op : 0;
                     slot.kv_needs_restore = false;
 
                     //const int64_t t_total = ggml_time_us() - t_start;
@@ -3537,8 +3578,21 @@ private:
                 }
 
                 if (use_ckpt_dft) {
+                    const int64_t t_op = mtp_timing ? ggml_time_us() : 0;
                     ckpt.update_dft(ctx_dft.get(), slot.id, spec_ckpt_flags);
+                    t_dft_ckpt_us += mtp_timing ? ggml_time_us() - t_op : 0;
                 }
+            }
+
+            if (mtp_timing) {
+                const int64_t t_total = ggml_time_us() - t_ckpt_start;
+                LOG_INF("mtp_round_timing: slot=%d checkpoint draft=%zu dft_restore=%.3f dft_trim=%.3f tgt_ckpt=%.3f dft_ckpt=%.3f total=%.3f ms\n",
+                        slot.id, draft.size(),
+                        t_dft_restore_us / 1000.0,
+                        t_dft_trim_us / 1000.0,
+                        t_tgt_ckpt_us / 1000.0,
+                        t_dft_ckpt_us / 1000.0,
+                        t_total / 1000.0);
             }
         }
 
@@ -4151,7 +4205,10 @@ private:
                 batch.logits   + i,
             };
 
+            const bool mtp_timing = mtp_round_timing_enabled();
+            const int64_t t_decode_start = mtp_timing ? ggml_time_us() : 0;
             const int ret = llama_decode(ctx_tgt, batch_view);
+            const int64_t t_decode_us = mtp_timing ? ggml_time_us() - t_decode_start : 0;
 
             metrics.on_decoded(slots);
 
@@ -4249,11 +4306,21 @@ private:
             //        }
             //    }
             //}
+            const int64_t t_spec_process_start = mtp_timing ? ggml_time_us() : 0;
             if (!common_speculative_process(spec.get(), batch_view)) {
                 SRV_ERR("%s", "failed to process speculative batch\n");
 
                 // TODO: handle error
                 break;
+            }
+            const int64_t t_spec_process_us = mtp_timing ? ggml_time_us() - t_spec_process_start : 0;
+
+            if (mtp_timing) {
+                LOG_INF("mtp_round_timing: target_decode n_tokens=%d ret=%d decode=%.3f spec_process=%.3f total=%.3f ms\n",
+                        n_tokens, ret,
+                        t_decode_us / 1000.0,
+                        t_spec_process_us / 1000.0,
+                        (t_decode_us + t_spec_process_us) / 1000.0);
             }
 
             // move the head of the batch forward with the number of tokens we just processed
@@ -4386,6 +4453,13 @@ private:
             // verify and try to accept the draft
                 common_sampler_ptr smpl_save(common_sampler_clone(slot.smpl.get()));
                 {
+                    const bool mtp_timing = mtp_round_timing_enabled();
+                    const int64_t t_verify_start = mtp_timing ? ggml_time_us() : 0;
+                    int64_t t_tree_verify_us = 0;
+                    int64_t t_linear_accept_us = 0;
+                    int64_t t_restore_tgt_us = 0;
+                    int64_t t_restore_dft_us = 0;
+                    int64_t t_accept_commit_us = 0;
                     const bool use_ckpt_tgt =
                         ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_FULL ||
                        (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_RS && n_draft >= llama_n_rs_seq(ctx_tgt));
@@ -4395,6 +4469,7 @@ private:
 
                     if (!slot.spec_tree_inline.empty()) {
                         nvtxRangePushA("server:mtp_tree_inline_accept");
+                        const int64_t t_tree_start = mtp_timing ? ggml_time_us() : 0;
                         size_t n_tree_accepted = 0;
 
                         llama_seq_id best_seq_id = -1;
@@ -4426,6 +4501,7 @@ private:
 
                         slot.tree_cost().record_tree_round((int32_t) n_tree_accepted, (int32_t) n_draft);
                         mtp_tree_inline_clear_context(slot.ctx_tgt, slot.spec_tree_inline);
+                        t_tree_verify_us += mtp_timing ? ggml_time_us() - t_tree_start : 0;
                         nvtxRangePop();
                     }
 
@@ -4447,7 +4523,9 @@ private:
                         }
 
                     } else {
+                        const int64_t t_accept_start = mtp_timing ? ggml_time_us() : 0;
                         accepted = common_sampler_sample_and_accept_n(slot.smpl.get(), slot.ctx_tgt, slot.spec_i_batch, slot.spec_draft);
+                        t_linear_accept_us += mtp_timing ? ggml_time_us() - t_accept_start : 0;
                         slot.kv_needs_restore = true;
                         if (trace > 0) {
                             SLT_INF(slot, "accepted %2zu/%2zu draft tokens\n", accepted.size() - 1, n_draft);
@@ -4474,6 +4552,7 @@ private:
                             SLT_DBG(slot, "restoring speculative checkpoint (pos_min = %d, pos_max = %d, size = %zu)\n", ckpt.pos_min, ckpt.pos_max, ckpt.size());
 
                             {
+                                const int64_t t_restore_start = mtp_timing ? ggml_time_us() : 0;
                                 ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags);
                                 slot.kv_needs_restore = false;
 
@@ -4483,14 +4562,17 @@ private:
                                     slot.spec_draft.clear();
                                     continue;
                                 }
+                                t_restore_tgt_us += mtp_timing ? ggml_time_us() - t_restore_start : 0;
                             }
 
                             if (slot.ctx_dft) {
+                                const int64_t t_restore_start = mtp_timing ? ggml_time_us() : 0;
                                 ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags);
 
                                 if (!mtp_tree_seq_rm_with_fallback(slot.ctx_dft, slot.id, ckpt.pos_max + 1, -1)) {
                                     SLT_WRN(slot, "failed to trim draft rollback state for dft (%d -> -1)\n", ckpt.pos_max + 1);
                                 }
+                                t_restore_dft_us += mtp_timing ? ggml_time_us() - t_restore_start : 0;
                             }
 
                             slot.prompt.tokens.keep_first(ckpt.n_tokens);
@@ -4504,7 +4586,21 @@ private:
                         SLT_INF(slot, "accepted %2zu/%2zu draft tokens\n", accepted.size() - 1, n_draft);
                     }
 
+                    const int64_t t_commit_start = mtp_timing ? ggml_time_us() : 0;
                     common_speculative_accept(spec.get(), slot.id, accepted.size() - 1);
+                    t_accept_commit_us += mtp_timing ? ggml_time_us() - t_commit_start : 0;
+
+                    if (mtp_timing) {
+                        const int64_t t_verify_total = ggml_time_us() - t_verify_start;
+                        LOG_INF("mtp_round_timing: slot=%d verify draft=%zu accepted=%zu rollback=%u tree=%d tree_verify=%.3f linear_accept=%.3f restore_tgt=%.3f restore_dft=%.3f commit=%.3f total=%.3f ms\n",
+                                slot.id, n_draft, accepted.size() - 1, n_rollback, used_tree_verify ? 1 : 0,
+                                t_tree_verify_us / 1000.0,
+                                t_linear_accept_us / 1000.0,
+                                t_restore_tgt_us / 1000.0,
+                                t_restore_dft_us / 1000.0,
+                                t_accept_commit_us / 1000.0,
+                                t_verify_total / 1000.0);
+                    }
 
                     slot.spec_draft = std::move(accepted);
                 }
