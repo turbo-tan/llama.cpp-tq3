@@ -36,6 +36,8 @@ public:
             pos[i]   = -1;
             ext[i].reset();
             shift[i] =  0;
+            tree_node[i] = -1;
+            tree_parent[i] = -1;
             seq[i].reset();
         }
 
@@ -64,6 +66,8 @@ public:
         pos.resize(n);
         ext.resize(n);
         shift.resize(n);
+        tree_node.resize(n);
+        tree_parent.resize(n);
         seq.resize(n);
 
         reset();
@@ -129,6 +133,8 @@ public:
 
             res.pos[j] = pos[idx];
             res.ext[j] = ext[idx];
+            res.tree_node[j] = tree_node[idx];
+            res.tree_parent[j] = tree_parent[idx];
             res.seq[j] = seq[idx];
 
             assert(shift[idx] == 0);
@@ -148,6 +154,8 @@ public:
 
             res.pos[j] = pos[idx];
             res.ext[j] = ext[idx];
+            res.tree_node[j] = tree_node[idx];
+            res.tree_parent[j] = tree_parent[idx];
             res.seq[j] = seq[idx];
 
             assert(shift[idx] == 0);
@@ -177,6 +185,8 @@ public:
 
             pos[idx] = other.pos[j];
             ext[idx] = other.ext[j];
+            tree_node[idx] = other.tree_node[j];
+            tree_parent[idx] = other.tree_parent[j];
             seq[idx] = other.seq[j];
 
             if (pos[idx] != -1) {
@@ -208,6 +218,8 @@ public:
 
             pos[idx] = other.pos[j];
             ext[idx] = other.ext[j];
+            tree_node[idx] = other.tree_node[j];
+            tree_parent[idx] = other.tree_parent[j];
             seq[idx] = other.seq[j];
 
             if (pos[idx] != -1) {
@@ -229,6 +241,8 @@ public:
         pos[i] = -1;
         ext[i].reset();
         shift[i] = 0;
+        tree_node[i] = -1;
+        tree_parent[i] = -1;
 
         used.erase(i);
     }
@@ -248,6 +262,8 @@ public:
             pos[i] = -1;
             ext[i].reset();
             shift[i] = 0;
+            tree_node[i] = -1;
+            tree_parent[i] = -1;
 
             used.erase(i);
 
@@ -278,6 +294,8 @@ public:
             pos[i] = -1;
             ext[i].reset();
             shift[i] = 0;
+            tree_node[i] = -1;
+            tree_parent[i] = -1;
 
             used.erase(i);
 
@@ -407,6 +425,24 @@ public:
         ext[i] = p;
     }
 
+    void tree_set(uint32_t i, int32_t node, int32_t parent) {
+        assert(i < tree_node.size());
+        assert(i < tree_parent.size());
+
+        tree_node[i] = node;
+        tree_parent[i] = parent;
+    }
+
+    int32_t tree_node_get(uint32_t i) const {
+        assert(i < tree_node.size());
+        return tree_node[i];
+    }
+
+    int32_t tree_parent_get(uint32_t i) const {
+        assert(i < tree_parent.size());
+        return tree_parent[i];
+    }
+
     // pos[i] = pos[i] + d
     // sets "has_shift" to true
     // note: call only if the cell is not empty
@@ -425,6 +461,8 @@ public:
             seq[i].reset();
             pos[i] = -1;
             shift[i] = 0;
+            tree_node[i] = -1;
+            tree_parent[i] = -1;
 
             used.erase(i);
 
@@ -482,6 +520,10 @@ private:
     //   }
     //
     std::vector<llama_pos> shift;
+
+    // Optional MTP DTree metadata. -1 means this cell is not part of a tree.
+    std::vector<int32_t> tree_node;
+    std::vector<int32_t> tree_parent;
 
     using seq_set_t = std::bitset<LLAMA_MAX_SEQ>;
 

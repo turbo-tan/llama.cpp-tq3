@@ -1135,6 +1135,11 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
                 cells.ext_set(idx, ext);
             }
 
+            cells.tree_set(
+                    idx,
+                    ubatch.tree_node   ? ubatch.tree_node[i]   : -1,
+                    ubatch.tree_parent ? ubatch.tree_parent[i] : -1);
+
             for (int32_t s = 0; s < ubatch.n_seq_id[i]; s++) {
                 cells.seq_add(idx, ubatch.seq_id[i][s]);
             }
@@ -1512,6 +1517,47 @@ struct args_set_input_kq_mask {
     int64_t n_tps;
 };
 
+static bool llama_ubatch_tree_is_ancestor(
+        const llama_ubatch * ubatch,
+        int32_t ancestor,
+        int32_t node) {
+    if (ubatch == nullptr || ubatch->tree_node == nullptr || ubatch->tree_parent == nullptr) {
+        return false;
+    }
+
+    if (ancestor < 0 || node < 0) {
+        return false;
+    }
+
+    if (ancestor == node) {
+        return true;
+    }
+
+    for (uint32_t step = 0; step < ubatch->n_tokens && node >= 0; ++step) {
+        int32_t parent = -1;
+        bool found = false;
+        for (uint32_t i = 0; i < ubatch->n_tokens; ++i) {
+            if (ubatch->tree_node[i] == node) {
+                parent = ubatch->tree_parent[i];
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        if (parent == ancestor) {
+            return true;
+        }
+
+        node = parent;
+    }
+
+    return false;
+}
+
 template<typename T, bool causal, bool swa, bool is_2d, bool alibi>
 static void set_input_kq_mask_impl(const args_set_input_kq_mask & args, T * data) {
   //const auto & hparams = args.hparams;
@@ -1549,6 +1595,7 @@ static void set_input_kq_mask_impl(const args_set_input_kq_mask & args, T * data
             const uint32_t i = s*n_tps + ii;
 
             const llama_seq_id seq_id = ubatch->seq_id[i][0];
+            const int32_t tree_node = ubatch->tree_node ? ubatch->tree_node[i] : -1;
 
             const auto & cells = v_cells.at(seq_to_stream[seq_id]);
 
@@ -1571,7 +1618,7 @@ static void set_input_kq_mask_impl(const args_set_input_kq_mask & args, T * data
 
             auto & idxs = seq_idxs[seq_id];
 
-            if (!alibi) {
+            if (!alibi && tree_node < 0) {
                 if (seq_srct.find(seq_id) != seq_srct.end()) {
                     const uint32_t srct = seq_srct[seq_id];
 
@@ -1612,6 +1659,19 @@ static void set_input_kq_mask_impl(const args_set_input_kq_mask & args, T * data
                 }
 
                 p0 = cells.pos_get(j);
+
+                {
+                    const int32_t cell_tree_node = cells.tree_node_get(j);
+                    if (tree_node < 0) {
+                        if (cell_tree_node >= 0) {
+                            goto skip;
+                        }
+                    } else if (cell_tree_node >= 0) {
+                        if (!llama_ubatch_tree_is_ancestor(ubatch, cell_tree_node, tree_node)) {
+                            goto skip;
+                        }
+                    }
+                }
 
                 if (!alibi) {
                     if (!prev) {
