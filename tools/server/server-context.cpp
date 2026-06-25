@@ -285,8 +285,7 @@ struct mtp_tree_cost_state {
         }
 
         if (tree_tps_ema <= 0.0) {
-            request_use_tree = requests_since_tree >= cooldown;
-            return request_use_tree;
+            return false;
         }
 
         const double required_gain = std::max(1.0f, min_gain);
