@@ -1184,7 +1184,7 @@ struct server_slot {
                     break;
                 }
             }
-            if (best_alt_score < 0.3f) {
+            if (best_alt_score <= 0.0f) {
                 spec_tree_inline.clear();
                 return false;
             }
