@@ -192,6 +192,7 @@ struct mtp_tree_inline_state {
     std::vector<mtp_tree_candidate_path> paths;
     std::vector<mtp_tree_inline_candidate> active;
     std::vector<int32_t> node_batch;
+    std::vector<uint8_t> verify_node;
     llama_token root = LLAMA_TOKEN_NULL;
     llama_pos start_pos = 0;
 
@@ -200,6 +201,7 @@ struct mtp_tree_inline_state {
         paths.clear();
         active.clear();
         node_batch.clear();
+        verify_node.clear();
         root = LLAMA_TOKEN_NULL;
         start_pos = 0;
     }
@@ -362,6 +364,44 @@ static int32_t mtp_tree_find_child(
         const common_speculative_mtp_tree_plan & plan,
         int32_t parent,
         llama_token token);
+
+static bool mtp_tree_mark_path_nodes(
+        const common_speculative_mtp_tree_plan & plan,
+        const mtp_tree_candidate_path & path,
+        std::vector<uint8_t> & verify_node) {
+    if (plan.nodes.empty() || path.tokens.empty()) {
+        return false;
+    }
+
+    int32_t node = 0;
+    verify_node[(size_t) node] = 1;
+
+    for (llama_token token : path.tokens) {
+        node = mtp_tree_find_child(plan, node, token);
+        if (node < 0) {
+            return false;
+        }
+        verify_node[(size_t) node] = 1;
+    }
+
+    return true;
+}
+
+static bool mtp_tree_path_is_prefix(
+        const mtp_tree_candidate_path & path,
+        const llama_tokens & tokens) {
+    if (path.tokens.size() > tokens.size()) {
+        return false;
+    }
+
+    for (size_t i = 0; i < path.tokens.size(); ++i) {
+        if (path.tokens[i] != tokens[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 static bool mtp_tree_inline_accept(
         llama_context * ctx_tgt,
@@ -1152,21 +1192,58 @@ struct server_slot {
 
         spec_tree_inline.plan = mtp_tree;
         spec_tree_inline.node_batch.assign(mtp_tree.nodes.size(), -1);
+        spec_tree_inline.verify_node.assign(mtp_tree.nodes.size(), 0);
 
         if (!mtp_tree_collect_candidates(mtp_tree, spec_draft.size(), spec_tree_inline.paths)) {
             spec_tree_inline.clear();
             return false;
         }
 
+        int32_t main_path = -1;
+        float main_score = 0.0f;
+        int32_t best_alt = -1;
+        float best_alt_score = 0.0f;
 
-        const int32_t n_main_rows = (int32_t) spec_draft.size() + 1;
-        const int32_t n_tree_rows = std::max<int32_t>(0, (int32_t) mtp_tree.nodes.size() - n_main_rows);
-        int32_t n_capacity = n_batch - batch_n_tokens - n_main_rows;
-        if (n_capacity <= 0) {
+        for (size_t i = 0; i < spec_tree_inline.paths.size(); ++i) {
+            const auto & path = spec_tree_inline.paths[i];
+            if (mtp_tree_path_is_prefix(path, spec_draft)) {
+                if (main_path < 0 || path.tokens.size() > spec_tree_inline.paths[(size_t) main_path].tokens.size()) {
+                    main_path = (int32_t) i;
+                    main_score = path.score;
+                }
+                continue;
+            }
+
+            if (best_alt < 0 || path.score > best_alt_score) {
+                best_alt = (int32_t) i;
+                best_alt_score = path.score;
+            }
+        }
+
+        if (main_path < 0 || best_alt < 0) {
             spec_tree_inline.clear();
             return false;
         }
-        if (n_tree_rows > n_capacity) {
+
+        // Target tree verification costs one full target row per retained node.
+        // On GX10 this is only worth probing when scout finds a close alternate.
+        if (best_alt_score < main_score * 0.90f) {
+            spec_tree_inline.clear();
+            return false;
+        }
+
+        mtp_tree_mark_path_nodes(mtp_tree, spec_tree_inline.paths[(size_t) main_path], spec_tree_inline.verify_node);
+        mtp_tree_mark_path_nodes(mtp_tree, spec_tree_inline.paths[(size_t) best_alt], spec_tree_inline.verify_node);
+
+        const int32_t n_main_rows = (int32_t) spec_draft.size() + 1;
+        int32_t n_verify_rows = 0;
+        for (uint8_t enabled : spec_tree_inline.verify_node) {
+            n_verify_rows += enabled != 0;
+        }
+
+        const int32_t n_tree_rows = std::max<int32_t>(0, n_verify_rows - n_main_rows);
+        const int32_t n_capacity = n_batch - batch_n_tokens - n_main_rows;
+        if (n_capacity <= 0 || n_tree_rows > n_capacity || n_tree_rows > 1) {
             spec_tree_inline.clear();
             return false;
         }
@@ -1174,14 +1251,8 @@ struct server_slot {
         spec_tree_inline.root = sampled;
         spec_tree_inline.start_pos = prompt.tokens.pos_next();
 
-        for (size_t i = 0; i < spec_tree_inline.paths.size(); ++i) {
-            const auto & path = spec_tree_inline.paths[i];
-            if (path.tokens.empty()) {
-                continue;
-            }
-
-            spec_tree_inline.active.push_back({ i, id, 0 });
-        }
+        spec_tree_inline.active.push_back({ (size_t) main_path, id, 0 });
+        spec_tree_inline.active.push_back({ (size_t) best_alt, id, 0 });
 
         if (spec_tree_inline.active.empty()) {
             spec_tree_inline.clear();
@@ -1197,6 +1268,9 @@ struct server_slot {
         }
 
         for (size_t i = 1; i < spec_tree_inline.plan.nodes.size(); ++i) {
+            if (i >= spec_tree_inline.verify_node.size() || !spec_tree_inline.verify_node[i]) {
+                continue;
+            }
             if (i < spec_tree_inline.node_batch.size() && spec_tree_inline.node_batch[i] >= 0) {
                 continue;
             }
