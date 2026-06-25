@@ -237,9 +237,12 @@ struct mtp_tree_cost_state {
         cooldown = params.mtp_tree_cost_cooldown;
 
         if (!params.mtp_tree_cost_aware) {
+            // On GB10, unconditional scout mode is slower than linear MTP on
+            // short and medium requests. Leave tree disabled unless the
+            // measured gate opts into it.
             request_decided = true;
-            request_use_tree = true;
-            return true;
+            request_use_tree = false;
+            return false;
         }
 
         if (request_decided) {
