@@ -1637,6 +1637,9 @@ void common_batch_add(
     if (batch.tree_parent) {
         batch.tree_parent[batch.n_tokens] = -1;
     }
+    if (batch.tree_aux) {
+        batch.tree_aux[batch.n_tokens] = 0;
+    }
 
     batch.n_tokens++;
 }

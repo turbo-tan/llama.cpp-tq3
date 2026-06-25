@@ -52,6 +52,7 @@ struct llama_ubatch {
     int8_t       *  output;     // [n_tokens]         | i   | -
     int32_t      *  tree_node;  // [n_tokens]         | i   | DTree node id, -1 when disabled
     int32_t      *  tree_parent;// [n_tokens]         | i   | DTree parent node id, -1 when disabled
+    int8_t       *  tree_aux;   // [n_tokens]         | i   | DTree branch-only row
 
     struct data_t {
         std::vector<llama_token>    token;
@@ -64,6 +65,7 @@ struct llama_ubatch {
         std::vector<int8_t>         output;
         std::vector<int32_t>        tree_node;
         std::vector<int32_t>        tree_parent;
+        std::vector<int8_t>         tree_aux;
 
         std::vector<llama_seq_id> seq_id_data;
     };
@@ -150,6 +152,7 @@ private:
     std::vector<int8_t>         output;
     std::vector<int32_t>        tree_node;
     std::vector<int32_t>        tree_parent;
+    std::vector<int8_t>         tree_aux;
 
     using pos_set_t = std::set<llama_pos>;
     using seq_cpl_t = std::vector<bool>;

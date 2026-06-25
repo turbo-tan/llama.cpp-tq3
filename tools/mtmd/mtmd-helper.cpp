@@ -157,6 +157,7 @@ struct decode_embd_batch {
             /*logits         =*/ logits.data(),
             /*tree_node      =*/ nullptr,
             /*tree_parent    =*/ nullptr,
+            /*tree_aux       =*/ nullptr,
         };
     }
 
@@ -238,6 +239,7 @@ struct decode_embd_batch {
             /*logits         =*/ batch.logits   + offset,
             /*tree_node      =*/ nullptr,
             /*tree_parent    =*/ nullptr,
+            /*tree_aux       =*/ nullptr,
         };
     }
 };

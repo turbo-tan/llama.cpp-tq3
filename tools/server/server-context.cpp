@@ -1206,7 +1206,111 @@ struct server_slot {
             common_batch_add(batch, node.token, node.batch_pos, { this->id }, true);
             batch.tree_node[batch_pos] = (int32_t) i;
             batch.tree_parent[batch_pos] = node.parent;
+            batch.tree_aux[batch_pos] = 1;
             spec_tree_inline.node_batch[i] = batch_pos;
+        }
+    }
+
+    void repack_mtp_tree_inline_batch(llama_batch & batch, int32_t first_batch_pos) {
+        if (spec_tree_inline.empty() || first_batch_pos < 0 || first_batch_pos >= batch.n_tokens) {
+            return;
+        }
+
+        const int32_t n_rows = batch.n_tokens - first_batch_pos;
+        if (n_rows <= 1) {
+            return;
+        }
+
+        std::vector<int32_t> order(n_rows);
+        for (int32_t i = 0; i < n_rows; ++i) {
+            order[i] = first_batch_pos + i;
+        }
+
+        std::sort(order.begin(), order.end(), [&](int32_t a, int32_t b) {
+            const llama_pos pos_a = batch.pos[a];
+            const llama_pos pos_b = batch.pos[b];
+            if (pos_a != pos_b) {
+                return pos_a < pos_b;
+            }
+
+            const int8_t aux_a = batch.tree_aux ? batch.tree_aux[a] : 0;
+            const int8_t aux_b = batch.tree_aux ? batch.tree_aux[b] : 0;
+            if (aux_a != aux_b) {
+                return aux_a < aux_b;
+            }
+
+            const int32_t node_a = batch.tree_node ? batch.tree_node[a] : -1;
+            const int32_t node_b = batch.tree_node ? batch.tree_node[b] : -1;
+            return node_a < node_b;
+        });
+
+        bool changed = false;
+        for (int32_t i = 0; i < n_rows; ++i) {
+            changed = changed || order[i] != first_batch_pos + i;
+        }
+        if (!changed) {
+            return;
+        }
+
+        struct row_t {
+            llama_token token;
+            llama_pos pos;
+            int32_t n_seq_id;
+            std::vector<llama_seq_id> seq_id;
+            int8_t logits;
+            int32_t tree_node;
+            int32_t tree_parent;
+            int8_t tree_aux;
+        };
+
+        std::vector<row_t> rows;
+        rows.reserve(n_rows);
+        for (int32_t idx : order) {
+            row_t row;
+            row.token = batch.token[idx];
+            row.pos = batch.pos[idx];
+            row.n_seq_id = batch.n_seq_id[idx];
+            row.seq_id.assign(batch.seq_id[idx], batch.seq_id[idx] + batch.n_seq_id[idx]);
+            row.logits = batch.logits[idx];
+            row.tree_node = batch.tree_node ? batch.tree_node[idx] : -1;
+            row.tree_parent = batch.tree_parent ? batch.tree_parent[idx] : -1;
+            row.tree_aux = batch.tree_aux ? batch.tree_aux[idx] : 0;
+            rows.push_back(std::move(row));
+        }
+
+        std::vector<int32_t> old_to_new(batch.n_tokens, -1);
+        for (int32_t i = 0; i < n_rows; ++i) {
+            const int32_t dst = first_batch_pos + i;
+            const auto & row = rows[i];
+            batch.token[dst] = row.token;
+            batch.pos[dst] = row.pos;
+            batch.n_seq_id[dst] = row.n_seq_id;
+            for (int32_t j = 0; j < row.n_seq_id; ++j) {
+                batch.seq_id[dst][j] = row.seq_id[j];
+            }
+            batch.logits[dst] = row.logits;
+            if (batch.tree_node) {
+                batch.tree_node[dst] = row.tree_node;
+            }
+            if (batch.tree_parent) {
+                batch.tree_parent[dst] = row.tree_parent;
+            }
+            if (batch.tree_aux) {
+                batch.tree_aux[dst] = row.tree_aux;
+            }
+
+            old_to_new[order[i]] = dst;
+        }
+
+        for (int32_t & idx : spec_i_batch) {
+            if (idx >= 0 && idx < (int32_t) old_to_new.size() && old_to_new[idx] >= 0) {
+                idx = old_to_new[idx];
+            }
+        }
+        for (int32_t & idx : spec_tree_inline.node_batch) {
+            if (idx >= 0 && idx < (int32_t) old_to_new.size() && old_to_new[idx] >= 0) {
+                idx = old_to_new[idx];
+            }
         }
     }
 
@@ -1238,6 +1342,7 @@ struct server_slot {
         const int32_t batch_pos = batch.n_tokens - 1;
         batch.tree_node[batch_pos] = node;
         batch.tree_parent[batch_pos] = spec_tree_inline.plan.nodes[(size_t) node].parent;
+        batch.tree_aux[batch_pos] = 0;
         spec_tree_inline.node_batch[(size_t) node] = batch_pos;
     }
 
@@ -3668,6 +3773,7 @@ private:
         for (auto * slot_ptr : generating) {
             auto & slot = *slot_ptr;
 
+            const int32_t slot_batch_start = batch.n_tokens;
             slot.prepare_mtp_tree_inline(
                     spec.get(),
                     params_base.speculative.draft,
@@ -3675,6 +3781,7 @@ private:
                     n_batch);
             slot.update_batch(batch);
             slot.append_mtp_tree_inline_batch(batch);
+            slot.repack_mtp_tree_inline_batch(batch, slot_batch_start);
         }
 
         float  alora_scale       = -1.0f;
@@ -4269,6 +4376,7 @@ private:
                 batch.logits   + i,
                 batch.tree_node   ? batch.tree_node   + i : nullptr,
                 batch.tree_parent ? batch.tree_parent + i : nullptr,
+                batch.tree_aux    ? batch.tree_aux    + i : nullptr,
             };
 
             const bool mtp_timing = mtp_round_timing_enabled();

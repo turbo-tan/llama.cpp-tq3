@@ -621,6 +621,7 @@ struct common_speculative_impl_draft_eagle3 : public common_speculative_impl {
                 /*.logits   =*/ nullptr,
                 /*.tree_node =*/ nullptr,
                 /*.tree_parent =*/ nullptr,
+                /*.tree_aux =*/ nullptr,
             };
             const int32_t rc = llama_encode(ctx_dft, enc_batch);
             if (rc != 0) {

@@ -154,6 +154,10 @@ bool llama_batch_allocr::init(
         tree_parent.resize(batch.n_tokens, -1);
         batch.tree_parent = tree_parent.data();
     }
+    if (!batch.tree_aux) {
+        tree_aux.resize(batch.n_tokens, 0);
+        batch.tree_aux = tree_aux.data();
+    }
 
     //
     // compute stats
@@ -236,6 +240,7 @@ bool llama_batch_allocr::init(
             /*.output       =*/ batch.logits,
             /*.tree_node    =*/ batch.tree_node,
             /*.tree_parent  =*/ batch.tree_parent,
+            /*.tree_aux     =*/ batch.tree_aux,
             /*.data         =*/ {},
         };
 
@@ -420,6 +425,7 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
     udata->output    .resize(n_tokens);
     udata->tree_node .resize(n_tokens, -1);
     udata->tree_parent.resize(n_tokens, -1);
+    udata->tree_aux  .resize(n_tokens, 0);
 
     for (uint32_t s = 0; s < n_seqs; ++s) {
         udata->seq_idx[s] = s;
@@ -444,6 +450,7 @@ llama_ubatch llama_batch_allocr::ubatch_reserve(uint32_t n_seq_tokens, uint32_t 
         /*.output       =*/ udata->output.data(),
         /*.tree_node    =*/ udata->tree_node.data(),
         /*.tree_parent  =*/ udata->tree_parent.data(),
+        /*.tree_aux     =*/ udata->tree_aux.data(),
         /*.data         =*/ std::move(udata),
     };
 
@@ -678,6 +685,9 @@ void llama_batch_allocr::clear() {
     seq_id    .clear();
     seq_id_unq.clear();
     output    .clear();
+    tree_node .clear();
+    tree_parent.clear();
+    tree_aux  .clear();
 
     for (auto & cur : seq_pos) {
         cur.clear();
@@ -714,6 +724,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
     udata->output    .resize(n_tokens);
     udata->tree_node .resize(n_tokens, -1);
     udata->tree_parent.resize(n_tokens, -1);
+    udata->tree_aux  .resize(n_tokens, 0);
 
     udata->seq_id_data.reserve(n_tokens);
 
@@ -741,6 +752,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         udata->output[i]   = batch.logits[idxs[i]];
         udata->tree_node[i]   = batch.tree_node[idxs[i]];
         udata->tree_parent[i] = batch.tree_parent[idxs[i]];
+        udata->tree_aux[i]    = batch.tree_aux[idxs[i]];
 
         for (int s = 0; s < udata->n_seq_id[i]; ++s) {
             const llama_seq_id seq_id = batch.seq_id[idxs[i]][s];
@@ -785,6 +797,7 @@ llama_ubatch llama_batch_allocr::ubatch_add(const std::vector<int32_t> & idxs, u
         /*.output       =*/ udata->output.data(),
         /*.tree_node    =*/ udata->tree_node.data(),
         /*.tree_parent  =*/ udata->tree_parent.data(),
+        /*.tree_aux     =*/ udata->tree_aux.data(),
         /*.data         =*/ std::move(udata),
     };
 
@@ -895,6 +908,7 @@ struct llama_batch llama_batch_get_one(
         /*logits   =*/ nullptr,
         /*tree_node =*/ nullptr,
         /*tree_parent =*/ nullptr,
+        /*tree_aux =*/ nullptr,
     };
 }
 
@@ -909,6 +923,7 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
         /*logits   =*/ nullptr,
         /*tree_node =*/ nullptr,
         /*tree_parent =*/ nullptr,
+        /*tree_aux =*/ nullptr,
     };
 
     if (embd) {
@@ -928,9 +943,11 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
     batch.logits   = (int8_t *)        malloc(sizeof(int8_t)         * n_tokens_alloc);
     batch.tree_node   = (int32_t *)    malloc(sizeof(int32_t)        * n_tokens_alloc);
     batch.tree_parent = (int32_t *)    malloc(sizeof(int32_t)        * n_tokens_alloc);
+    batch.tree_aux    = (int8_t *)     malloc(sizeof(int8_t)         * n_tokens_alloc);
     for (int i = 0; i < n_tokens_alloc; ++i) {
         batch.tree_node[i] = -1;
         batch.tree_parent[i] = -1;
+        batch.tree_aux[i] = 0;
     }
 
     return batch;
@@ -950,4 +967,5 @@ void llama_batch_free(struct llama_batch batch) {
     if (batch.logits)   free(batch.logits);
     if (batch.tree_node)   free(batch.tree_node);
     if (batch.tree_parent) free(batch.tree_parent);
+    if (batch.tree_aux)    free(batch.tree_aux);
 }

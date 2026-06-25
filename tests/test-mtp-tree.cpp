@@ -34,6 +34,7 @@ int main() {
         batch.logits[i] = 1;
         batch.tree_node[i] = i;
         batch.tree_parent[i] = i == 0 ? -1 : i - 1;
+        batch.tree_aux[i] = i > 1;
     }
 
     llama_batch_allocr balloc(1);
@@ -42,9 +43,11 @@ int main() {
     assert(ubatch.n_tokens == 4);
     assert(ubatch.tree_node != nullptr);
     assert(ubatch.tree_parent != nullptr);
+    assert(ubatch.tree_aux != nullptr);
     for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
         assert(ubatch.tree_node[i] == (int32_t) i);
         assert(ubatch.tree_parent[i] == (i == 0 ? -1 : (int32_t) i - 1));
+        assert(ubatch.tree_aux[i] == (i > 1));
     }
 
     llama_batch_free(batch);

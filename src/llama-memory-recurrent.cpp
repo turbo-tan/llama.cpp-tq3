@@ -13,6 +13,106 @@
 #include <map>
 #include <stdexcept>
 
+static llama_ubatch llama_ubatch_recurrent_without_tree_aux(const llama_ubatch & ubatch) {
+    if (ubatch.tree_aux == nullptr) {
+        return ubatch;
+    }
+
+    bool has_aux = false;
+    uint32_t n_keep = 0;
+    for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
+        if (ubatch.tree_aux[i]) {
+            has_aux = true;
+        } else {
+            ++n_keep;
+        }
+    }
+
+    if (!has_aux) {
+        return ubatch;
+    }
+    if (n_keep == ubatch.n_tokens) {
+        return ubatch;
+    }
+
+    if (n_keep == 0) {
+        return {};
+    }
+
+    // Recurrent state tracks the committed linear path. Auxiliary DTree rows are
+    // branch candidates for attention logits only and can repeat earlier depths.
+    GGML_ASSERT(ubatch.n_seqs == 1);
+
+    auto udata = std::make_shared<llama_ubatch::data_t>();
+    const int64_t n_embd_all = ubatch.embd ? (int64_t) n_keep * 0 : 0;
+    GGML_ASSERT(n_embd_all == 0);
+
+    udata->token     .resize(ubatch.token ? n_keep : 0);
+    udata->embd      .clear();
+    udata->pos       .resize((int64_t) n_keep * ubatch.n_pos);
+    udata->n_seq_id  .resize(n_keep);
+    udata->seq_id    .resize(n_keep);
+    udata->seq_id_unq.assign(ubatch.seq_id_unq, ubatch.seq_id_unq + ubatch.n_seqs_unq);
+    udata->seq_idx   .assign(ubatch.seq_idx, ubatch.seq_idx + LLAMA_MAX_SEQ);
+    udata->output    .resize(n_keep);
+    udata->tree_node .resize(n_keep, -1);
+    udata->tree_parent.resize(n_keep, -1);
+    udata->tree_aux  .resize(n_keep, 0);
+
+    uint32_t dst = 0;
+    for (uint32_t src = 0; src < ubatch.n_tokens; ++src) {
+        if (ubatch.tree_aux[src]) {
+            continue;
+        }
+
+        if (ubatch.token) {
+            udata->token[dst] = ubatch.token[src];
+        }
+        for (uint32_t p = 0; p < ubatch.n_pos; ++p) {
+            udata->pos[p * n_keep + dst] = ubatch.pos[p * ubatch.n_tokens + src];
+        }
+
+        udata->n_seq_id[dst] = ubatch.n_seq_id[src];
+        udata->output[dst] = ubatch.output[src];
+        udata->tree_node[dst] = ubatch.tree_node ? ubatch.tree_node[src] : -1;
+        udata->tree_parent[dst] = ubatch.tree_parent ? ubatch.tree_parent[src] : -1;
+
+        for (int32_t s = 0; s < ubatch.n_seq_id[src]; ++s) {
+            udata->seq_id_data.push_back(ubatch.seq_id[src][s]);
+        }
+        ++dst;
+    }
+
+    llama_seq_id * seq_id_ptr = udata->seq_id_data.data();
+    for (uint32_t i = 0; i < n_keep; ++i) {
+        udata->seq_id[i] = seq_id_ptr;
+        seq_id_ptr += udata->n_seq_id[i];
+    }
+
+    llama_ubatch res {
+        /*.b_equal_seqs =*/ ubatch.b_equal_seqs,
+        /*.n_tokens     =*/ n_keep,
+        /*.n_seq_tokens =*/ n_keep,
+        /*.n_seqs       =*/ 1,
+        /*.n_seqs_unq   =*/ ubatch.n_seqs_unq,
+        /*.n_pos        =*/ ubatch.n_pos,
+        /*.token        =*/ ubatch.token ? udata->token.data() : nullptr,
+        /*.embd         =*/ nullptr,
+        /*.pos          =*/ udata->pos.data(),
+        /*.n_seq_id     =*/ udata->n_seq_id.data(),
+        /*.seq_id       =*/ udata->seq_id.data(),
+        /*.seq_id_unq   =*/ udata->seq_id_unq.data(),
+        /*.seq_idx      =*/ udata->seq_idx.data(),
+        /*.output       =*/ udata->output.data(),
+        /*.tree_node    =*/ udata->tree_node.data(),
+        /*.tree_parent  =*/ udata->tree_parent.data(),
+        /*.tree_aux     =*/ udata->tree_aux.data(),
+        /*.data         =*/ std::move(udata),
+    };
+
+    return res;
+}
+
 //
 // llama_memory_recurrent
 //
@@ -431,7 +531,12 @@ llama_memory_context_ptr llama_memory_recurrent::init_batch(llama_batch_allocr &
                 break;
             }
 
-            ubatches.push_back(std::move(ubatch)); // NOLINT
+            llama_ubatch ubatch_recr = llama_ubatch_recurrent_without_tree_aux(ubatch);
+            if (ubatch_recr.n_tokens == 0) {
+                continue;
+            }
+
+            ubatches.push_back(std::move(ubatch_recr)); // NOLINT
         }
 
         if (balloc.get_n_used() < balloc.get_n_tokens()) {
