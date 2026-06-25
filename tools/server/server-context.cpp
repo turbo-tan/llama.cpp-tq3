@@ -280,9 +280,13 @@ struct mtp_tree_cost_state {
             return false;
         }
 
-        if (linear_tps_ema <= 0.0 || tree_tps_ema <= 0.0) {
-            request_use_tree = true;
-            return true;
+        if (linear_tps_ema <= 0.0) {
+            return false;
+        }
+
+        if (tree_tps_ema <= 0.0) {
+            request_use_tree = requests_since_tree >= cooldown;
+            return request_use_tree;
         }
 
         const double required_gain = std::max(1.0f, min_gain);
@@ -3723,10 +3727,6 @@ private:
                         const bool mtp_tree_enabled =
                             params_base.speculative.draft.use_mtp_tree &&
                             slot.tree_cost().should_use_tree(params_base.speculative.draft);
-                        if (mtp_tree_enabled) {
-                            slot.tree_cost().record_tree_attempt();
-                        }
-
                         common_speculative_get_draft_params(spec.get(), slot.id) = {
                             /* .drafting = */ true,
                             /* .n_max    = */ n_draft_max,
