@@ -288,6 +288,7 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0,  GGML_TYPE_TQ3_0)
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q4_0,  GGML_TYPE_TQ3_0)
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_TQ3_0)
 
     GGML_ABORT("fatal error");
 }
@@ -371,10 +372,10 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
 #ifndef GGML_CUDA_FA_ALL_QUANTS
     if (K->type != V->type) {
-        // Allow asymmetric K+V: q8_0 or q4_0 K + tq3_0 V
-        const bool asymm_ok = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0) &&
-                               V->type == GGML_TYPE_TQ3_0;
-        if (!asymm_ok) {
+        const bool asymm_tq3_ok = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0 ||
+                                   K->type == GGML_TYPE_TURBO4_0) &&
+                                  V->type == GGML_TYPE_TQ3_0;
+        if (!asymm_tq3_ok) {
             return BEST_FATTN_KERNEL_NONE;
         }
     }
@@ -394,6 +395,8 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         case GGML_TYPE_Q8_0:
         case GGML_TYPE_BF16:
         case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TURBO3_0:
+        case GGML_TYPE_TURBO4_0:
             break;
         default:
             return BEST_FATTN_KERNEL_NONE;
@@ -405,6 +408,19 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     // For small batch sizes the vector kernel may be preferable over the kernels optimized for large batch sizes:
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && K->ne[1] % FATTN_KQ_STRIDE == 0;
+
+    const bool asymm_tq3_v = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0) &&
+                              V->type == GGML_TYPE_TQ3_0;
+
+    // Asymmetric tq3_0 V has a native vector path. Keep it off the f16
+    // temp-buffer FA paths used by tile/MMA kernels.
+    if (asymm_tq3_v) {
+        return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
+    }
+
+    if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0) {
+        return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
+    }
 
     // If Turing tensor cores are available, use them:
     if (turing_mma_available(cc) && Q->ne[0] != 40 && Q->ne[0] != 72) {
@@ -530,4 +546,8 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
 
 bool ggml_cuda_flash_attn_ext_supported(int device, const ggml_tensor * dst) {
     return ggml_cuda_get_best_fattn_kernel(device, dst) != BEST_FATTN_KERNEL_NONE;
+}
+
+int ggml_cuda_flash_attn_ext_kernel_id(int device, const ggml_tensor * dst) {
+    return (int) ggml_cuda_get_best_fattn_kernel(device, dst);
 }
