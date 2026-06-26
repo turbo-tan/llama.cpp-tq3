@@ -1399,7 +1399,6 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         verify_h[seq_id].clear();
         verify_pos_first[seq_id] = -1;
         verify_h_rows[seq_id] = 0;
-        last_n_drafted[seq_id] = 0;
 
         const int32_t N = (int32_t) prompt.size();
         if (N <= 0) {

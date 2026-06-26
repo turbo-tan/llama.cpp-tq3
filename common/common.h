@@ -385,7 +385,7 @@ struct common_params_speculative {
 
     uint32_t need_n_rs_seq() const {
         bool has_mtp = std::any_of(types.begin(), types.end(), [&](auto t) {
-            return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP || t == COMMON_SPECULATIVE_TYPE_MTP;
+            return t == COMMON_SPECULATIVE_TYPE_DRAFT_MTP;
         });
 
         if (has_mtp) {
