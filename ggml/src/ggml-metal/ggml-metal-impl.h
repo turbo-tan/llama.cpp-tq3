@@ -84,6 +84,9 @@
 #define N_R0_IQ4_XS 2
 #define N_SG_IQ4_XS 2
 
+#define N_R0_TQ3_4S 4
+#define N_SG_TQ3_4S 4
+
 // function constants offsets
 #define FC_FLASH_ATTN_EXT_PAD          100
 #define FC_FLASH_ATTN_EXT_BLK          200
@@ -930,6 +933,18 @@ typedef struct {
     uint64_t nb2;
     uint64_t nb3;
 } ggml_metal_kargs_get_rows;
+
+// forward randomized Hadamard transform of activations (TQ3_4S mat-mul pre-pass)
+typedef struct {
+    int32_t  nb;    // number of 32-element blocks along K
+    int32_t  ne12;  // src1 dim2 (to unflatten the batch grid index)
+    uint64_t nb11;  // src1 strides (input activation)
+    uint64_t nb12;
+    uint64_t nb13;
+    uint64_t ob11;  // dst strides (contiguous transformed activation)
+    uint64_t ob12;
+    uint64_t ob13;
+} ggml_metal_kargs_tq3_rht;
 
 typedef struct {
     int32_t  nk0;
