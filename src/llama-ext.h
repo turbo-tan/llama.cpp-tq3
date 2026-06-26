@@ -106,6 +106,7 @@ LLAMA_API float * llama_get_embeddings_nextn(struct llama_context * ctx);
 
 // LLAMA_API float * llama_get_embeddings_ith(struct llama_context * ctx, int32_t i);
 LLAMA_API float * llama_get_embeddings_nextn_ith(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_embeddings_nextn_ith_no_sync(struct llama_context * ctx, int32_t i);
 LLAMA_API struct ggml_tensor * llama_context_get_t_h_pre_norm(struct llama_context * ctx);
 LLAMA_API struct ggml_tensor * llama_context_get_t_mtp_out(struct llama_context * ctx);
 LLAMA_API void llama_set_mtp(struct llama_context * ctx_target, struct llama_context * ctx_mtp);
@@ -118,6 +119,15 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
 LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
 
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
+
+LLAMA_API llama_token llama_get_sampled_token_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_sampled_probs_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API uint32_t llama_get_sampled_probs_count_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_sampled_logits_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API uint32_t llama_get_sampled_logits_count_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API llama_token * llama_get_sampled_candidates_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API uint32_t llama_get_sampled_candidates_count_ith_no_sync(struct llama_context * ctx, int32_t i);
+LLAMA_API float * llama_get_logits_ith_no_sync(struct llama_context * ctx, int32_t i);
 
 //
 // model/context data extraction
