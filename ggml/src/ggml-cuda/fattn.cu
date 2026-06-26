@@ -288,6 +288,7 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0,  GGML_TYPE_TQ3_0)
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q4_0,  GGML_TYPE_TQ3_0)
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_TQ3_0)
 
     GGML_ABORT("fatal error");
 }
@@ -371,10 +372,10 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
 #ifndef GGML_CUDA_FA_ALL_QUANTS
     if (K->type != V->type) {
-        // Allow asymmetric K+V: q8_0 or q4_0 K + tq3_0 V
-        const bool asymm_ok = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0) &&
-                               V->type == GGML_TYPE_TQ3_0;
-        if (!asymm_ok) {
+        const bool asymm_tq3_ok = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0 ||
+                                   K->type == GGML_TYPE_TURBO4_0) &&
+                                  V->type == GGML_TYPE_TQ3_0;
+        if (!asymm_tq3_ok) {
             return BEST_FATTN_KERNEL_NONE;
         }
     }
@@ -394,6 +395,8 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         case GGML_TYPE_Q8_0:
         case GGML_TYPE_BF16:
         case GGML_TYPE_TQ3_0:
+        case GGML_TYPE_TURBO3_0:
+        case GGML_TYPE_TURBO4_0:
             break;
         default:
             return BEST_FATTN_KERNEL_NONE;
@@ -409,11 +412,14 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const bool asymm_tq3_v = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0) &&
                               V->type == GGML_TYPE_TQ3_0;
 
-    // GB10/Blackwell currently faults in the MMA and tile flash-attention
-    // paths for asymmetric K/V cache types (q8_0 or q4_0 K with tq3_0 V).
-    // Route those cases to the vector kernel, which has native tq3_0 support.
-    if (GGML_CUDA_CC_IS_NVIDIA(cc) && cc >= GGML_CUDA_CC_BLACKWELL && asymm_tq3_v) {
-        return BEST_FATTN_KERNEL_VEC;
+    // Asymmetric tq3_0 V has a native vector path. Keep it off the f16
+    // temp-buffer FA paths used by tile/MMA kernels.
+    if (asymm_tq3_v) {
+        return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
+    }
+
+    if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0) {
+        return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
     }
 
     // If Turing tensor cores are available, use them:
