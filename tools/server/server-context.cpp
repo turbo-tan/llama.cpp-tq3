@@ -3932,10 +3932,23 @@ private:
 
                         SLT_DBG(slot, "restoring speculative checkpoint (pos_min = %d, pos_max = %d, size = %zu)\n", ckpt.pos_min, ckpt.pos_max, ckpt.size());
 
-                        ckpt.load_tgt(slot.ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                        // the speculative checkpoint restore flags must match the flags used to
+                        // save it in pre_decode(); otherwise an ON_DEVICE checkpoint is read back
+                        // in host mode and overruns the (device-metadata-only) buffer.
+                        const uint32_t spec_ckpt_flags =
+                            LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY |
+                            ((params_base.n_ctx_checkpoints == 0 && params_base.cache_ram_mib == 0) ? LLAMA_STATE_SEQ_FLAGS_ON_DEVICE : 0);
+
+                        {
+                            ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags);
+
+                            common_context_seq_rm(slot.ctx_tgt, slot.id, ckpt.pos_max + 1, -1);
+                        }
 
                         if (slot.ctx_dft) {
-                            ckpt.load_dft(slot.ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
+                            ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags);
+
+                            common_context_seq_rm(slot.ctx_dft, slot.id, ckpt.pos_max + 1, -1);
                         }
 
                         slot.mem.seq_rm(slot.id, ckpt.pos_max + 1, -1);
