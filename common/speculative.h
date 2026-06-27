@@ -3,7 +3,27 @@
 #include "llama.h"
 #include "common.h"
 
+#include <vector>
+
+struct common_speculative_mtp_tree_node {
+    llama_token token = 0;
+    int32_t parent = -1;
+    int32_t depth = 0;
+    float prob = 0.0f;
+    float cum_prob = 0.0f;
+    llama_seq_id seq_id = -1;
+    int32_t batch_pos = -1;
+};
+
+struct common_speculative_mtp_tree_plan {
+    std::vector<common_speculative_mtp_tree_node> nodes;
+    size_t max_nodes = 1;
+    size_t max_depth = 1;
+    float p_split = 0.0f;
+};
+
 struct common_speculative;
+struct common_sampler;
 
 // comma separated list the provided types
 std::string common_speculative_type_name_str(const std::vector<enum common_speculative_type> & types);
@@ -46,6 +66,8 @@ struct common_speculative_draft_params {
 
     // the generated draft from the last _draft() call
     llama_tokens * result;
+
+    bool mtp_tree_enabled = true;
 };
 
 common_speculative_draft_params & common_speculative_get_draft_params(common_speculative * spec, llama_seq_id seq_id);
@@ -68,9 +90,18 @@ void common_speculative_draft(common_speculative * spec);
 // informs the speculative context that n_accepted tokens were accepted by the target model
 void common_speculative_accept(common_speculative * spec, llama_seq_id, uint16_t n_accepted);
 
-// (optional) get/set internal state
-bool common_speculative_get_state(common_speculative * spec, llama_seq_id seq_id, std::vector<uint8_t> & data);
-void common_speculative_set_state(common_speculative * spec, llama_seq_id seq_id, const std::vector<uint8_t> & data);
+// synchronize the draft sampler state for a single sequence with an existing sampler
+void common_speculative_sync_draft_sampler(common_speculative * spec, llama_seq_id seq_id, common_sampler * smpl_target);
+
+bool common_speculative_get_mtp_tree_plan(
+    const common_speculative * spec,
+    llama_seq_id seq_id,
+    common_speculative_mtp_tree_plan & plan);
+
+bool common_speculative_mtp_tree_is_ancestor(
+    const common_speculative_mtp_tree_plan & plan,
+    int32_t node,
+    int32_t ancestor);
 
 // print statistics about the speculative decoding
 void common_speculative_print_stats(const common_speculative * spec);

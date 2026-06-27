@@ -7,6 +7,14 @@
 
 #include "ggml.h"
 #include "../src/llama-ext.h"
+#if __has_include(<nvtx3/nvToolsExt.h>)
+#    include <nvtx3/nvToolsExt.h>
+#elif __has_include(<nvToolsExt.h>)
+#    include <nvToolsExt.h>
+#else
+static inline int nvtxRangePushA(const char *) { return 0; }
+static inline int nvtxRangePop() { return 0; }
+#endif
 
 #include <algorithm>
 #include <cctype>
@@ -260,9 +268,6 @@ struct common_sampler * common_sampler_init(const struct llama_model * model, st
              }
         }
     }
-    if (!grmr && !grammar_str.empty()) {
-        throw std::runtime_error("failed to parse grammar");
-    }
 
     // Compute prefill tokens from the generation prompt
     std::vector<llama_token> prefill_tokens;
@@ -474,7 +479,8 @@ void common_sampler_reset(struct common_sampler * gsmpl) {
 }
 
 struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
-    return new common_sampler {
+    nvtxRangePushA("sampler_clone");
+    struct common_sampler * result = new common_sampler {
         /* .params  = */ gsmpl->params,
         /* .grmr    = */ llama_sampler_clone(gsmpl->grmr),
         /* .rbudget = */ llama_sampler_clone(gsmpl->rbudget),
@@ -483,6 +489,8 @@ struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
         /* .cur     = */ gsmpl->cur,
         /* .cur_p   = */ gsmpl->cur_p,
     };
+    nvtxRangePop();
+    return result;
 }
 
 void common_perf_print(const struct llama_context * ctx, const struct common_sampler * gsmpl) {
@@ -538,10 +546,7 @@ struct llama_sampler * common_sampler_get(const struct common_sampler * gsmpl) {
     return gsmpl->chain;
 }
 
-llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
-    llama_synchronize(ctx);
-
-    // start measuring sampling time after the llama_context synchronization in order to not measure any ongoing async operations
+static llama_token common_sampler_sample_impl(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
     const auto tm = gsmpl->tm();
 
     llama_token id = LLAMA_TOKEN_NULL;
@@ -620,6 +625,17 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
     id = cur_p.data[cur_p.selected].id;
 
     return id;
+}
+
+llama_token common_sampler_sample_no_sync(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
+    return common_sampler_sample_impl(gsmpl, ctx, idx, grammar_first);
+}
+
+llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first) {
+    llama_synchronize(ctx);
+
+    // start measuring sampling time after the llama_context synchronization in order to not measure any ongoing async operations
+    return common_sampler_sample_impl(gsmpl, ctx, idx, grammar_first);
 }
 
 std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft, bool grammar_first) {

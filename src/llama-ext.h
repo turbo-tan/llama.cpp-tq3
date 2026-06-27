@@ -95,11 +95,6 @@ LLAMA_API llama_memory_breakdown llama_get_memory_breakdown(const struct llama_c
 // If masked == false, output the embeddings for all tokens in the batch regardless of batch.logits
 LLAMA_API void llama_set_embeddings_nextn(struct llama_context * ctx, bool value, bool masked);
 
-// Select which appended NextN block the DECODER_MTP graph runs (offset past
-// the trunk: il = n_layer() + offset). Used by the speculative NextN driver to
-// chain multiple trained NextN heads. Default 0 (first head).
-LLAMA_API void llama_set_nextn_layer_offset(struct llama_context * ctx, int32_t offset);
-
 // mirrors:
 // LLAMA_API float * llama_get_embeddings(struct llama_context * ctx);
 LLAMA_API float * llama_get_embeddings_nextn(struct llama_context * ctx);
@@ -119,6 +114,13 @@ LLAMA_API void llama_set_embeddings_layer_inp(struct llama_context * ctx, uint32
 LLAMA_API float * llama_get_embeddings_layer_inp(struct llama_context * ctx, uint32_t lid);
 
 LLAMA_API llama_context * llama_get_ctx_other(struct llama_context * ctx);
+
+LLAMA_API bool llama_memory_seq_keep_tree_path(
+        struct llama_context * ctx,
+        llama_seq_id seq_id,
+        llama_pos p0,
+        const int32_t * keep_nodes,
+        size_t n_keep_nodes);
 
 LLAMA_API llama_token llama_get_sampled_token_ith_no_sync(struct llama_context * ctx, int32_t i);
 LLAMA_API float * llama_get_sampled_probs_ith_no_sync(struct llama_context * ctx, int32_t i);

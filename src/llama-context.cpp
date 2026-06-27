@@ -10,7 +10,9 @@
 #include "llama-impl.h"
 #include "llama-batch.h"
 #include "llama-io.h"
+#include "llama-kv-cache-iswa.h"
 #include "llama-memory.h"
+#include "llama-memory-hybrid.h"
 #include "llama-mmap.h"
 #include "llama-model.h"
 #include "llama-ext.h"
@@ -1286,10 +1288,6 @@ void llama_context::set_embeddings_layer_inp(uint32_t lid, bool enable) {
     sched_need_reserve = true;
 }
 
-void llama_context::set_nextn_layer_offset(int32_t offset) {
-    cparams.nextn_layer_offset = offset;
-}
-
 void llama_context::set_mtp(llama_context * ctx_mtp_in) {
     if (mtp.ctx_mtp == ctx_mtp_in) {
         return;
@@ -1309,12 +1307,12 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
         mtp.hook_tokens.clear();
     }
 
-    mtp.ctx_mtp     = ctx_mtp_in;
-    mtp.pending_pos = -1;
+    mtp.ctx_mtp = ctx_mtp_in;
 
     if (mtp.ctx_mtp) {
         const int32_t n_ub   = (int32_t) cparams.n_ubatch;
         const int32_t n_embd = (int32_t) model.hparams.n_embd;
+        const uint32_t n_seq = mtp.ctx_mtp->n_seq_max();
         mtp.hook_batch       = llama_batch_init(n_ub, n_embd, 1);
 #if defined(GGML_USE_CUDA) || defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
         if (mtp.hook_batch.embd != nullptr) {
@@ -1332,7 +1330,8 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
 #endif
         mtp.hook_tokens.assign(n_ub, LLAMA_TOKEN_NULL);
         mtp.hook_batch.token = mtp.hook_tokens.data();
-        mtp.pending_h.assign(n_embd, 0.0f);
+        mtp.pending_h.assign((size_t) n_seq * n_embd, 0.0f);
+        mtp.pending_pos.assign(n_seq, -1);
         LLAMA_LOG_INFO("%s: MTP draft head registered (ctx_mtp=%p, n_ubatch=%d, n_embd=%d)\n",
                        __func__, (const void *) mtp.ctx_mtp, n_ub, n_embd);
     } else {
@@ -1340,6 +1339,8 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
         mtp.hook_tokens.shrink_to_fit();
         mtp.pending_h.clear();
         mtp.pending_h.shrink_to_fit();
+        mtp.pending_pos.clear();
+        mtp.pending_pos.shrink_to_fit();
         LLAMA_LOG_INFO("%s: MTP draft head unregistered\n", __func__);
     }
 }
@@ -1348,9 +1349,11 @@ void llama_context::handle_mtp_for_ubatch(
         int32_t              n_tokens,
         const llama_token  * tokens,
         const llama_pos    * positions,
+        const int32_t      * n_seq_id,
+        llama_seq_id * const * seq_ids,
         struct ggml_tensor * t,
         bool                 decode_mtp) {
-    if (mtp.ctx_mtp == nullptr || n_tokens == 0 || t == nullptr) {
+    if (mtp.ctx_mtp == nullptr || n_tokens == 0 || t == nullptr || n_seq_id == nullptr || seq_ids == nullptr) {
         return;
     }
     if (t->ne[1] != (int64_t) n_tokens) {
@@ -1359,83 +1362,173 @@ void llama_context::handle_mtp_for_ubatch(
 
     const int64_t n_embd = model.hparams.n_embd;
     GGML_ASSERT(t->ne[0] == n_embd);
-
-    const int       n_rows    = (int) n_tokens;
-    const llama_pos pos_start = positions[0];
-
-    const llama_pos pos_max_mtp = llama_memory_seq_pos_max(llama_get_memory(mtp.ctx_mtp), 0);
-    if (pos_start <= pos_max_mtp) {
-        llama_memory_seq_rm(llama_get_memory(mtp.ctx_mtp), 0, pos_start, -1);
-        if (mtp.pending_pos >= pos_start) {
-            mtp.pending_pos = -1;
-        }
-    }
-
-    synchronize();
-
-    const bool pending_continues = mtp.pending_pos >= 0 && mtp.pending_pos + 1 == pos_start;
-    if (mtp.pending_pos >= 0 && !pending_continues) {
-        mtp.pending_pos = -1;
-    }
-
+    const uint32_t n_seq_max = mtp.ctx_mtp->n_seq_max();
     const size_t row_bytes = (size_t) n_embd * sizeof(float);
-    const int    n_out     = (pending_continues ? 1 : 0) + (n_rows - 1);
-
-    if (decode_mtp && n_out > 0) {
-        int out_idx = 0;
-        if (pending_continues) {
-            std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, mtp.pending_h.data(), row_bytes);
-            mtp.hook_batch.token[out_idx]     = tokens[0];
-            mtp.hook_batch.pos[out_idx]       = pos_start;
-            mtp.hook_batch.n_seq_id[out_idx]  = 1;
-            mtp.hook_batch.seq_id[out_idx][0] = 0;
-            mtp.hook_batch.logits[out_idx]    = 0;
-            ++out_idx;
-        }
-        if (n_rows > 1) {
-            ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
-            GGML_ASSERT(backend_t != nullptr);
-
-            ggml_backend_tensor_get_2d_async(
-                backend_t,
-                t,
-                mtp.hook_batch.embd + (size_t) out_idx * n_embd,
-                0,
-                row_bytes,
-                (size_t) n_rows - 1,
-                row_bytes,
-                row_bytes);
-        }
-        for (int k = 0; k + 1 < n_rows; ++k) {
-            mtp.hook_batch.token[out_idx]     = tokens[k + 1];
-            mtp.hook_batch.pos[out_idx]       = positions[k + 1];
-            mtp.hook_batch.n_seq_id[out_idx]  = 1;
-            mtp.hook_batch.seq_id[out_idx][0] = 0;
-            mtp.hook_batch.logits[out_idx]    = 0;
-            ++out_idx;
-        }
-        GGML_ASSERT(out_idx == n_out);
-        mtp.hook_batch.n_tokens = n_out;
-
-        synchronize();
-
-        const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
-        if (rc_dec != 0) {
-            LLAMA_LOG_ERROR("%s: llama_decode(ctx_mtp) failed rc=%d (pos=%d, n=%d)\n",
-                            __func__, (int) rc_dec, (int) pos_start, n_out);
-        }
-    }
-
     ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
     GGML_ASSERT(backend_t != nullptr);
 
-    ggml_backend_tensor_get_async(
-        backend_t,
-        t,
-        mtp.pending_h.data(),
-        (size_t) (n_rows - 1) * row_bytes,
-        row_bytes);
-    mtp.pending_pos = pos_start + n_rows - 1;
+    ggml_backend_synchronize(backend_t);
+
+    llama_seq_id single_seq_id = -1;
+    bool single_seq = true;
+
+    for (int32_t k = 0; k < n_tokens; ++k) {
+        GGML_ASSERT(n_seq_id[k] == 1);
+        const llama_seq_id seq_id = seq_ids[k][0];
+        GGML_ASSERT(seq_id >= 0);
+        GGML_ASSERT((uint32_t) seq_id < n_seq_max);
+
+        if (single_seq_id < 0) {
+            single_seq_id = seq_id;
+        } else if (single_seq_id != seq_id) {
+            single_seq = false;
+        }
+
+        const llama_pos pos = positions[k];
+        const llama_pos pos_max_mtp = llama_memory_seq_pos_max(llama_get_memory(mtp.ctx_mtp), seq_id);
+        if (pos <= pos_max_mtp) {
+            llama_memory_seq_rm(llama_get_memory(mtp.ctx_mtp), seq_id, pos, -1);
+            if (mtp.pending_pos[seq_id] >= pos) {
+                mtp.pending_pos[seq_id] = -1;
+            }
+        }
+    }
+
+    std::vector<int32_t> last_row_by_seq(n_seq_max, -1);
+
+    if (decode_mtp && single_seq) {
+        const llama_seq_id seq_id = single_seq_id;
+        const llama_pos pos_start = positions[0];
+        const bool pending_continues = mtp.pending_pos[seq_id] >= 0 && mtp.pending_pos[seq_id] + 1 == pos_start;
+        if (mtp.pending_pos[seq_id] >= 0 && !pending_continues) {
+            mtp.pending_pos[seq_id] = -1;
+        }
+
+        const int n_out = (pending_continues ? 1 : 0) + (n_tokens - 1);
+        if (n_out > 0) {
+            int out_idx = 0;
+            if (pending_continues) {
+                std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, mtp.pending_h.data() + (size_t) seq_id * n_embd, row_bytes);
+                mtp.hook_batch.token[out_idx]     = tokens[0];
+                mtp.hook_batch.pos[out_idx]       = pos_start;
+                mtp.hook_batch.n_seq_id[out_idx]  = 1;
+                mtp.hook_batch.seq_id[out_idx][0] = seq_id;
+                mtp.hook_batch.logits[out_idx]    = 0;
+                ++out_idx;
+            }
+
+            if (n_tokens > 1) {
+                ggml_backend_tensor_get_2d_async(
+                    backend_t,
+                    t,
+                    mtp.hook_batch.embd + (size_t) out_idx * n_embd,
+                    0,
+                    row_bytes,
+                    (size_t) n_tokens - 1,
+                    row_bytes,
+                    row_bytes);
+            }
+
+            for (int32_t k = 0; k + 1 < n_tokens; ++k) {
+                mtp.hook_batch.token[out_idx]     = tokens[k + 1];
+                mtp.hook_batch.pos[out_idx]       = positions[k + 1];
+                mtp.hook_batch.n_seq_id[out_idx]  = 1;
+                mtp.hook_batch.seq_id[out_idx][0] = seq_id;
+                mtp.hook_batch.logits[out_idx]    = 0;
+                ++out_idx;
+            }
+
+            GGML_ASSERT(out_idx == n_out);
+            mtp.hook_batch.n_tokens = n_out;
+
+            ggml_backend_synchronize(backend_t);
+
+            const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
+            if (rc_dec != 0) {
+                LLAMA_LOG_ERROR("%s: llama_decode(ctx_mtp) failed rc=%d (pos=%d, n=%d)\n",
+                                __func__, (int) rc_dec, (int) pos_start, n_out);
+            }
+        }
+
+        if (n_tokens > 0) {
+            ggml_backend_tensor_get_async(
+                backend_t,
+                t,
+                mtp.pending_h.data() + (size_t) seq_id * n_embd,
+                (size_t) (n_tokens - 1) * row_bytes,
+                row_bytes);
+            mtp.pending_pos[seq_id] = positions[n_tokens - 1];
+        }
+        return;
+    }
+
+    if (decode_mtp) {
+        int out_idx = 0;
+        for (int32_t k = 0; k < n_tokens; ++k) {
+            const llama_seq_id seq_id = seq_ids[k][0];
+            const float * pending_h = mtp.pending_h.data() + (size_t) seq_id * n_embd;
+            const bool pending_continues = mtp.pending_pos[seq_id] >= 0 && mtp.pending_pos[seq_id] + 1 == positions[k];
+            if (mtp.pending_pos[seq_id] >= 0 && !pending_continues) {
+                mtp.pending_pos[seq_id] = -1;
+            }
+
+            if (pending_continues) {
+                std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, pending_h, row_bytes);
+                mtp.hook_batch.token[out_idx]     = tokens[k];
+                mtp.hook_batch.pos[out_idx]       = positions[k];
+                mtp.hook_batch.n_seq_id[out_idx]  = 1;
+                mtp.hook_batch.seq_id[out_idx][0] = seq_id;
+                mtp.hook_batch.logits[out_idx]    = 0;
+                ++out_idx;
+            }
+
+            if (last_row_by_seq[seq_id] >= 0) {
+                ggml_backend_tensor_get_2d_async(
+                    backend_t,
+                    t,
+                    mtp.hook_batch.embd + (size_t) out_idx * n_embd,
+                    0,
+                    row_bytes,
+                    1,
+                    (size_t) last_row_by_seq[seq_id] * row_bytes,
+                    row_bytes);
+
+                mtp.hook_batch.token[out_idx]     = tokens[k];
+                mtp.hook_batch.pos[out_idx]       = positions[k];
+                mtp.hook_batch.n_seq_id[out_idx]  = 1;
+                mtp.hook_batch.seq_id[out_idx][0] = seq_id;
+                mtp.hook_batch.logits[out_idx]    = 0;
+                ++out_idx;
+            }
+
+            last_row_by_seq[seq_id] = k;
+        }
+
+        mtp.hook_batch.n_tokens = out_idx;
+
+        if (out_idx > 0) {
+            ggml_backend_synchronize(backend_t);
+
+            const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
+            if (rc_dec != 0) {
+                LLAMA_LOG_ERROR("%s: llama_decode(ctx_mtp) failed rc=%d (pos=%d, n=%d)\n",
+                                __func__, (int) rc_dec, (int) positions[0], out_idx);
+            }
+        }
+    }
+
+    for (uint32_t seq_id = 0; seq_id < n_seq_max; ++seq_id) {
+        if (last_row_by_seq[seq_id] < 0) {
+            continue;
+        }
+        ggml_backend_tensor_get_async(
+            backend_t,
+            t,
+            mtp.pending_h.data() + (size_t) seq_id * n_embd,
+            (size_t) last_row_by_seq[seq_id] * row_bytes,
+            row_bytes);
+        mtp.pending_pos[seq_id] = positions[last_row_by_seq[seq_id]];
+    }
 }
 
 void llama_context::set_causal_attn(bool value) {
@@ -1664,7 +1757,7 @@ int llama_context::encode(const llama_batch & batch_inp) {
     const auto & hparams = model.hparams;
 
     // eagle3/DFlash: features as encoder input, and non-draft paths fall back to model's input dim
-    const int64_t n_embd = hparams.n_embd_inp_enc();
+    const int64_t n_embd = hparams.n_embd_inp();
     const int64_t n_vocab = model.vocab.n_tokens();
 
     // note: during encode, we always pass the full sequence starting from pos = 0
@@ -2261,7 +2354,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
 
         if (mtp.ctx_mtp != nullptr && t_h_nextn != nullptr && ubatch.token != nullptr && ubatch.pos != nullptr) {
-            handle_mtp_for_ubatch((int32_t) ubatch.n_tokens, ubatch.token, ubatch.pos, t_h_nextn, true);
+            handle_mtp_for_ubatch((int32_t) ubatch.n_tokens, ubatch.token, ubatch.pos, ubatch.n_seq_id, ubatch.seq_id, t_h_nextn, true);
         }
 
         // Copy backend sampling output if this ubatch produced any sampling tensors.
@@ -3986,10 +4079,6 @@ void llama_set_embeddings_layer_inp(llama_context * ctx, uint32_t lid, bool valu
     ctx->set_embeddings_layer_inp(lid, value);
 }
 
-void llama_set_nextn_layer_offset(llama_context * ctx, int32_t offset) {
-    ctx->set_nextn_layer_offset(offset);
-}
-
 llama_memory_t llama_get_memory(const struct llama_context * ctx) {
     if (!ctx) {
         return nullptr;
@@ -4468,4 +4557,31 @@ void llama_set_mtp(struct llama_context * ctx_target, struct llama_context * ctx
 
 llama_context * llama_get_ctx_other(struct llama_context * ctx) {
     return ctx->get_cparams().ctx_other;
+}
+
+bool llama_memory_seq_keep_tree_path(
+        struct llama_context * ctx,
+        llama_seq_id seq_id,
+        llama_pos p0,
+        const int32_t * keep_nodes,
+        size_t n_keep_nodes) {
+    if (ctx == nullptr || keep_nodes == nullptr) {
+        return false;
+    }
+
+    std::vector<int32_t> nodes(keep_nodes, keep_nodes + n_keep_nodes);
+
+    auto * mem = llama_get_memory(ctx);
+    if (auto * kv = dynamic_cast<llama_kv_cache *>(mem)) {
+        return kv->seq_keep_tree_path(seq_id, p0, nodes);
+    }
+    if (auto * kv_iswa = dynamic_cast<llama_kv_cache_iswa *>(mem)) {
+        return kv_iswa->get_base()->seq_keep_tree_path(seq_id, p0, nodes) &&
+               kv_iswa->get_swa ()->seq_keep_tree_path(seq_id, p0, nodes);
+    }
+    if (auto * mem_hybrid = dynamic_cast<llama_memory_hybrid *>(mem)) {
+        return mem_hybrid->get_mem_attn()->seq_keep_tree_path(seq_id, p0, nodes);
+    }
+
+    return false;
 }
