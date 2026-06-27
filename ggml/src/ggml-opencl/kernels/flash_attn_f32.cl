@@ -30,6 +30,18 @@
 #define FA_UNROLL _Pragma("unroll")
 #endif
 
+// The kernels are built with -cl-finite-math-only. On some older Adreno GPUs,
+// infinite operand can cause undefined behavior and miscompilation for exp.
+// Therefore, a large negative value is used instead.
+#define FA_M_INIT (-3.0e38f)
+
+// Drop full unroll at DK>=192 — Adreno compiler host-memory budget.
+#if DK >= 192
+#define FA_UNROLL
+#else
+#define FA_UNROLL _Pragma("unroll")
+#endif
+
 inline float get_alibi_slope(
     const float max_bias, const uint h, const uint n_head_log2, const float m0, const float m1
 ) {
