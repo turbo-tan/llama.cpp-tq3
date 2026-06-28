@@ -369,6 +369,14 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_F16)
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_Q8_0)
 
+    // Asymmetric standard K + turbo V (e.g. -ctk q8_0 -ctv turbo3)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,  GGML_TYPE_TURBO3_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q4_0, GGML_TYPE_TURBO3_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0, GGML_TYPE_TURBO3_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,  GGML_TYPE_TURBO4_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q4_0, GGML_TYPE_TURBO4_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0)
+
     GGML_ABORT("fatal error");
 }
 
@@ -530,6 +538,14 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     }
 
     if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0 && Q->ne[1] <= 4) {
+        return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
+    }
+
+    // Asymmetric turbo V (K != V type): turbo types have no GPU to_fp16 conversion,
+    // so the MMA_F16 tile path would dereference a null function pointer. Force VEC.
+    const bool asymm_turbo_v = (V->type == GGML_TYPE_TURBO3_0 || V->type == GGML_TYPE_TURBO4_0) &&
+                               K->type != V->type;
+    if (asymm_turbo_v) {
         return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
     }
 
