@@ -149,7 +149,7 @@ static int get_mmq_y_host(const int cc) {
 
 static constexpr __device__ int get_iter_k([[maybe_unused]] const ggml_type type) {
 #if defined(BLACKWELL_MMA_AVAILABLE)
-if (type == GGML_TYPE_NVFP4 || type == GGML_TYPE_MXFP4) {
+if (type == GGML_TYPE_NVFP4 || type == GGML_TYPE_MXFP4 || type == GGML_TYPE_TQ3_4S) {
     return MMQ_ITER_K_FP4;
 }
 #endif // defined(BLACKWELL_MMA_AVAILABLE)
@@ -268,7 +268,11 @@ static constexpr __host__ __device__ int mmq_get_mma_tile_x_k(ggml_type type) {
         case GGML_TYPE_IQ1_S:   return MMQ_MMA_TILE_X_K_Q8_0;
         case GGML_TYPE_IQ4_XS:  return MMQ_MMA_TILE_X_K_Q8_0;
         case GGML_TYPE_IQ4_NL:  return MMQ_MMA_TILE_X_K_Q8_0;
+#if defined(BLACKWELL_MMA_AVAILABLE)
+        case GGML_TYPE_TQ3_4S:  return MMQ_MMA_TILE_X_K_FP4;
+#else
         case GGML_TYPE_TQ3_4S:  return MMQ_MMA_TILE_X_K_Q8_0;
+#endif // defined(BLACKWELL_MMA_AVAILABLE)
         case GGML_TYPE_Q4_0_TQ: return MMQ_MMA_TILE_X_K_Q3_K;
         case GGML_TYPE_Q4_1_TQ: return MMQ_MMA_TILE_X_K_Q3_K;
         default:                return 0;
@@ -1006,8 +1010,8 @@ static __device__ __forceinline__ void vec_dot_fp4_fp4_mma(const int * __restric
                                                            const int * __restrict__ y,
                                                            float * __restrict__ sum,
                                                            const int k00) {
-    static_assert(type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4,
-                  "vec_dot_fp4_fp4_mma: type must be MXFP4 or NVFP4");
+    static_assert(type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4 || type == GGML_TYPE_TQ3_4S,
+                  "vec_dot_fp4_fp4_mma: type must be MXFP4, NVFP4, or TQ3_4S");
 
     typedef tile<16, 8, int>   tile_A;
     typedef tile<8, 8, int>    tile_B;
@@ -3595,6 +3599,66 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     }
 }
 
+#if defined(BLACKWELL_MMA_AVAILABLE)
+template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_tq3_4s_to_nvfp4(
+    const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
+    constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+                                          0.230106f,  0.725222f,  1.277503f,  1.988943f };
+    constexpr float e2m1_pos[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f};
+    constexpr int tpr = QK_NVFP4 / QK_NVFP4_SUB / 2;
+    const int warp = threadIdx.x / 32;
+    const int tid  = threadIdx.x % 32;
+    const int row  = warp * 2 + tid / 16;
+    if (row >= mmq_y || row > i_max) return;
+    auto decode_scale = [](uint8_t b) -> float {
+        return ldexpf(1.0f + (float)(b & 0x1f) / 32.0f, ((b >> 5) & 7) - 10);
+    };
+    auto e2m1_code = [&](float v) -> int {
+        float av = fabsf(v);
+        if (av < 0.042f) return 0;
+        int s = (v < 0.0f) ? 8 : 0;
+        int bi = 0;
+        float bd = fabsf(av - e2m1_pos[0]);
+        for (int k = 1; k < 8; k++) {
+            float d = fabsf(av - e2m1_pos[k]);
+            if (d < bd) { bd = d; bi = k; }
+        }
+        return s | bi;
+    };
+    const int kbx = kbx0 + tid % tpr;
+    const int idx = kbx * QK_NVFP4 + (tid / tpr) * QK_NVFP4_SUB;
+    const int bi  = idx / QK_TQ3_0;
+    const int sl  = (idx % QK_TQ3_0) / 8;
+    if (kbx * QK_NVFP4 >= stride) return;
+    const block_tq3_4s * bx = (const block_tq3_4s *)x + bi;
+    const uint8_t * qp = (const uint8_t *)bx->qs;
+    float sc[4];
+    for (int g = 0; g < 4; g++) sc[g] = decode_scale(bx->d[g]);
+    float fv[16];
+    for (int g = 0; g < 2; g++) {
+        int gi = sl + g;
+        if (gi >= 4) break;
+        int bo = (gi / 4) * 12 + (gi % 4) * 3;
+        uint32_t pk = (uint32_t)qp[bo] | ((uint32_t)qp[bo+1] << 8) | ((uint32_t)qp[bo+2] << 16);
+        for (int j = 0; j < 8; j++) fv[g*8+j] = tq3_centroids[(pk >> (j*3)) & 7] * sc[gi];
+    }
+    float am = 1e-10f;
+    for (int j = 0; j < 16; j++) { float a = fabsf(fv[j]); if (a > am) am = a; }
+    float sn = am / 12.0f;
+    uint8_t su = ggml_fp32_to_ue4m3(sn);
+    float si = 1.0f / ggml_ue4m3_to_fp32(su);
+    uint32_t * xu = (uint32_t *)x_tile;
+    xu[64 + kbx + (row * 0)] = get_int_b4((const uint8_t *)&su, 0);
+    uint8_t pk[8];
+    for (int j = 0; j < 16; j += 2) {
+        pk[j/2] = (uint8_t)((e2m1_code(fv[j+1] * si) << 4) | e2m1_code(fv[j] * si));
+    }
+    int qb = row * MMQ_MMA_TILE_X_K_NVFP4 + 8 * kbx;
+    xu[qb] = ((uint32_t*)pk)[0];
+    xu[qb+1] = ((uint32_t*)pk)[1];
+    __syncwarp();
+}
+#endif // defined(BLACKWELL_MMA_AVAILABLE)
 template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0_tq(
     const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
     constexpr int nwarps = mmq_get_nwarps_device();
@@ -3885,8 +3949,13 @@ struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_NVFP4> {
 template <int mmq_x, int mmq_y, bool need_check>
 struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_TQ3_4S> {
     static constexpr int              vdr          = VDR_Q8_0_Q8_1_MMQ;
+#ifdef BLACKWELL_MMA_AVAILABLE
+    static constexpr load_tiles_mmq_t load_tiles   = load_tiles_tq3_4s_to_nvfp4<mmq_y, need_check>;
+    static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_fp4_fp4_mma<mmq_x, mmq_y, GGML_TYPE_TQ3_4S>;
+#else
     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_tq3_4s<mmq_y, need_check>;
     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_q8_0_q8_1_mma<mmq_x, mmq_y, MMQ_Q8_1_DS_LAYOUT_D4>;
+#endif // BLACKWELL_MMA_AVAILABLE
     static constexpr vec_dot_mmq_t    vec_dot_dp4a = vec_dot_q8_0_q8_1_dp4a<mmq_x, mmq_y>;
 };
 
