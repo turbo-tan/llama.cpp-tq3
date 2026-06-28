@@ -296,24 +296,58 @@ typedef struct {
 } block_tq3_0;
 static_assert(sizeof(block_tq3_0) == sizeof(ggml_half) + QK_TQ3_0 * 3 / 8, "wrong tq3_0 block size/padding");
 
-// TurboQuant 3-bit KV cache: 2-bit PolarQuant + 1-bit sign
-#define QK_TURBO3 32
+// TurboQuant 3-bit KV cache: 3-bit PolarQuant via WHT rotation (no QJL)
+// Block size 128: one block per rotation group, eliminates redundant norms
+// The 3-bit index is split: lower 2 bits in qs[], upper 1 bit in signs[]
+#define QK_TURBO3 128
+#define QK_TURBO3_GROUP 128
+#define NL_TURBO3     (QK_TURBO3 / 16)
+#define NL_TURBO3_VEC (QK_TURBO3 / 4)
 typedef struct {
-    ggml_half norm;
-    uint8_t   qs[QK_TURBO3 / 4];
-    uint8_t   signs[QK_TURBO3 / 8];
-} block_turbo3_0;
-static_assert(sizeof(block_turbo3_0) == sizeof(ggml_half) + QK_TURBO3 / 4 + QK_TURBO3 / 8, "wrong turbo3_0 block size/padding");
+    ggml_half  norm;                    //  2 bytes: corrected L2 norm
+    uint8_t    qs[QK_TURBO3 / 4];      // 32 bytes: lower 2-bit indices (4 per byte)
+    uint8_t    signs[QK_TURBO3 / 8];   // 16 bytes: upper 1-bit of 3-bit index (8 per byte)
+} block_turbo3_0;                       // 50 bytes total
+static_assert(sizeof(block_turbo3_0) == sizeof(ggml_half) + QK_TURBO3/4 + QK_TURBO3/8, "wrong turbo3_0 block size/padding");
 
-// TurboQuant 4-bit KV cache: 3-bit PolarQuant + 1-bit QJL signs
+// TurboQuant 4-bit: 4-bit PolarQuant (16 optimal centroids, nibble packed)
+// TURBO4_USE_4BIT=1 (default): new 4-bit path, dropped dead rnorm (66B)
+// TURBO4_USE_4BIT=0: legacy 3-bit+QJL (68B)
+#ifndef TURBO4_USE_4BIT
+#  define TURBO4_USE_4BIT 1
+#endif
+
 #define QK_TURBO4 128
+
+#if TURBO4_USE_4BIT
 typedef struct {
-    ggml_half norm;
-    ggml_half rnorm;
-    uint8_t   qs[QK_TURBO4 * 3 / 8];
-    uint8_t   signs[QK_TURBO4 / 8];
-} block_turbo4_0;
-static_assert(sizeof(block_turbo4_0) == 2 * sizeof(ggml_half) + QK_TURBO4 * 3 / 8 + QK_TURBO4 / 8, "wrong turbo4_0 block size/padding");
+    ggml_half  norm;                    //  2 bytes
+    uint8_t    qs[QK_TURBO4 / 2];      // 64 bytes: 4-bit PolarQuant indices (nibble packed)
+} block_turbo4_0;                       // 66 bytes total (4.125 bpw)
+static_assert(sizeof(block_turbo4_0) == 66, "wrong turbo4_0 block size");
+#else
+typedef struct {
+    ggml_half  norm;
+    ggml_half  rnorm;
+    uint8_t    qs[QK_TURBO4 * 3 / 8];
+    uint8_t    signs[QK_TURBO4 / 8];
+} block_turbo4_0;                       // 68 bytes total (legacy 3-bit+QJL)
+static_assert(sizeof(block_turbo4_0) == 2*sizeof(ggml_half) + QK_TURBO4*3/8 + QK_TURBO4/8, "wrong turbo4_0 block size");
+#endif
+
+static_assert(QK_TURBO4 == 128, "turbo4 kernels assume QK_TURBO4 == 128");
+
+// TurboQuant 2-bit KV cache: 2-bit PolarQuant via WHT rotation
+// 4 centroids (Lloyd-Max for N(0, 1/128)): {-0.133462, -0.039994, 0.039994, 0.133462}
+#define QK_TURBO2 128
+#define QK_TURBO2_GROUP 128
+#define NL_TURBO2     (QK_TURBO2 / 16)
+#define NL_TURBO2_VEC (QK_TURBO2 / 4)
+typedef struct {
+    ggml_half  norm;                    //  2 bytes: corrected L2 norm
+    uint8_t    qs[QK_TURBO2 / 4];      // 32 bytes: 2-bit indices (4 per byte)
+} block_turbo2_0;                       // 34 bytes total
+static_assert(sizeof(block_turbo2_0) == sizeof(ggml_half) + QK_TURBO2/4, "wrong turbo2_0 block size/padding");
 
 // TurboQuant 3-bit with two half-block scales (4.0 bpw)
 typedef struct {

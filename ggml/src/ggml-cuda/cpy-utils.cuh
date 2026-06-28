@@ -251,107 +251,109 @@ static __device__ void quantize_f32_tq3_0_block(const float * __restrict__ x, bl
 }
 
 static __device__ void quantize_f32_turbo3_0_block(const float * __restrict__ x, block_turbo3_0 * __restrict__ y) {
+    static constexpr float centroids[8] = {
+        -0.190207f, -0.118786f, -0.066822f, -0.021663f,
+         0.021663f,  0.066822f,  0.118786f,  0.190207f
+    };
+
     float sum_sq = 0.0f;
-    for (int i = 0; i < QK_TURBO3; ++i) {
-        sum_sq += x[i] * x[i];
-    }
-
+    for (int i = 0; i < QK_TURBO3; ++i) sum_sq += x[i] * x[i];
     float norm = sqrtf(sum_sq);
-    if (norm < 1e-10f) {
-        norm = 1.0f;
-    }
-    y->norm = __float2half(norm);
-
+    if (norm < 1e-10f) norm = 1.0f;
     const float inv_norm = 1.0f / norm;
-    for (int i = 0; i < QK_TURBO3 / 4; ++i) {
-        y->qs[i] = 0;
-    }
-    for (int i = 0; i < QK_TURBO3 / 8; ++i) {
-        y->signs[i] = 0;
-    }
 
+    for (int i = 0; i < (int) sizeof(y->qs); ++i) y->qs[i] = 0;
+    for (int i = 0; i < (int) sizeof(y->signs); ++i) y->signs[i] = 0;
+
+    float recon_sq = 0.0f;
     for (int i = 0; i < QK_TURBO3; ++i) {
         const float v = x[i] * inv_norm;
-        uint8_t low2 = 0;
-        if (v > -0.086728f) {
-            low2 = 1;
-        }
-        if (v > 0.0f) {
-            low2 = 2;
-        }
-        if (v > 0.086728f) {
-            low2 = 3;
-        }
-
-        y->qs[i / 4] |= (low2 & 0x3) << ((i % 4) * 2);
-        if (v >= 0.0f) {
-            y->signs[i / 8] |= 1u << (i % 8);
-        }
+        uint8_t idx = 0;
+        if (v >= -0.154496f) idx = 1;
+        if (v >= -0.092804f) idx = 2;
+        if (v >= -0.044243f) idx = 3;
+        if (v >= 0.0f)       idx = 4;
+        if (v >= 0.044243f)  idx = 5;
+        if (v >= 0.092804f)  idx = 6;
+        if (v >= 0.154496f)  idx = 7;
+        const uint8_t low2 = idx & 0x3;
+        const uint8_t hi1  = (idx >> 2) & 0x1;
+        y->qs[i / 4] |= low2 << ((i % 4) * 2);
+        if (hi1) y->signs[i / 8] |= 1u << (i % 8);
+        recon_sq += centroids[idx] * centroids[idx];
     }
+
+    const float recon_norm = sqrtf(recon_sq);
+    y->norm = __float2half((recon_norm > 1e-10f) ? norm / recon_norm : norm);
 }
 
 static __device__ void quantize_f32_turbo4_0_block(const float * __restrict__ x, block_turbo4_0 * __restrict__ y) {
+    static constexpr float centroids[16] = {
+        -0.241529f, -0.182877f, -0.143016f, -0.111036f,
+        -0.083292f, -0.058050f, -0.034299f, -0.011349f,
+         0.011349f,  0.034299f,  0.058050f,  0.083292f,
+         0.111036f,  0.143016f,  0.182877f,  0.241529f
+    };
+
     float norm_sq = 0.0f;
-    float abs_sum = 0.0f;
-    for (int i = 0; i < QK_TURBO4; ++i) {
-        const float v = x[i];
-        norm_sq += v * v;
-        abs_sum += fabsf(v);
-    }
-
+    for (int i = 0; i < QK_TURBO4; ++i) norm_sq += x[i] * x[i];
     float norm = sqrtf(norm_sq);
-    if (norm < 1e-10f) {
-        norm = 1.0f;
-    }
-    y->norm = __float2half(norm);
-    y->rnorm = __float2half(abs_sum / (float) QK_TURBO4);
-
+    if (norm < 1e-10f) norm = 1.0f;
     const float inv_norm = 1.0f / norm;
-    for (int i = 0; i < (int) sizeof(y->qs); ++i) {
-        y->qs[i] = 0;
-    }
-    for (int i = 0; i < (int) sizeof(y->signs); ++i) {
-        y->signs[i] = 0;
-    }
 
+    for (int i = 0; i < (int) sizeof(y->qs); ++i) y->qs[i] = 0;
+
+    float recon_sq = 0.0f;
     for (int i = 0; i < QK_TURBO4; ++i) {
         const float v = x[i] * inv_norm;
         uint8_t idx = 0;
-        if (v > -0.154259f) {
-            idx = 1;
-        }
-        if (v > -0.091775f) {
-            idx = 2;
-        }
-        if (v > -0.043589f) {
-            idx = 3;
-        }
-        if (v > 0.0f) {
-            idx = 4;
-        }
-        if (v > 0.043589f) {
-            idx = 5;
-        }
-        if (v > 0.091775f) {
-            idx = 6;
-        }
-        if (v > 0.154259f) {
-            idx = 7;
-        }
-
-        const int bit_offset = i * 3;
-        const int byte_idx = bit_offset / 8;
-        const int bit_pos = bit_offset % 8;
-
-        y->qs[byte_idx] |= (idx & 0x7) << bit_pos;
-        if (bit_pos > 5 && byte_idx + 1 < (int) sizeof(y->qs)) {
-            y->qs[byte_idx + 1] |= (idx & 0x7) >> (8 - bit_pos);
-        }
-
-        if (v >= 0.0f) {
-            y->signs[i / 8] |= 1u << (i % 8);
-        }
+        if (v >= -0.212203f) idx = 1;
+        if (v >= -0.162947f) idx = 2;
+        if (v >= -0.127026f) idx = 3;
+        if (v >= -0.097164f) idx = 4;
+        if (v >= -0.070671f) idx = 5;
+        if (v >= -0.046174f) idx = 6;
+        if (v >= -0.022824f) idx = 7;
+        if (v >= 0.0f)       idx = 8;
+        if (v >= 0.022824f)  idx = 9;
+        if (v >= 0.046174f)  idx = 10;
+        if (v >= 0.070671f)  idx = 11;
+        if (v >= 0.097164f)  idx = 12;
+        if (v >= 0.127026f)  idx = 13;
+        if (v >= 0.162947f)  idx = 14;
+        if (v >= 0.212203f)  idx = 15;
+        y->qs[i / 2] |= (uint8_t)((idx & 0xF) << ((i % 2) * 4));
+        recon_sq += centroids[idx] * centroids[idx];
     }
+
+    const float recon_norm = sqrtf(recon_sq);
+    y->norm = __float2half((recon_norm > 1e-10f) ? norm / recon_norm : norm);
+}
+
+static __device__ void quantize_f32_turbo2_0_block(const float * __restrict__ x, block_turbo2_0 * __restrict__ y) {
+    static constexpr float centroids[4] = { -0.133462f, -0.039994f, 0.039994f, 0.133462f };
+
+    float norm_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO2; ++i) norm_sq += x[i] * x[i];
+    float norm = sqrtf(norm_sq);
+    if (norm < 1e-10f) norm = 1.0f;
+    const float inv_norm = 1.0f / norm;
+
+    for (int i = 0; i < (int) sizeof(y->qs); ++i) y->qs[i] = 0;
+
+    float recon_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO2; ++i) {
+        const float v = x[i] * inv_norm;
+        uint8_t idx = 0;
+        if (v >= -0.086728f) idx = 1;
+        if (v >= 0.0f)       idx = 2;
+        if (v >= 0.086728f)  idx = 3;
+        y->qs[i / 4] |= (uint8_t)((idx & 0x3) << ((i % 4) * 2));
+        recon_sq += centroids[idx] * centroids[idx];
+    }
+
+    const float recon_norm = sqrtf(recon_sq);
+    y->norm = __float2half((recon_norm > 1e-10f) ? norm / recon_norm : norm);
 }
 
 template<typename src_t, typename dst_t>

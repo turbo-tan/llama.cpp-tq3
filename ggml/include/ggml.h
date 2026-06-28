@@ -435,7 +435,8 @@ extern "C" {
         GGML_TYPE_TQ3_0      = 200,
         GGML_TYPE_TURBO3_0   = 201,
         GGML_TYPE_TURBO4_0   = 202,
-        GGML_TYPE_COUNT      = 203,
+        GGML_TYPE_TURBO2_0   = 203,
+        GGML_TYPE_COUNT      = 204,
     };
 
     // op hint

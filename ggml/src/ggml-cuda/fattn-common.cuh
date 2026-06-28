@@ -613,28 +613,15 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_tq3_0(
 
 template <typename block_t>
 static __device__ __forceinline__ float turbo4_decode_element(const block_t * blk, const int j) {
-    static constexpr float turbo_centroids[8] = {
-        -0.190685f, -0.117832f, -0.065717f, -0.021460f,
-         0.021460f,  0.065717f,  0.117832f,  0.190685f
+    static constexpr float turbo_centroids[16] = {
+        -0.241529f, -0.182877f, -0.143016f, -0.111036f,
+        -0.083292f, -0.058050f, -0.034299f, -0.011349f,
+         0.011349f,  0.034299f,  0.058050f,  0.083292f,
+         0.111036f,  0.143016f,  0.182877f,  0.241529f
     };
-    static constexpr float turbo_qjl_const = 1.2533141373155003f;
-
     const float norm = __half2float(blk->norm);
-    const float rnorm = __half2float(blk->rnorm);
-    const float qjl_scale = turbo_qjl_const / (float) QK_TURBO4 * rnorm;
-
-    const int bit_offset = j * 3;
-    const int byte_idx = bit_offset / 8;
-    const int bit_pos = bit_offset % 8;
-
-    uint16_t raw = (uint16_t) blk->qs[byte_idx];
-    if (byte_idx + 1 < (int) sizeof(blk->qs)) {
-        raw |= (uint16_t) blk->qs[byte_idx + 1] << 8;
-    }
-
-    const uint8_t idx = (raw >> bit_pos) & 0x7;
-    const float sign = (blk->signs[j / 8] & (1u << (j % 8))) ? 1.0f : -1.0f;
-    return (turbo_centroids[idx] + sign * qjl_scale) * norm;
+    const uint8_t idx = (blk->qs[j / 2] >> ((j % 2) * 4)) & 0xF;
+    return turbo_centroids[idx] * norm;
 }
 
 template <int D, int nthreads>
@@ -642,8 +629,8 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_turbo3_0(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8, const void * __restrict__ Q_ds_v) {
 
     static constexpr float turbo_centroids[8] = {
-        -0.190685f, -0.117832f, -0.065717f, -0.021460f,
-         0.021460f,  0.065717f,  0.117832f,  0.190685f
+        -0.190207f, -0.118786f, -0.066822f, -0.021663f,
+         0.021663f,  0.066822f,  0.118786f,  0.190207f
     };
     const block_turbo3_0 * K_turbo = (const block_turbo3_0 *) K_c;
     GGML_UNUSED(Q_q8);
@@ -728,8 +715,8 @@ static __device__ __forceinline__ void dequantize_V_tq3_0(const void * __restric
 template <typename T, int ne>
 static __device__ __forceinline__ void dequantize_V_turbo3_0(const void * __restrict__ vx, void * __restrict__ dst, const int64_t i0) {
     static constexpr float turbo_centroids[8] = {
-        -0.190685f, -0.117832f, -0.065717f, -0.021460f,
-         0.021460f,  0.065717f,  0.117832f,  0.190685f
+        -0.190207f, -0.118786f, -0.066822f, -0.021663f,
+         0.021663f,  0.066822f,  0.118786f,  0.190207f
     };
     const block_turbo3_0 * x = (const block_turbo3_0 *) vx;
     const int ib = i0 / QK_TURBO3;
