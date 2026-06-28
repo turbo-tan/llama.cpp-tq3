@@ -3645,8 +3645,8 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     float am = 1e-10f;
     for (int j = 0; j < 16; j++) { float a = fabsf(fv[j]); if (a > am) am = a; }
     float sn = am / 12.0f;
-    uint8_t su = ggml_fp32_to_ue4m3(sn);
-    float si = 1.0f / ggml_ue4m3_to_fp32(su);
+    uint8_t su = ggml_cuda_fp32_to_ue4m3(sn);
+    float si = 1.0f / ggml_cuda_ue4m3_to_fp32(su);
     uint32_t * xu = (uint32_t *)x_tile;
     xu[64 + kbx + (row * 0)] = get_int_b4((const uint8_t *)&su, 0);
     uint8_t pk[8];
