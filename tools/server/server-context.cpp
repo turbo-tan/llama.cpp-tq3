@@ -3524,8 +3524,8 @@ private:
                         has_mtmd = true;
                     }
 
-                    const auto & spans = slot.task->params.message_spans;
-                    const auto last_user_pos = spans.last_user_message_pos();
+                    const int32_t n_before_user = slot.task->params.n_before_user;
+                    const bool n_before_user_known = n_before_user > 0;
 
                     // add prompt tokens for processing in the current batch
                     while (slot.prompt.n_tokens() < slot.task->n_tokens() && batch.size() < n_batch) {
@@ -3554,8 +3554,10 @@ private:
 
                         slot.n_prompt_tokens_processed++;
 
-                        // stop the prompt batch exactly before the last user message
-                        if (last_user_pos >= 0 && slot.prompt.n_tokens() == last_user_pos) {
+                        // stop the prompt batch exactly before the latest user input, so a checkpoint
+                        // can be created after the previous messages
+                        if (n_before_user_known &&
+                            slot.prompt.n_tokens() == n_before_user) {
                             break;
                         }
 
@@ -3588,9 +3590,6 @@ private:
 
                     const bool near_prompt_end = slot.task->n_tokens() < slot.prompt.n_tokens() + n_ubatch;
 
-                    const bool is_user_start = last_user_pos >= 0 && n_tokens_start == last_user_pos;
-                    const bool is_last_user_message = n_tokens_start == last_user_pos;
-
                     // entire prompt has been processed
                     if (slot.prompt.n_tokens() == slot.task->n_tokens()) {
                         slot.state = SLOT_STATE_DONE_PROMPT;
@@ -3605,10 +3604,28 @@ private:
 
                         slot.init_sampler();
                     } else {
-                        // skip ordinary mid-prompt checkpoints, unless the batch starts a user
-                        // message or we are near the end of the prompt
-                        if (!is_user_start && !near_prompt_end) {
+                        // skip ordinary mid-prompt checkpoints
+                        if (!n_before_user_known && !near_prompt_end) {
                             do_checkpoint = false;
+                        }
+
+                        {
+                            const bool is_on_user =
+                                n_before_user_known &&
+                                n_tokens_start == n_before_user;
+
+                            const bool is_after_user =
+                                n_before_user_known &&
+                                n_tokens_start > n_before_user;
+
+                            const bool is_allowed =
+                                !n_before_user_known ||
+                                is_on_user ||
+                                (is_after_user && near_prompt_end);
+
+                            if (do_checkpoint && !is_allowed) {
+                                do_checkpoint = false;
+                            }
                         }
                     }
 
@@ -3624,8 +3641,8 @@ private:
                     // do not checkpoint after mtmd chunks
                     do_checkpoint = do_checkpoint && !has_mtmd;
 
-                    // no need to create checkpoints that are too close together, unless it's the last user message
-                    do_checkpoint = do_checkpoint && (slot.prompt.checkpoints.empty() || is_last_user_message || n_tokens_start > slot.prompt.checkpoints.back().n_tokens + params_base.checkpoint_min_step);
+                    // no need to create checkpoints that are too close together
+                    do_checkpoint = do_checkpoint && (slot.prompt.checkpoints.empty() || n_tokens_start > slot.prompt.checkpoints.back().n_tokens + params_base.checkpoint_min_step);
                     SLT_DBG(slot, "main/do_checkpoint = %s, pos_min = %d, pos_max = %d\n", do_checkpoint ? "yes" : "no", pos_min, pos_max);
 
                     // note: we create the checkpoint before calling llama_decode(), so the current batch is not
