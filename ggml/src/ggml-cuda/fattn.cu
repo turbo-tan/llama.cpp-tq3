@@ -412,13 +412,15 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
     const bool asymm_tq3_v = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0) &&
                               V->type == GGML_TYPE_TQ3_0;
 
-    // Asymmetric tq3_0 V has a native vector path. Keep it off the f16
-    // temp-buffer FA paths used by tile/MMA kernels.
-    if (asymm_tq3_v) {
+    // Asymmetric tq3_0 V has a native vector path. For decode (small Q batch),
+    // keep it on vector FA — the MMA/tile paths crashed on Blackwell in that mode.
+    // For PP (Q->ne[1] > 4), fall through to MMA: the crash was decode-specific
+    // and MMA FA gives ~40% better PP throughput at long contexts.
+    if (asymm_tq3_v && Q->ne[1] <= 4) {
         return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
     }
 
-    if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0) {
+    if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0 && Q->ne[1] <= 4) {
         return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
     }
 
