@@ -1658,7 +1658,11 @@ static bool ggml_cuda_kernel_can_use_pdl(const void * kernel) {
     }
 
     cudaFuncAttributes attr = {};
-    CUDA_CHECK(cudaFuncGetAttributes(&attr, kernel));
+    cudaError_t err = cudaFuncGetAttributes(&attr, kernel);
+    if (err != cudaSuccess) {
+        // Cannot determine PDL support (e.g. Blackwell + CUDA 13.0). Fall back to standard launch.
+        return false;
+    }
 
     // PDL device-side primitives are emitted only for PTX versions >= 90.
     // We have to guard on a loaded kernel's PTX version so a kernel forward-JIT'ed
