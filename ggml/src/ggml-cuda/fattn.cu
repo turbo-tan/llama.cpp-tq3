@@ -1,6 +1,7 @@
 #include "common.cuh"
 #include "fattn-common.cuh"
 #include "fattn-mma-f16.cuh"
+#include "fattn-mma-turbo.cuh"
 #include "fattn-tile.cuh"
 #include "fattn-vec.cuh"
 #include "fattn.cuh"
@@ -206,6 +207,72 @@ static void ggml_cuda_flash_attn_ext_mma_f16(ggml_backend_cuda_context & ctx, gg
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fused turbo MMA decode dispatch (mirrors the f16 switch helpers, type-parametric).
+// Only reached from the gate: K==V==turbo, D in {128,256}, Q->ne[1] <= 4, turing MMA.
+// ---------------------------------------------------------------------------
+
+template <int DKQ, int DV, ggml_type type_K, ggml_type type_V>
+static void ggml_cuda_flash_attn_ext_mma_turbo_dispatch_ncols1_8(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * Q = dst->src[0]; // ncols2 == 8: (1,8),(2,8),(4,8)
+    if (Q->ne[1] <= 1) { ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 1, 8, type_K, type_V>(ctx, dst); return; }
+    if (Q->ne[1] <= 2) { ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 2, 8, type_K, type_V>(ctx, dst); return; }
+    ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 4, 8, type_K, type_V>(ctx, dst);
+}
+
+template <int DKQ, int DV, ggml_type type_K, ggml_type type_V>
+static void ggml_cuda_flash_attn_ext_mma_turbo_dispatch_ncols1_4(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * Q = dst->src[0]; // ncols2 == 4: (2,4),(4,4)
+    if (Q->ne[1] <= 2) { ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 2, 4, type_K, type_V>(ctx, dst); return; }
+    ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 4, 4, type_K, type_V>(ctx, dst);
+}
+
+template <int DKQ, int DV, ggml_type type_K, ggml_type type_V>
+static void ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
+    const ggml_tensor * KQV  = dst;
+    const ggml_tensor * Q    = dst->src[0];
+    const ggml_tensor * K    = dst->src[1];
+    const ggml_tensor * mask = dst->src[3];
+
+    float max_bias = 0.0f;
+    memcpy(&max_bias, (const float *) KQV->op_params + 1, sizeof(float));
+
+    bool use_gqa_opt = mask && max_bias == 0.0f && K->ne[1] % FATTN_KQ_STRIDE == 0;
+    const ggml_tensor * tensors_gqa[] = {Q, K, dst->src[2], mask};
+    for (const ggml_tensor * t : tensors_gqa) {
+        if (t == nullptr || ggml_is_quantized(t->type)) { continue; }
+        for (size_t i = 1; i < GGML_MAX_DIMS; ++i) {
+            if (t->nb[i] % 16 != 0) { use_gqa_opt = false; break; }
+        }
+    }
+
+    GGML_ASSERT(Q->ne[2] % K->ne[2] == 0);
+    const int gqa_ratio = Q->ne[2] / K->ne[2];
+
+    if (use_gqa_opt && gqa_ratio > 4) {
+        ggml_cuda_flash_attn_ext_mma_turbo_dispatch_ncols1_8<DKQ, DV, type_K, type_V>(ctx, dst);
+        return;
+    }
+    if (use_gqa_opt && gqa_ratio > 2) {
+        ggml_cuda_flash_attn_ext_mma_turbo_dispatch_ncols1_4<DKQ, DV, type_K, type_V>(ctx, dst);
+        return;
+    }
+    if (use_gqa_opt && gqa_ratio > 1) {
+        ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 4, 2, type_K, type_V>(ctx, dst);
+        return;
+    }
+    ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 8, 1, type_K, type_V>(ctx, dst);
+}
+
+// Default ON. Set GGML_TURBO_MMA_FUSED=0 to fall back to VEC.
+static bool ggml_cuda_turbo_mma_fused() {
+    static const bool v = [] {
+        const char * s = getenv("GGML_TURBO_MMA_FUSED");
+        return !(s && s[0] == '0');
+    }();
+    return v;
+}
+
 #define FATTN_VEC_CASE(D, type_K, type_V)                                                                        \
     {                                                                                                            \
         const bool type_K_okay = K->type == (type_K) || (K->type == GGML_TYPE_F32 && (type_K) == GGML_TYPE_F16); \
@@ -403,12 +470,17 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
 #ifndef GGML_CUDA_FA_ALL_QUANTS
     if (K->type != V->type) {
+        auto is_kv_compat = [](ggml_type t) {
+            return t == GGML_TYPE_TURBO2_0 || t == GGML_TYPE_TURBO3_0 || t == GGML_TYPE_TURBO4_0
+                || t == GGML_TYPE_Q8_0 || t == GGML_TYPE_F16 || t == GGML_TYPE_BF16;
+        };
         const bool asymm_tq3_ok = (K->type == GGML_TYPE_Q8_0 || K->type == GGML_TYPE_Q4_0 ||
                                    K->type == GGML_TYPE_TURBO4_0) &&
                                   V->type == GGML_TYPE_TQ3_0;
-        if (!asymm_tq3_ok) {
+        if (!asymm_tq3_ok && !is_kv_compat(K->type) && !is_kv_compat(V->type)) {
             return BEST_FATTN_KERNEL_NONE;
         }
+        // tq3_0-V asymmetric path must stay on VEC (not MMA) — handled below
     }
 #endif // GGML_CUDA_FA_ALL_QUANTS
 
@@ -427,7 +499,13 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         case GGML_TYPE_BF16:
         case GGML_TYPE_TQ3_0:
         case GGML_TYPE_TURBO3_0:
+            if (K->ne[0] % 64 != 0) { return BEST_FATTN_KERNEL_NONE; }
+            break;
+        case GGML_TYPE_TURBO2_0:
+            if (K->ne[0] % 64 != 0) { return BEST_FATTN_KERNEL_NONE; }
+            break;
         case GGML_TYPE_TURBO4_0:
+            if (K->ne[0] % 64 != 0) { return BEST_FATTN_KERNEL_NONE; }
             break;
         default:
             return BEST_FATTN_KERNEL_NONE;
@@ -453,15 +531,6 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0 && Q->ne[1] <= 4) {
         return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
-    }
-
-    // Turbo3/4 K type: use vec FA for decode, MMA is not yet implemented for these types.
-    // Restrict to decode (Q <= 4) same as the turbo4+tq3_0 path.
-    if (K->type == GGML_TYPE_TURBO3_0 || K->type == GGML_TYPE_TURBO4_0) {
-        if (Q->ne[1] <= 4) {
-            return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
-        }
-        return BEST_FATTN_KERNEL_NONE;
     }
 
     // If Turing tensor cores are available, use them:
@@ -585,6 +654,37 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
 
 void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_set_device(ctx.device);
+
+    // Fused turbo MMA decode gate. Routes K==V==turbo, D in {128,256}, Q<=4, turing MMA
+    // onto the GQA-packed turbo MMA path (raw bytes → SRAM dequant, no f16 pre-conversion).
+    // Kill-switch: GGML_TURBO_MMA_FUSED=0.
+    {
+        const ggml_tensor * Q = dst->src[0];
+        const ggml_tensor * K = dst->src[1];
+        const ggml_tensor * V = dst->src[2];
+        const int cc = ggml_cuda_info().devices[ctx.device].cc;
+        const bool turbo_matched = (K->type == V->type &&
+            (K->type == GGML_TYPE_TURBO4_0 || K->type == GGML_TYPE_TURBO3_0 || K->type == GGML_TYPE_TURBO2_0));
+        if (ggml_cuda_turbo_mma_fused() && turbo_matched
+                && Q->ne[1] <= 4 && V->ne[0] == Q->ne[0] && turing_mma_available(cc)) {
+            if (Q->ne[0] == 128) {
+                switch (K->type) {
+                    case GGML_TYPE_TURBO4_0: ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2<128, 128, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO4_0>(ctx, dst); return;
+                    case GGML_TYPE_TURBO3_0: ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2<128, 128, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0>(ctx, dst); return;
+                    case GGML_TYPE_TURBO2_0: ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2<128, 128, GGML_TYPE_TURBO2_0, GGML_TYPE_TURBO2_0>(ctx, dst); return;
+                    default: break;
+                }
+            }
+            if (Q->ne[0] == 256) {
+                switch (K->type) {
+                    case GGML_TYPE_TURBO4_0: ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2<256, 256, GGML_TYPE_TURBO4_0, GGML_TYPE_TURBO4_0>(ctx, dst); return;
+                    case GGML_TYPE_TURBO3_0: ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2<256, 256, GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0>(ctx, dst); return;
+                    default: break;
+                }
+            }
+        }
+    }
+
     switch (ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst)) {
         case BEST_FATTN_KERNEL_NONE:
             GGML_ABORT("fatal error");
