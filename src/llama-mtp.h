@@ -13,5 +13,5 @@ struct llama_mtp {
 
     // Cross-ubatch carryover for the final hidden-state row.
     std::vector<float> pending_h;   // [n_embd]
-    llama_pos          pending_pos = -1;
+    std::vector<llama_pos> pending_pos;
 };

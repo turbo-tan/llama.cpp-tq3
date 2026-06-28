@@ -322,6 +322,18 @@ struct common_params_speculative_draft {
 
     bool backend_sampling = true; // offload draft sampling to the backend (default: on)
 
+    // MTP tree scout (empirically abandoned Jun 25, kept for compile)
+    bool    use_mtp_tree             = false;
+    bool    mtp_tree_target_verify   = false;
+    int32_t mtp_tree_nodes           = 1;
+    int32_t mtp_tree_depth           = 1;
+    float   mtp_tree_p_split         = 0.0f;
+    bool    mtp_tree_cost_aware      = false;
+    float   mtp_tree_cost_min_gain   = 1.05f;
+    float   mtp_tree_cost_min_tps    = 0.0f;
+    int32_t mtp_tree_cost_warmup     = 3;
+    int32_t mtp_tree_cost_cooldown   = 8;
+
     common_params_model mparams;
 
     llama_context * ctx_tgt = nullptr;

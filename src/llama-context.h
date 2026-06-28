@@ -278,6 +278,8 @@ private:
             int32_t              n_tokens,
             const llama_token  * tokens,
             const llama_pos    * positions,
+            const int32_t      * n_seq_id,
+            llama_seq_id * const * seq_ids,
             struct ggml_tensor * t_h_pre_norm,
             bool                 decode_mtp);
 

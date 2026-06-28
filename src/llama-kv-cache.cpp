@@ -563,6 +563,40 @@ void llama_kv_cache::seq_keep(llama_seq_id seq_id) {
         head = new_head;
     }
 }
+bool llama_kv_cache::seq_keep_tree_path(llama_seq_id seq_id, llama_pos p0, const std::vector<int32_t> & keep_nodes) {
+    if (other) {
+        auto * kv = dynamic_cast<llama_kv_cache *>(other);
+        return kv != nullptr && kv->seq_keep_tree_path(seq_id, p0, keep_nodes);
+    }
+
+    GGML_ASSERT(seq_id >= 0 && (size_t) seq_id < seq_to_stream.size());
+
+    auto & cells = v_cells[seq_to_stream[seq_id]];
+
+    for (uint32_t i = 0; i < cells.size(); ++i) {
+        if (cells.is_empty(i) || !cells.seq_has(i, seq_id)) {
+            continue;
+        }
+
+        if (cells.pos_get(i) < p0) {
+            continue;
+        }
+
+        const int32_t node = cells.tree_node_get(i);
+        if (node < 0) {
+            continue;
+        }
+
+        if (std::find(keep_nodes.begin(), keep_nodes.end(), node) != keep_nodes.end()) {
+            continue;
+        }
+
+        cells.seq_rm(i, seq_id);
+    }
+
+    return true;
+}
+
 
 void llama_kv_cache::seq_add(llama_seq_id seq_id, llama_pos p0, llama_pos p1, llama_pos shift) {
     // TODO: refactor [TAG_KV_CACHE_SHARE_CELLS]
