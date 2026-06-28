@@ -295,6 +295,13 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_TQ3_0, GGML_TYPE_TQ3_0)
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_TQ3_0)
 
+    // Turbo3/4 KV cache with f16 V
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_F16)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_Q8_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO3_0, GGML_TYPE_TURBO3_0)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_F16)
+    FATTN_VEC_CASES_ALL_D(GGML_TYPE_TURBO4_0, GGML_TYPE_Q8_0)
+
     GGML_ABORT("fatal error");
 }
 
@@ -446,6 +453,15 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 
     if (K->type == GGML_TYPE_TURBO4_0 && V->type == GGML_TYPE_TQ3_0 && Q->ne[1] <= 4) {
         return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
+    }
+
+    // Turbo3/4 K type: use vec FA for decode, MMA is not yet implemented for these types.
+    // Restrict to decode (Q <= 4) same as the turbo4+tq3_0 path.
+    if (K->type == GGML_TYPE_TURBO3_0 || K->type == GGML_TYPE_TURBO4_0) {
+        if (Q->ne[1] <= 4) {
+            return can_use_vector_kernel ? BEST_FATTN_KERNEL_VEC : BEST_FATTN_KERNEL_NONE;
+        }
+        return BEST_FATTN_KERNEL_NONE;
     }
 
     // If Turing tensor cores are available, use them:
