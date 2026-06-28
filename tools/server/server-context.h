@@ -7,6 +7,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <set>
 
@@ -108,6 +109,9 @@ struct server_context {
 
     // note: must be set before load_model() is called
     void set_state_callback(server_state_callback_t callback);
+
+    // register a callback that fires whenever the server enters or exits sleeping state
+    void on_sleeping_changed(std::function<void(bool)> callback);
 };
 
 

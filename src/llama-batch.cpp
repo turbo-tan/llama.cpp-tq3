@@ -876,13 +876,16 @@ struct llama_batch llama_batch_get_one(
 
 struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_t n_seq_max) {
     llama_batch batch = {
-        /*n_tokens =*/ 0,
-        /*tokens   =*/ nullptr,
-        /*embd     =*/ nullptr,
-        /*pos      =*/ nullptr,
-        /*n_seq_id =*/ nullptr,
-        /*seq_id   =*/ nullptr,
-        /*logits   =*/ nullptr,
+        /*n_tokens    =*/ 0,
+        /*tokens      =*/ nullptr,
+        /*embd        =*/ nullptr,
+        /*pos         =*/ nullptr,
+        /*n_seq_id    =*/ nullptr,
+        /*seq_id      =*/ nullptr,
+        /*logits      =*/ nullptr,
+        /*tree_node   =*/ nullptr,
+        /*tree_parent =*/ nullptr,
+        /*tree_aux    =*/ nullptr,
     };
 
     if (embd) {
@@ -900,6 +903,14 @@ struct llama_batch llama_batch_init(int32_t n_tokens_alloc, int32_t embd, int32_
     batch.seq_id[n_tokens_alloc] = nullptr;
 
     batch.logits   = (int8_t *)        malloc(sizeof(int8_t)         * n_tokens_alloc);
+    batch.tree_node   = (int32_t *)    malloc(sizeof(int32_t)        * n_tokens_alloc);
+    batch.tree_parent = (int32_t *)    malloc(sizeof(int32_t)        * n_tokens_alloc);
+    batch.tree_aux    = (int8_t  *)    malloc(sizeof(int8_t)         * n_tokens_alloc);
+    for (int i = 0; i < n_tokens_alloc; ++i) {
+        batch.tree_node[i]   = -1;
+        batch.tree_parent[i] = -1;
+        batch.tree_aux[i]    = 0;
+    }
 
     return batch;
 }
@@ -915,5 +926,8 @@ void llama_batch_free(struct llama_batch batch) {
         }
         free(batch.seq_id);
     }
-    if (batch.logits)   free(batch.logits);
+    if (batch.logits)      free(batch.logits);
+    if (batch.tree_node)   free(batch.tree_node);
+    if (batch.tree_parent) free(batch.tree_parent);
+    if (batch.tree_aux)    free(batch.tree_aux);
 }

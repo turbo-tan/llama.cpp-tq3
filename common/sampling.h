@@ -64,6 +64,9 @@ struct llama_sampler * common_sampler_get(const struct common_sampler * gsmpl);
 //
 llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first = false);
 
+// same as common_sampler_sample but skips llama_synchronize(); caller must ensure ctx is synced
+llama_token common_sampler_sample_no_sync(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first = false);
+
 // generalized version of common_sampler_sample
 //
 // will cross-reference the sampled tokens with a batch of draft tokens and accept those that match

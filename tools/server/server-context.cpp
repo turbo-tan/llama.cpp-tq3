@@ -2,6 +2,7 @@
 #include "server-chat.h"
 #include "server-common.h"
 #include "server-http.h"
+#include "server-schema.h"
 #include "server-task.h"
 #include "server-queue.h"
 
@@ -885,11 +886,6 @@ enum slot_state {
     SLOT_STATE_GENERATING,
 };
 
-enum server_state {
-    SERVER_STATE_LOADING_MODEL,  // Server is starting up, model not fully loaded yet
-    SERVER_STATE_READY,          // Server is ready and model is loaded
-};
-
 struct server_slot {
     int id;
 
@@ -897,7 +893,8 @@ struct server_slot {
     llama_context * ctx_dft = nullptr;
 
     // multimodal
-    mtmd_context * mctx = nullptr;
+    mtmd_context   * mctx   = nullptr;
+    mtmd::batch_ptr  mbatch = nullptr;
 
     // speculative decoding
     common_speculative * spec;
@@ -1173,6 +1170,84 @@ struct server_slot {
         SLT_DBG(*this, "max possible draft: %d\n", n_draft_max);
 
         return n_draft_max;
+    }
+
+    int process_mtmd_chunk(size_t idx, size_t & n_tokens_out) {
+        GGML_ASSERT(mctx);
+        const auto & input_tokens = task->tokens;
+        const auto & chunk = input_tokens.find_chunk(idx);
+        int32_t res = 0;
+
+        auto try_decode = [&]() -> int32_t {
+            if (mbatch) {
+                float * embd = mtmd_batch_get_output_embd(mbatch.get(), chunk.get());
+                if (embd) {
+                    void * cb_data = spec;
+                    static auto cb = [](llama_batch batch, void * user_data) {
+                        common_speculative * sp = static_cast<common_speculative *>(user_data);
+                        if (!common_speculative_process(sp, batch)) {
+                            return 1;
+                        }
+                        return 0;
+                    };
+
+                    llama_pos new_n_past;
+                    res = mtmd_helper_decode_image_chunk(
+                        mctx,
+                        ctx_tgt,
+                        chunk.get(),
+                        embd,
+                        prompt.tokens.pos_next(),
+                        id,
+                        llama_n_batch(ctx_tgt),
+                        &new_n_past,
+                        cb,
+                        cb_data
+                    );
+                    if (res != 0) {
+                        SLT_ERR(*this, "failed to decode mtmd chunk, idx = %zu, res = %d\n", idx, res);
+                        return -1;
+                    }
+                    n_tokens_out = mtmd_input_chunk_get_n_tokens(chunk.get());
+                    return 0;
+                }
+            }
+            return 1; // need to create & encode batch
+        };
+
+        res = try_decode();
+        if (res == 0) {
+            return 0;
+        }
+        if (res < 0) {
+            return res;
+        }
+
+        mbatch.reset(mtmd_batch_init(mctx));
+        res = mtmd_batch_add_chunk(mbatch.get(), chunk.get());
+        GGML_ASSERT(res == 0);
+
+        int n_added = 1;
+        size_t idx_cur = idx;
+        while (res == 0) {
+            auto [next_chunk, next_idx] = input_tokens.find_next_media_chunk(idx_cur);
+            if (next_chunk == nullptr) {
+                break;
+            }
+            res = mtmd_batch_add_chunk(mbatch.get(), next_chunk->get());
+            n_added += (res == 0 ? 1 : 0);
+            idx_cur = next_idx;
+        }
+
+        SLT_INF(*this, "encoding mtmd batch from idx = %zu, n_chunks = %d\n", idx, n_added);
+
+        res = mtmd_batch_encode(mbatch.get());
+        if (res != 0) {
+            SLT_ERR(*this, "failed to encode mtmd batch for chunk idx = %zu, res = %d\n", idx, res);
+            return -1;
+        }
+
+        return try_decode();
     }
 
     bool prepare_mtp_tree_inline(
@@ -1786,6 +1861,8 @@ public:
     server_queue    queue_tasks;
     server_response queue_results;
 
+    server_state_callback_t callback_state = [](server_state, json) -> void {};
+
     // note: chat_params must not be refreshed upon existing sleeping state
     server_chat_params chat_params;
 
@@ -1994,9 +2071,9 @@ private:
 
                     for (size_t j = 0; j < devs.size(); ++j) {
                         const size_t bytes =
-                            (measure_model_bytes ? dmd[j].mb.model : 0) +
-                            dmd[j].mb.context +
-                            dmd[j].mb.compute;
+                            (measure_model_bytes ? dmd[j].model : 0) +
+                            dmd[j].context +
+                            dmd[j].compute;
                         total += bytes;
                         for (size_t i = 0; i < tgt_devices.size(); i++) {
                             if (tgt_devices[i] == devs[j]) {
@@ -2318,10 +2395,8 @@ private:
         if (!params_base.model_alias.empty()) {
             // backward compat: use first alias as model name
             model_name = *params_base.model_alias.begin();
-        } else if (!params_base.model.name.empty()) {
-            model_name = params_base.model.name;
         } else {
-            // fallback: derive model name from file name
+            // derive model name from file path
             auto model_path = std::filesystem::path(params_base.model.path);
             model_name = model_path.filename().string();
         }
@@ -2375,11 +2450,9 @@ private:
             }
         }
 
-        // populate UI settings (from either new ui_config_json or deprecated webui_config_json)
+        // populate UI settings from ui_config_json
         {
-            const std::string & cfg = !params_base.ui_config_json.empty()
-                ? params_base.ui_config_json
-                : params_base.webui_config_json;
+            const std::string & cfg = params_base.ui_config_json;
             if (!cfg.empty()) {
                 try {
                     json json_settings = json::parse(cfg);
@@ -2896,7 +2969,7 @@ private:
             }
         } else {
             // TODO: optimize this with min-p optimization
-            std::vector<llama_token_data> cur = get_token_probabilities(ctx_tgt, idx);
+            std::vector<llama_token_data> cur = get_token_probabilities(ctx_tgt, idx, n_probs_request);
             const size_t max_probs = cur.size();
             const size_t n_probs = std::min(max_probs, n_probs_request);
 
@@ -4241,7 +4314,7 @@ private:
                     while (slot.prompt.n_tokens() < slot.task->n_tokens() && input_tokens[slot.prompt.n_tokens()] == LLAMA_TOKEN_NULL) {
                         // process the image
                         size_t n_tokens_out = 0;
-                        int32_t res = input_tokens.process_chunk(ctx_tgt, mctx, slot.prompt.n_tokens(), slot.prompt.tokens.pos_next(), slot.id, n_tokens_out);
+                        int32_t res = slot.process_mtmd_chunk(slot.prompt.n_tokens(), n_tokens_out);
                         if (res != 0) {
                             SLT_ERR(slot, "failed to process image, res = %d\n", res);
                             send_error(slot, "failed to process image", ERROR_TYPE_SERVER);
@@ -4249,16 +4322,8 @@ private:
                             continue;
                         }
 
-                        if (ctx_dft && llama_get_ctx_other(ctx_dft.get()) != ctx_tgt) {
-                            // TODO: in the future, figure out how to infuse target embeddings to the images
-                            //       for now, we skip this for simplicity
-                            //       maybe we simply need to call `common_speculative_process()` on the mtmd batches in the `process_chunk` above?
-                            //       [TAG_MTMD_DRAFT_PROCESSING]
-                            res = input_tokens.process_chunk(ctx_dft.get(), mctx, slot.prompt.n_tokens(), slot.prompt.tokens.pos_next(), slot.id, n_tokens_out);
-                            if (res != 0) {
-                                GGML_ABORT("failed to process multi-modal data on draft context\n");
-                            }
-                        }
+                        // TODO: infuse target embeddings into draft context for speculative mtmd
+                        // [TAG_MTMD_DRAFT_PROCESSING]
 
                         slot.n_prompt_tokens_processed += n_tokens_out;
 
@@ -4982,7 +5047,6 @@ server_context_meta server_context::get_meta() const {
         /* has_inp_audio          */ impl->chat_params.allow_audio,
         /* has_inp_video          */ impl->chat_params.allow_video,
         /* json_ui_settings       */ impl->json_ui_settings,
-        /* json_webui_settings    */ impl->json_webui_settings,  // Deprecated
         /* slot_n_ctx             */ impl->get_slot_n_ctx(),
         /* pooling_type           */ llama_pooling_type(impl->ctx_tgt),
 
@@ -5032,6 +5096,16 @@ struct server_res_generator : server_http_res {
         data = safe_json_to_str({{ "error", error_data }});
     }
 };
+
+void server_context::set_state_callback(server_state_callback_t callback) {
+    impl->callback_state = std::move(callback);
+    impl->queue_tasks.on_sleeping_state([this](bool sleeping) {
+        if (sleeping) {
+            impl->callback_state(SERVER_STATE_SLEEPING, {});
+        }
+        // for sleeping == false, event is emitted by load_model()
+    });
+}
 
 void server_context::on_sleeping_changed(std::function<void(bool)> callback) {
     impl->queue_tasks.on_sleeping_state(std::move(callback));
@@ -5138,7 +5212,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             task.id = rd.get_new_id();
 
             task.tokens = std::move(inputs[i]);
-            task.params = server_task::params_from_json_cmpl(
+            task.params = server_schema::eval_llama_cmpl_schema(
                     ctx_server.vocab,
                     params,
                     meta->slot_n_ctx,
@@ -5599,15 +5673,15 @@ void server_routes::init_routes() {
             { "ui",                           params.ui },
             { "ui_settings",                  meta->json_ui_settings },
             // Deprecated: use ui/ui_settings instead (kept for backward compat)
-            { "webui",                        params.webui },
-            { "webui_settings",               meta->json_webui_settings },
+            { "webui",                        params.ui },
+            { "webui_settings",               meta->json_ui_settings },
             { "chat_template",               tmpl_default },
             { "chat_template_caps",          meta->chat_template_caps },
             { "bos_token",                   meta->bos_token_str },
             { "eos_token",                   meta->eos_token_str },
             { "build_info",                  meta->build_info },
             { "is_sleeping",                 queue_tasks.is_sleeping() },
-            { "cors_proxy_enabled",          params.ui_mcp_proxy || params.webui_mcp_proxy },
+            { "cors_proxy_enabled",          params.ui_mcp_proxy },
         };
         if (params.use_jinja) {
             if (!tmpl_tools.empty()) {

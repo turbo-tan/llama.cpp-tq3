@@ -251,6 +251,11 @@ extern "C" {
         int32_t      *  n_seq_id;
         llama_seq_id ** seq_id;
         int8_t       *  logits;   // TODO: rename this to "output"
+
+        // MTP tree speculative decoding topology (optional; nullptr if not a tree batch)
+        int32_t      *  tree_node;    // node index for each token; -1 = non-tree token
+        int32_t      *  tree_parent;  // parent node index; -1 = root
+        int8_t       *  tree_aux;     // branch-only row flag (1 = branch, 0 = accepted/root)
     } llama_batch;
 
     enum llama_model_kv_override_type {

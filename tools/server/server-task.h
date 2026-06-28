@@ -92,6 +92,10 @@ struct task_params {
     // message spans for checkpointing
     common_chat_msg_spans message_spans;
 
+    // token count before the latest user message, used for checkpoint gating in pre_decode()
+    // 0 means unknown / not applicable
+    int32_t n_before_user = 0;
+
     // Embeddings
     int32_t embd_normalize = 2; // (-1=none, 0=max absolute int16, 1=taxicab, 2=Euclidean/L2, >2=p-norm)
 
