@@ -3554,8 +3554,8 @@ private:
 
                         slot.n_prompt_tokens_processed++;
 
-                        // stop the prompt batch exactly before a user message
-                        if (spans.is_user_start(slot.prompt.n_tokens())) {
+                        // stop the prompt batch exactly before the last user message
+                        if (last_user_pos >= 0 && slot.prompt.n_tokens() == last_user_pos) {
                             break;
                         }
 
@@ -3588,7 +3588,7 @@ private:
 
                     const bool near_prompt_end = slot.task->n_tokens() < slot.prompt.n_tokens() + n_ubatch;
 
-                    const bool is_user_start = spans.is_user_start(n_tokens_start);
+                    const bool is_user_start = last_user_pos >= 0 && n_tokens_start == last_user_pos;
                     const bool is_last_user_message = n_tokens_start == last_user_pos;
 
                     // entire prompt has been processed
