@@ -365,6 +365,7 @@ void ggml_cuda_mul_mat_q(
     // TODO: tighter pool buffer size vs q8 path
     const bool use_native_fp4 = blackwell_mma_available(cc) &&
         (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4 || use_tq3_4s_native_fp4);
+        (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4 || src0->type == GGML_TYPE_TQ3_4S);
     const ggml_type activation_fp4_type = src0->type == GGML_TYPE_MXFP4 ? GGML_TYPE_MXFP4 : GGML_TYPE_NVFP4;
 
     if (!ids) {
