@@ -4,6 +4,7 @@
 #include "vecdotq.cuh"
 #include "mma.cuh"
 
+#include <cfloat>
 #include <climits>
 #include <cstdint>
 
@@ -3602,61 +3603,110 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
 #if defined(BLACKWELL_MMA_AVAILABLE)
 template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_tq3_4s_to_nvfp4(
     const char * __restrict__ x, int * __restrict__ x_tile, const int kbx0, const int i_max, const int stride) {
+    constexpr int nwarps = mmq_get_nwarps_device();
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr int blocks_per_row = MMQ_ITER_K_FP4 / QK_NVFP4;
+    constexpr int rows_per_warp = warp_size / blocks_per_row;
     constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
                                           0.230106f,  0.725222f,  1.277503f,  1.988943f };
-    constexpr float e2m1_pos[8] = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 6.0f, 8.0f, 12.0f};
-    constexpr int tpr = QK_NVFP4 / QK_NVFP4_SUB / 2;
-    const int warp = threadIdx.x / 32;
-    const int tid  = threadIdx.x % 32;
-    const int row  = warp * 2 + tid / 16;
-    if (row >= mmq_y || row > i_max) return;
-    auto decode_scale = [](uint8_t b) -> float {
-        return ldexpf(1.0f + (float)(b & 0x1f) / 32.0f, ((b >> 5) & 7) - 10);
-    };
-    auto e2m1_code = [&](float v) -> int {
-        float av = fabsf(v);
-        if (av < 0.042f) return 0;
-        int s = (v < 0.0f) ? 8 : 0;
-        int bi = 0;
-        float bd = fabsf(av - e2m1_pos[0]);
-        for (int k = 1; k < 8; k++) {
-            float d = fabsf(av - e2m1_pos[k]);
-            if (d < bd) { bd = d; bi = k; }
+    constexpr int scale_offsets[5] = { 0, -1, 1, -2, 2 };
+
+    const auto decode_tq3_scale = [] __device__ (const uint8_t sb) {
+        if (sb == 0) {
+            return 0.0f;
         }
-        return s | bi;
+        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
+        return __uint_as_float(bits);
     };
-    const int kbx = kbx0 + tid % tpr;
-    const int idx = kbx * QK_NVFP4 + (tid / tpr) * QK_NVFP4_SUB;
-    const int bi  = idx / QK_TQ3_0;
-    const int sl  = (idx % QK_TQ3_0) / 8;
-    if (kbx * QK_NVFP4 >= stride) return;
-    const block_tq3_4s * bx = (const block_tq3_4s *)x + bi;
-    const uint8_t * qp = (const uint8_t *)bx->qs;
-    float sc[4];
-    for (int g = 0; g < 4; g++) sc[g] = decode_scale(bx->d[g]);
-    float fv[16];
-    for (int g = 0; g < 2; g++) {
-        int gi = sl + g;
-        if (gi >= 4) break;
-        int bo = (gi / 4) * 12 + (gi % 4) * 3;
-        uint32_t pk = (uint32_t)qp[bo] | ((uint32_t)qp[bo+1] << 8) | ((uint32_t)qp[bo+2] << 16);
-        for (int j = 0; j < 8; j++) fv[g*8+j] = tq3_centroids[(pk >> (j*3)) & 7] * sc[gi];
+
+    uint32_t * x_u32 = reinterpret_cast<uint32_t *>(x_tile);
+    uint32_t * x_sc = x_u32 + 2 * MMQ_TILE_NE_K;
+
+    const int kbx = threadIdx.x % blocks_per_row;
+    const int row_in_warp = threadIdx.x / blocks_per_row;
+    const block_tq3_4s * bxi_base = reinterpret_cast<const block_tq3_4s *>(x) + kbx0 + 2 * kbx;
+
+#pragma unroll
+    for (int i0 = 0; i0 < mmq_y; i0 += rows_per_warp * nwarps) {
+        int i = i0 + threadIdx.y * rows_per_warp + row_in_warp;
+
+        if constexpr (need_check) {
+            i = min(i, i_max);
+        }
+
+        const block_tq3_4s * bxi = bxi_base + i * stride;
+        const int row_base = i * MMQ_MMA_TILE_X_K_FP4;
+        const int q_base = row_base + 8 * kbx;
+        uint32_t packed_scales = 0;
+
+#pragma unroll
+        for (int sub = 0; sub < QK_NVFP4 / QK_NVFP4_SUB; ++sub) {
+            const block_tq3_4s * block = bxi + sub / 2;
+            const int group_base = (sub % 2) * 2;
+            float vals[QK_NVFP4_SUB];
+            float amax = 0.0f;
+
+#pragma unroll
+            for (int group = 0; group < 2; ++group) {
+                const int g = group_base + group;
+                const uint8_t * qp = block->qs + 3 * g;
+                const uint32_t packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
+                const float d = decode_tq3_scale(block->d[g]);
+#pragma unroll
+                for (int j = 0; j < 8; ++j) {
+                    const float value = tq3_centroids[(packed >> (3 * j)) & 7] * d;
+                    vals[8 * group + j] = value;
+                    amax = fmaxf(amax, fabsf(value));
+                }
+            }
+
+            const int first_scale_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
+            float best_error = FLT_MAX;
+            uint8_t scale_code = 0;
+            float scale = 0.0f;
+
+#pragma unroll
+            for (int candidate = 0; candidate < 5; ++candidate) {
+                const int test_code = first_scale_code + scale_offsets[candidate];
+                if (test_code < 0 || test_code > 0x7e) {
+                    continue;
+                }
+
+                const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
+                const float inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
+                float error = 0.0f;
+#pragma unroll
+                for (int j = 0; j < QK_NVFP4_SUB; ++j) {
+                    const uint8_t q = ggml_cuda_float_to_fp4_e2m1(vals[j], inv_scale);
+                    const float diff = fabsf(vals[j]) - fabsf(kvalues_mxfp4[q & 7]) * test_scale;
+                    error = fmaf(diff, diff, error);
+                }
+
+                if (error < best_error) {
+                    best_error = error;
+                    scale_code = (uint8_t) test_code;
+                    scale = test_scale;
+                }
+            }
+
+            const float inv_scale = scale > 0.0f ? 0.5f / scale : 0.0f;
+            uint32_t q0 = 0;
+            uint32_t q1 = 0;
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 4; ++j) {
+                q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 0],  inv_scale) << (8 * j);
+                q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 8],  inv_scale) << (8 * j + 4);
+                q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 4],  inv_scale) << (8 * j);
+                q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 12], inv_scale) << (8 * j + 4);
+            }
+
+            x_u32[q_base + 2 * sub + 0] = q0;
+            x_u32[q_base + 2 * sub + 1] = q1;
+            packed_scales |= (uint32_t) scale_code << (8 * sub);
+        }
+
+        x_sc[row_base + kbx] = packed_scales;
     }
-    float am = 1e-10f;
-    for (int j = 0; j < 16; j++) { float a = fabsf(fv[j]); if (a > am) am = a; }
-    float sn = am / 12.0f;
-    uint8_t su = ggml_cuda_fp32_to_ue4m3(sn);
-    float si = 1.0f / ggml_cuda_ue4m3_to_fp32(su);
-    uint32_t * xu = (uint32_t *)x_tile;
-    xu[64 + kbx + (row * 0)] = get_int_b4((const uint8_t *)&su, 0);
-    uint8_t pk[8];
-    for (int j = 0; j < 16; j += 2) {
-        pk[j/2] = (uint8_t)((e2m1_code(fv[j+1] * si) << 4) | e2m1_code(fv[j] * si));
-    }
-    int qb = row * MMQ_MMA_TILE_X_K_NVFP4 + 8 * kbx;
-    xu[qb] = ((uint32_t*)pk)[0];
-    xu[qb+1] = ((uint32_t*)pk)[1];
-    __syncwarp();
 }
 #endif // defined(BLACKWELL_MMA_AVAILABLE)
 template <int mmq_y, bool need_check> static __device__ __forceinline__ void load_tiles_q4_0_tq(
@@ -4109,7 +4159,8 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
 #if defined(BLACKWELL_MMA_AVAILABLE)
     // FP4 tile stores 8 blocks
-    constexpr int ne_block = (type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4) ? QK_K : 4 * QK8_1;
+    constexpr int ne_block =
+        (type == GGML_TYPE_MXFP4 || type == GGML_TYPE_NVFP4 || type == GGML_TYPE_TQ3_4S) ? QK_K : 4 * QK8_1;
 #else
     constexpr int ne_block = 4 * QK8_1;
 #endif  // defined(BLACKWELL_MMA_AVAILABLE)
