@@ -10,10 +10,13 @@
 
 class llama_dsv4_comp_state {
 public:
+<<<<<<< HEAD
     using stream_copy_info = llama_kv_cache::stream_copy_info;
 
     stream_copy_info sc_info;
 
+=======
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
     llama_dsv4_comp_state(
             const llama_model & model,
             bool            offload,
@@ -25,9 +28,13 @@ public:
             const char    * name,
         const llama_memory_i::layer_filter_cb & filter);
 
+<<<<<<< HEAD
     void clear(llama_seq_id seq_id, bool data);
     void seq_cp(llama_seq_id seq_id_src, llama_seq_id seq_id_dst);
     void apply_copies(const stream_copy_info & sc_info) const;
+=======
+    void clear(bool data);
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
 
     uint32_t get_ratio()    const;
     uint32_t get_state_size() const;
@@ -50,9 +57,12 @@ private:
 
         ggml_tensor * kv;
         ggml_tensor * score;
+<<<<<<< HEAD
 
         std::vector<ggml_tensor *> kv_stream;
         std::vector<ggml_tensor *> score_stream;
+=======
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
     };
 
     const uint32_t ratio;
@@ -76,8 +86,11 @@ private:
 // DSV4 uses a normal raw/SWA token cache plus compressed K-only block caches.
 // The compressed caches are storage only; DSV4-specific visibility and block
 // planning are handled by llama_kv_cache_dsv4_context / llm_graph_input_dsv4.
+<<<<<<< HEAD
 // FIXME: currently the cache only supports non-unified mode even if unified flag is passed
 // FIXME: we currently conflate token_pos and buffer contents. See https://github.com/ggml-org/llama.cpp/pull/25521#discussion_r3558173819
+=======
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
 
 class llama_kv_cache_dsv4 : public llama_memory_i {
 public:
@@ -157,7 +170,11 @@ private:
     std::unique_ptr<llama_dsv4_comp_state> hca_state;
     std::unique_ptr<llama_dsv4_comp_state> lid_state;
 
+<<<<<<< HEAD
     void clear_compressed(llama_seq_id seq_id, bool data);
+=======
+    void clear_compressed(bool data);
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
 };
 
 // DSV4 raw attention only uses the SWA half of kv_raw. The base half is kept
@@ -254,7 +271,10 @@ private:
 class llama_kv_cache_dsv4_context : public llama_memory_context_i {
 public:
     using slot_info_vec_t = llama_kv_cache::slot_info_vec_t;
+<<<<<<< HEAD
     using stream_copy_info = llama_kv_cache::stream_copy_info;
+=======
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
 
     struct comp_plan {
         // Per-ubatch recipe for updating compressor state, committing completed
@@ -301,10 +321,14 @@ public:
     llama_kv_cache_dsv4_context(
             llama_kv_cache_dsv4 * kv,
             llama_context * lctx,
+<<<<<<< HEAD
             bool optimize,
             stream_copy_info sc_info_csa,
             stream_copy_info sc_info_hca,
             stream_copy_info sc_info_lid);
+=======
+            bool optimize);
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
 
     llama_kv_cache_dsv4_context(
             llama_kv_cache_dsv4 * kv,
@@ -364,6 +388,7 @@ private:
     const std::unique_ptr<llama_kv_cache_dsv4_comp_context> ctx_hca;
     const std::unique_ptr<llama_kv_cache_dsv4_comp_context> ctx_lid;
 
+<<<<<<< HEAD
     llama_dsv4_comp_state * csa_state = nullptr;
     llama_dsv4_comp_state * hca_state = nullptr;
     llama_dsv4_comp_state * lid_state = nullptr;
@@ -371,6 +396,11 @@ private:
     stream_copy_info sc_info_csa;
     stream_copy_info sc_info_hca;
     stream_copy_info sc_info_lid;
+=======
+    const llama_dsv4_comp_state * csa_state = nullptr;
+    const llama_dsv4_comp_state * hca_state = nullptr;
+    const llama_dsv4_comp_state * lid_state = nullptr;
+>>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
 
     bool reserve_plans = false;
     mutable comp_plan reserve_plan_csa;
