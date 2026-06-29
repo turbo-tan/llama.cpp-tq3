@@ -4,6 +4,9 @@
 #include "mmid.cuh"
 #include "tq3-native.cuh"
 
+#include <cstdlib>
+#include <cstring>
+
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
         case GGML_TYPE_Q4_0:
@@ -75,6 +78,66 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
     }
 }
 
+static int ggml_cuda_tq3_4s_nvfp4_cache_override() {
+    const char * env = getenv("GGML_CUDA_TQ3_4S_NVFP4_CACHE");
+    if (env == nullptr || env[0] == '\0') {
+        return -1;
+    }
+
+    if (strcmp(env, "0") == 0 || strcmp(env, "off") == 0 || strcmp(env, "false") == 0 || strcmp(env, "no") == 0) {
+        return 0;
+    }
+
+    if (strcmp(env, "1") == 0 || strcmp(env, "on") == 0 || strcmp(env, "true") == 0 || strcmp(env, "yes") == 0) {
+        return 1;
+    }
+
+    return -1;
+}
+
+static bool ggml_cuda_tq3_4s_nvfp4_cache_has_budget(
+        ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const size_t cache_size) {
+    const int override = ggml_cuda_tq3_4s_nvfp4_cache_override();
+    if (override == 0) {
+        return false;
+    }
+    if (override == 1) {
+        return true;
+    }
+
+    constexpr size_t mib = 1024 * 1024;
+    size_t free_mem = 0;
+    size_t total_mem = 0;
+
+    ggml_cuda_set_device(ctx.device);
+    CUDA_CHECK(cudaMemGetInfo(&free_mem, &total_mem));
+
+    const size_t source_buffer_size = src0->buffer != nullptr ? ggml_backend_buffer_get_size(src0->buffer) : 0;
+    const size_t min_margin = 2ull * 1024 * mib;
+    const size_t fraction_margin = total_mem / 8;
+    const size_t margin = fraction_margin > min_margin ? fraction_margin : min_margin;
+    const bool fits_model_cache = source_buffer_size == 0 || total_mem > source_buffer_size + source_buffer_size + margin;
+    const bool fits_current_free = free_mem > cache_size + margin;
+    if (fits_model_cache && fits_current_free) {
+        return true;
+    }
+
+    static bool warned[GGML_CUDA_MAX_DEVICES] = {};
+    if (!warned[ctx.device]) {
+        constexpr double mib = 1024.0 * 1024.0;
+        GGML_LOG_WARN(
+            "%s: disabling TQ3_4S native NVFP4 cache on device %d: requested %.2f MiB, model buffer %.2f MiB, free %.2f MiB, total %.2f MiB. Set GGML_CUDA_TQ3_4S_NVFP4_CACHE=1 to force.\n",
+            __func__, ctx.device,
+            (double) cache_size / mib,
+            (double) source_buffer_size / mib,
+            (double) free_mem / mib,
+            (double) total_mem / mib);
+        warned[ctx.device] = true;
+    }
+
+    return false;
+}
+
 static const char * ggml_cuda_tq3_4s_nvfp4_cache_get(
         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const int64_t ne00, cudaStream_t stream) {
     GGML_ASSERT(src0->type == GGML_TYPE_TQ3_4S);
@@ -95,6 +158,10 @@ static const char * ggml_cuda_tq3_4s_nvfp4_cache_get(
     auto & entry = ctx.tq3_4s_nvfp4_cache[key];
     if (entry.data != nullptr && entry.size == cache_size && entry.src_size == src_size && entry.src_data == src0->data) {
         return (const char *) entry.data;
+    }
+
+    if (!ggml_cuda_tq3_4s_nvfp4_cache_has_budget(ctx, src0, cache_size)) {
+        return nullptr;
     }
 
     ggml_cuda_set_device(ctx.device);
@@ -162,11 +229,15 @@ void ggml_cuda_mul_mat_q(
     const bool use_stream_k = (GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA)
                             || GGML_CUDA_CC_IS_CDNA(cc);
 
-    const bool use_tq3_4s_native_fp4_cache = blackwell_mma_available(cc) &&
+    bool use_tq3_4s_native_fp4_cache = false;
+    const bool can_use_tq3_4s_native_fp4_cache = blackwell_mma_available(cc) &&
         src0->type == GGML_TYPE_TQ3_4S && src0->view_src == nullptr && ggml_is_contiguous(src0) && ne00 % QK_NVFP4 == 0;
-    if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
-        GGML_ASSERT(use_tq3_4s_native_fp4_cache);
-        src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
+    if (can_use_tq3_4s_native_fp4_cache) {
+        const char * cached_src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
+        if (cached_src0_d != nullptr) {
+            src0_d = cached_src0_d;
+            use_tq3_4s_native_fp4_cache = true;
+        }
     }
 
     // TODO: tighter pool buffer size vs q8 path
