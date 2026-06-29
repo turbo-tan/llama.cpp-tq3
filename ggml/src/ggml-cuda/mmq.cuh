@@ -4,7 +4,6 @@
 #include "vecdotq.cuh"
 #include "mma.cuh"
 
-#include <cfloat>
 #include <climits>
 #include <cstdint>
 
@@ -3609,7 +3608,6 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
     constexpr int rows_per_warp = warp_size / blocks_per_row;
     constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
                                           0.230106f,  0.725222f,  1.277503f,  1.988943f };
-    constexpr int scale_offsets[5] = { 0, -1, 1, -2, 2 };
 
     const auto decode_tq3_scale = [] __device__ (const uint8_t sb) {
         if (sb == 0) {
@@ -3660,38 +3658,26 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
                 }
             }
 
-            const int first_scale_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
-            float best_error = FLT_MAX;
-            uint8_t scale_code = 0;
-            float scale = 0.0f;
-
-#pragma unroll
-            for (int candidate = 0; candidate < 5; ++candidate) {
-                const int test_code = first_scale_code + scale_offsets[candidate];
-                if (test_code < 0 || test_code > 0x7e) {
-                    continue;
-                }
-
-                const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
-                const float inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
-                float error = 0.0f;
-#pragma unroll
-                for (int j = 0; j < QK_NVFP4_SUB; ++j) {
-                    const uint8_t q = ggml_cuda_float_to_fp4_e2m1(vals[j], inv_scale);
-                    const float diff = fabsf(vals[j]) - fabsf(kvalues_mxfp4[q & 7]) * test_scale;
-                    error = fmaf(diff, diff, error);
-                }
-
-                if (error < best_error) {
-                    best_error = error;
-                    scale_code = (uint8_t) test_code;
-                    scale = test_scale;
-                }
-            }
-
+            const uint8_t scale_code = ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
+            const float scale = ggml_cuda_ue4m3_to_fp32(scale_code);
             const float inv_scale = scale > 0.0f ? 0.5f / scale : 0.0f;
             uint32_t q0 = 0;
             uint32_t q1 = 0;
+#if CUDART_VERSION >= 12080
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 2; j += 2) {
+                const __nv_fp4x4_e2m1 packed(make_float4(
+                    vals[j + 0] * inv_scale, vals[j + 8] * inv_scale,
+                    vals[j + 1] * inv_scale, vals[j + 9] * inv_scale));
+                const char2 q = *reinterpret_cast<const char2 *>(&packed);
+                const uint32_t pair = (uint8_t) q.x | ((uint32_t) (uint8_t) q.y << 8);
+                if (j < 4) {
+                    q0 |= pair << (8 * j);
+                } else {
+                    q1 |= pair << (8 * (j - 4));
+                }
+            }
+#else
 #pragma unroll
             for (int j = 0; j < QK_NVFP4_SUB / 4; ++j) {
                 q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 0],  inv_scale) << (8 * j);
@@ -3699,6 +3685,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
                 q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 4],  inv_scale) << (8 * j);
                 q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 12], inv_scale) << (8 * j + 4);
             }
+#endif // CUDART_VERSION >= 12080
 
             x_u32[q_base + 2 * sub + 0] = q0;
             x_u32[q_base + 2 * sub + 1] = q1;
