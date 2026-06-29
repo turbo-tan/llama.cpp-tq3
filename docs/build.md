@@ -174,6 +174,33 @@ cmake -B build -DGGML_CUDA=ON
 cmake --build build --config Release
 ```
 
+#### Windows CUDA builds
+
+On Windows, build from a Visual Studio developer environment so that `cl.exe`, `link.exe`, the Windows SDK, `cmake`, and `ninja` are all visible. For example, open "x64 Native Tools Command Prompt for VS 2022" or run `vcvars64.bat` before configuring.
+
+```cmd
+call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+set "PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin;%PATH%"
+
+cmake -S . -B build-cuda-win -G Ninja ^
+  -DGGML_CUDA=ON ^
+  -DGGML_CUDA_FA=ON ^
+  -DCMAKE_CUDA_ARCHITECTURES=120 ^
+  -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cuda-win --config Release
+```
+
+For Blackwell GPUs, CUDA 12.8 or newer is required. Passing `-DCMAKE_CUDA_ARCHITECTURES=120` is accepted; the CUDA CMake logic rewrites `120` to the architecture-specific `120a` form required for native Blackwell FP4 instructions. To verify the generated build, check that `build.ninja` contains `compute_120a` and `sm_120a`.
+
+When running from a shell or service, make sure both the build output directory and the CUDA `bin` directory are on `PATH`, otherwise the CUDA backend DLLs may not load and the program will silently run CPU-only:
+
+```cmd
+set "PATH=C:\path\to\llama.cpp\build-cuda-win\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.8\bin;%PATH%"
+build-cuda-win\bin\llama-server.exe --model model.gguf -ngl 99
+```
+
+The startup log should list a CUDA device and include CUDA backend features such as `BLACKWELL_NATIVE_FP4` on supported Blackwell builds.
+
 ### Non-Native Builds
 
 By default llama.cpp will be built for the hardware that is connected to the system at that time.
