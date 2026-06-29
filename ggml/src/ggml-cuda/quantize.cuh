@@ -39,3 +39,5 @@ void quantize_mmq_fp4_cuda(const float *   x,
                              int64_t         ne2,
                              int64_t         ne3,
                              cudaStream_t    stream);
+
+void quantize_tq3_4s_to_nvfp4_cuda(const void * x, void * y, int64_t ne00, int64_t nrows, cudaStream_t stream);

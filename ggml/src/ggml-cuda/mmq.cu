@@ -75,6 +75,46 @@ static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, con
     }
 }
 
+static const char * ggml_cuda_tq3_4s_nvfp4_cache_get(
+        ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const int64_t ne00, cudaStream_t stream) {
+    GGML_ASSERT(src0->type == GGML_TYPE_TQ3_4S);
+    GGML_ASSERT(src0->view_src == nullptr);
+    GGML_ASSERT(ggml_is_contiguous(src0));
+    GGML_ASSERT(ne00 % QK_NVFP4 == 0);
+
+    const int64_t nrows = src0->ne[1] * src0->ne[2] * src0->ne[3];
+    const int64_t tq_blocks_per_row = ne00 / QK_TQ3_0;
+    const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
+    GGML_ASSERT(tq_blocks_per_row == 2 * nv_blocks_per_row);
+
+    const size_t src_size = (size_t) nrows * tq_blocks_per_row * sizeof(block_tq3_4s);
+    const size_t cache_size = (size_t) nrows * nv_blocks_per_row * sizeof(block_nvfp4);
+    const void * key = src0;
+
+    std::lock_guard<std::mutex> lock(ctx.tq3_4s_nvfp4_cache_mutex);
+    auto & entry = ctx.tq3_4s_nvfp4_cache[key];
+    if (entry.data != nullptr && entry.size == cache_size && entry.src_size == src_size && entry.src_data == src0->data) {
+        return (const char *) entry.data;
+    }
+
+    ggml_cuda_set_device(ctx.device);
+    if (entry.data != nullptr) {
+        CUDA_CHECK(cudaFree(entry.data));
+        entry = {};
+    }
+
+    CUDA_CHECK(cudaMalloc(&entry.data, cache_size));
+    entry.size = cache_size;
+    entry.src_size = src_size;
+    entry.src_data = src0->data;
+
+    quantize_tq3_4s_to_nvfp4_cuda(src0->data, entry.data, ne00, nrows, stream);
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    return (const char *) entry.data;
+}
+
 void ggml_cuda_mul_mat_q(
         ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids, ggml_tensor * dst) {
     GGML_ASSERT(        src1->type == GGML_TYPE_F32);
@@ -122,9 +162,16 @@ void ggml_cuda_mul_mat_q(
     const bool use_stream_k = (GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA)
                             || GGML_CUDA_CC_IS_CDNA(cc);
 
+    const bool use_tq3_4s_native_fp4_cache = blackwell_mma_available(cc) &&
+        src0->type == GGML_TYPE_TQ3_4S && src0->view_src == nullptr && ggml_is_contiguous(src0) && ne00 % QK_NVFP4 == 0;
+    if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
+        GGML_ASSERT(use_tq3_4s_native_fp4_cache);
+        src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
+    }
+
     // TODO: tighter pool buffer size vs q8 path
     const bool use_native_fp4 = blackwell_mma_available(cc) &&
-        (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4 || src0->type == GGML_TYPE_TQ3_4S);
+        (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4 || use_tq3_4s_native_fp4_cache);
     const ggml_type activation_fp4_type = src0->type == GGML_TYPE_MXFP4 ? GGML_TYPE_MXFP4 : GGML_TYPE_NVFP4;
 
     if (!ids) {

@@ -610,6 +610,16 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     std::unique_lock<std::mutex> lock(ggml_cuda_lock);
     ggml_cuda_lock_cv.wait(lock, []{ return ggml_cuda_lock_counter.load(std::memory_order_relaxed) == 0; });
 
+    if (!tq3_4s_nvfp4_cache.empty()) {
+        ggml_cuda_set_device(device);
+        for (auto & it : tq3_4s_nvfp4_cache) {
+            if (it.second.data != nullptr) {
+                CUDA_CHECK(cudaFree(it.second.data));
+            }
+        }
+        tq3_4s_nvfp4_cache.clear();
+    }
+
     if (copy_event != nullptr) {
         CUDA_CHECK(cudaEventDestroy(copy_event));
     }

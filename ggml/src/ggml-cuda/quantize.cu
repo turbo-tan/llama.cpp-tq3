@@ -170,6 +170,124 @@ static __global__ void quantize_mmq_nvfp4(
 
 }
 
+static __global__ void quantize_tq3_4s_to_nvfp4(
+        const block_tq3_4s * __restrict__ x, block_nvfp4 * __restrict__ y,
+        const int64_t blocks_per_row, const int64_t nv_blocks_per_row, const int64_t nrows) {
+#if defined(BLACKWELL_MMA_AVAILABLE)
+    constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+                                          0.230106f,  0.725222f,  1.277503f,  1.988943f };
+    constexpr int scale_offsets[5] = { 0, -1, 1, -2, 2 };
+
+    const auto decode_tq3_scale = [] __device__ (const uint8_t sb) {
+        if (sb == 0) {
+            return 0.0f;
+        }
+        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
+        return __uint_as_float(bits);
+    };
+
+    const int64_t idx = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    const int64_t nblocks = nv_blocks_per_row * nrows;
+    if (idx >= nblocks) {
+        return;
+    }
+
+    const int64_t row = idx / nv_blocks_per_row;
+    const int64_t col = idx - row * nv_blocks_per_row;
+    const block_tq3_4s * src = x + row * blocks_per_row + 2 * col;
+    block_nvfp4 * dst = y + idx;
+
+#pragma unroll
+    for (int sub = 0; sub < QK_NVFP4 / QK_NVFP4_SUB; ++sub) {
+        const block_tq3_4s * block = src + sub / 2;
+        const int group_base = (sub % 2) * 2;
+        float vals[QK_NVFP4_SUB];
+        float amax = 0.0f;
+
+#pragma unroll
+        for (int group = 0; group < 2; ++group) {
+            const int g = group_base + group;
+            const uint8_t * qp = block->qs + 3 * g;
+            const uint32_t packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
+            const float d = decode_tq3_scale(block->d[g]);
+#pragma unroll
+            for (int j = 0; j < 8; ++j) {
+                const float value = tq3_centroids[(packed >> (3 * j)) & 7] * d;
+                vals[8 * group + j] = value;
+                amax = fmaxf(amax, fabsf(value));
+            }
+        }
+
+        const int first_scale_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
+        float best_error = FLT_MAX;
+        uint8_t scale_code = 0;
+        uint32_t q0 = 0;
+        uint32_t q1 = 0;
+
+#pragma unroll
+        for (int candidate = 0; candidate < 5; ++candidate) {
+            const int test_code = first_scale_code + scale_offsets[candidate];
+            if (test_code < 0 || test_code > 0x7e) {
+                continue;
+            }
+
+            const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
+            const float inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
+            uint32_t candidate_q0 = 0;
+            uint32_t candidate_q1 = 0;
+#if CUDART_VERSION >= 12080
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 2; j += 2) {
+                const __nv_fp4x4_e2m1 packed(make_float4(
+                    vals[j + 0] * inv_scale, vals[j + 8] * inv_scale,
+                    vals[j + 1] * inv_scale, vals[j + 9] * inv_scale));
+                const char2 q = *reinterpret_cast<const char2 *>(&packed);
+                const uint32_t pair = (uint8_t) q.x | ((uint32_t) (uint8_t) q.y << 8);
+                if (j < 4) {
+                    candidate_q0 |= pair << (8 * j);
+                } else {
+                    candidate_q1 |= pair << (8 * (j - 4));
+                }
+            }
+#else
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 4; ++j) {
+                candidate_q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 0],  inv_scale) << (8 * j);
+                candidate_q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 8],  inv_scale) << (8 * j + 4);
+                candidate_q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 4],  inv_scale) << (8 * j);
+                candidate_q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 12], inv_scale) << (8 * j + 4);
+            }
+#endif // CUDART_VERSION >= 12080
+
+            float error = 0.0f;
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 2; ++j) {
+                const uint32_t packed = j < 4 ? candidate_q0 : candidate_q1;
+                const uint8_t q = packed >> (8 * (j % 4));
+                const float diff0 = fabsf(vals[j]) - fabsf(kvalues_mxfp4[q & 7]) * test_scale;
+                const float diff1 = fabsf(vals[j + 8]) - fabsf(kvalues_mxfp4[(q >> 4) & 7]) * test_scale;
+                error = fmaf(diff0, diff0, error);
+                error = fmaf(diff1, diff1, error);
+            }
+
+            if (error < best_error) {
+                best_error = error;
+                scale_code = (uint8_t) test_code;
+                q0 = candidate_q0;
+                q1 = candidate_q1;
+            }
+        }
+
+        uint32_t * dst_qs = reinterpret_cast<uint32_t *>(dst->qs);
+        dst_qs[2 * sub + 0] = q0;
+        dst_qs[2 * sub + 1] = q1;
+        dst->d[sub] = scale_code;
+    }
+#else
+    NO_DEVICE_CODE;
+#endif // defined(BLACKWELL_MMA_AVAILABLE)
+}
+
 // quantize values in the format mxfp4 is stored which is interleaved nibbles
 // i.e. a block a0-a31 is represented as a0a16,a1a17 ...a15a31
 static __global__ void quantize_mmq_mxfp4(const float * __restrict__ x,
@@ -447,4 +565,18 @@ void quantize_mmq_fp4_cuda(
 
         quantize_mmq_mxfp4<<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2);
     }
+}
+
+void quantize_tq3_4s_to_nvfp4_cuda(const void * x, void * y, const int64_t ne00, const int64_t nrows, cudaStream_t stream) {
+    GGML_ASSERT(ne00 % QK_NVFP4 == 0);
+    GGML_ASSERT(nrows > 0);
+
+    const int64_t blocks_per_row = ne00 / QK_TQ3_0;
+    const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
+    const int64_t nblocks = nv_blocks_per_row * nrows;
+
+    constexpr int block_size = 256;
+    const dim3 num_blocks((nblocks + block_size - 1) / block_size, 1, 1);
+    quantize_tq3_4s_to_nvfp4<<<num_blocks, block_size, 0, stream>>>(
+        (const block_tq3_4s *) x, (block_nvfp4 *) y, blocks_per_row, nv_blocks_per_row, nrows);
 }
