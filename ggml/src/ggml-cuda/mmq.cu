@@ -140,6 +140,10 @@ void ggml_cuda_mul_mat_q(
     const bool use_native_fp4 = blackwell_mma_available(cc) && (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4);
     const size_t y_block_size       = use_native_fp4 ? sizeof(block_fp4_mmq) : sizeof(block_q8_1_mmq);
     const size_t y_values_per_block = use_native_fp4 ? QK_FP4_MMQ            : QK8_1_MMQ;
+    // TODO: tighter pool buffer size vs q8 path
+    const bool use_native_fp4 = blackwell_mma_available(cc) &&
+        (src0->type == GGML_TYPE_MXFP4 || src0->type == GGML_TYPE_NVFP4 || src0->type == GGML_TYPE_TQ3_4S);
+    const ggml_type activation_fp4_type = src0->type == GGML_TYPE_MXFP4 ? GGML_TYPE_MXFP4 : GGML_TYPE_NVFP4;
 
     if (!ids) {
         const size_t nbytes_src1_q8_1 = ne13*ne12 * ne11*ne10_padded * y_block_size/y_values_per_block +
@@ -163,9 +167,10 @@ void ggml_cuda_mul_mat_q(
                 ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
                 src1_quant = src1_rot.get();
             }
-            if (use_native_mxfp4) {
+            if (use_native_fp4) {
                 static_assert(sizeof(block_fp4_mmq) == 4 * sizeof(block_q8_1));
-                quantize_mmq_fp4_cuda(src1_quant, nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded,
+                quantize_mmq_fp4_cuda(src1_quant, nullptr, src1_q8_1.get(), activation_fp4_type,
+                                      ne10, s11, s12, s13, ne10_padded,
                                       ne11, ne12, ne13, stream);
 
             } else {
@@ -178,6 +183,9 @@ void ggml_cuda_mul_mat_q(
         // Stride depends on quantization format
         const int64_t s12 = use_native_fp4 ?
                                 ne11 * ne10_padded * sizeof(block_fp4_mmq) / (QK_FP4_MMQ * sizeof(int)) :
+                                ne11 * ne10_padded * sizeof(block_fp4_mmq) /
+                                    (8 * QK_MXFP4 * sizeof(int))  // block_fp4_mmq holds 256 values (8 blocks of 32)
+                                :
                                 ne11 * ne10_padded * sizeof(block_q8_1) / (QK8_1 * sizeof(int));
         const int64_t s13 = ne12*s12;
 
@@ -257,6 +265,9 @@ void ggml_cuda_mul_mat_q(
         } else if (dedup_bcast) {
             quantize_scatter_mmq_q8_1_cuda(src1_d, ids_src1.get(), src1_q8_1.get(), src0->type, ne10,
                                     /*stride_token=*/s12, ne10_padded, ne12, ne11_flat, n_expert_used, stream);
+            quantize_mmq_fp4_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), activation_fp4_type,
+                                  ne10, s11, s12, s13,
+                                  ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
         } else {
             quantize_mmq_q8_1_cuda(src1_quant, ids_src1.get(), src1_q8_1.get(), src0->type, ne10, s11, s12, s13,
                                    ne10_padded, ne11_flat, ne12_flat, ne13_flat, stream);
@@ -267,6 +278,8 @@ void ggml_cuda_mul_mat_q(
     static_assert(QK_FP4_MMQ == 8 * QK_MXFP4, "QK_FP4_MMQ needs to be 8 * QK_MXFP4");
     const int64_t s12 = use_native_fp4 ? ne11 * ne10_padded * sizeof(block_fp4_mmq) / (QK_FP4_MMQ * sizeof(int)) :
                                          ne11 * ne10_padded * sizeof(block_q8_1) / (QK8_1 * sizeof(int));
+    const int64_t s12 = use_native_fp4 ? ne11 * ne10_padded * sizeof(block_fp4_mmq) / (8 * QK_MXFP4 * sizeof(int)) :
+                                        ne11 * ne10_padded * sizeof(block_q8_1) / (QK8_1 * sizeof(int));
     const int64_t s13 = ne12*s12;
 
     // Note that ne02 is used instead of ne12 because the number of y channels determines the z dimension of the CUDA grid.
