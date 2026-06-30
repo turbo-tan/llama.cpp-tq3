@@ -12,6 +12,56 @@
 
 LLM inference in C/C++
 
+## TurboQuant TQ3_4S Blackwell FP4
+
+This fork includes TurboQuant TQ3_4S CUDA paths. On Blackwell GPUs, the prompt
+prefill path can map TQ3_4S blocks to FP4 tiles at runtime and use Blackwell
+tensor cores. The GGUF stays TQ3_4S on disk; the FP4 form is a runtime compute
+path.
+
+Build flags:
+
+```sh
+# RTX 5060 Ti / sm_120
+cmake -S . -B build-sm120 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=ON \
+  -DCMAKE_CUDA_ARCHITECTURES=120
+
+# GB10 / DGX Spark / sm_121
+cmake -S . -B build-sm121 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_CUDA=ON \
+  -DCMAKE_CUDA_ARCHITECTURES=121
+```
+
+Runtime flags:
+
+```sh
+# Fast prompt path
+GGML_CUDA_TQ3_4S_FP4=1
+GGML_CUDA_TQ3_4S_FP4_CACHE=1
+
+# Lower VRAM mode
+GGML_CUDA_TQ3_4S_FP4_CACHE=0
+GGML_CUDA_TQ3_4S_FP4_TRANSIENT=1
+
+# Disable the FP4 path
+GGML_CUDA_TQ3_4S_FP4=0
+```
+
+Recommended 27B MTP server settings:
+
+```sh
+llama-server \
+  -m /path/to/Qwen3.6-27B-MTP-TQ3_4S.gguf \
+  -ngl 99 -fa on -ctk q8_0 -ctv tq3_0 \
+  --spec-type draft-mtp \
+  --spec-draft-n-min 1 \
+  --spec-draft-n-max 2 \
+  --spec-draft-p-min 0.0
+```
+
 ## Recent API changes
 
 - [Changelog for `libllama` API](https://github.com/ggml-org/llama.cpp/issues/9289)
