@@ -500,13 +500,15 @@ void ggml_cuda_op_mul_mat_q(
     GGML_UNUSED_VARS(src1, dst, src1_ddf_i, src1_padded_row_size);
 }
 
-bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t n_experts) {
+bool ggml_cuda_should_use_mmq(const ggml_tensor * src0, int cc, int64_t ne11, int64_t n_experts) {
 #ifdef GGML_CUDA_FORCE_CUBLAS
     return false;
 #endif // GGML_CUDA_FORCE_CUBLAS
 
+    const ggml_type type = src0->type;
     if (type == GGML_TYPE_TQ3_4S && blackwell_mma_available(cc)) {
         return ggml_cuda_tq3_4s_fp4_enabled() &&
+            ggml_cuda_tq3_4s_fp4_tensor_enabled(src0->name) &&
             n_experts == 0 &&
             ne11 >= tq3_4s_native_fp4_min_cols;
     }
