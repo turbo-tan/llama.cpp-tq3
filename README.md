@@ -64,7 +64,6 @@ llama-server \
 
 Prompt-speed chart:
 `docs/turboquant/tq3_4s_fp4_blackwell.html`.
-
 ## Recent API changes
 
 - [Changelog for `libllama` API](https://github.com/ggml-org/llama.cpp/issues/9289)
