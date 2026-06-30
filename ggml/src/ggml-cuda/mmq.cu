@@ -35,6 +35,14 @@ static bool ggml_cuda_tq3_4s_fp4_cache_log_enabled() {
     return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_CACHE_LOG", false);
 }
 
+// Option E: convert TQ3_4S -> NVFP4 once into a transient pool buffer per mul_mat
+// (freed when the call returns) instead of keeping a persistent per-tensor cache.
+// Gives cache-class FP4 MMA speed at ~0 GiB persistent memory. Only used when the
+// persistent cache is disabled (GGML_CUDA_TQ3_4S_FP4_CACHE=0).
+static bool ggml_cuda_tq3_4s_fp4_transient_enabled() {
+    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_TRANSIENT", false);
+}
+
 static bool ggml_cuda_env_list_has(const char * list, const char * name) {
     if (list == nullptr || list[0] == '\0') {
         return false;
@@ -281,10 +289,28 @@ void ggml_cuda_mul_mat_q(
     int64_t stride_row_x = s01;
     int64_t stride_channel_x = s02;
     int64_t stride_sample_x = s03;
+    // Held at function scope so the transient NVFP4 buffer stays valid until the
+    // MMQ kernel is launched on this stream (Option E).
+    ggml_cuda_pool_alloc<char> src0_nvfp4_transient(ctx.pool());
     if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
         GGML_ASSERT(use_tq3_4s_native_fp4);
         if (use_tq3_4s_native_fp4_cache) {
             src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
+            type_x = GGML_TYPE_NVFP4;
+            stride_row_x = s01 / 2;
+            stride_channel_x = s02 / 2;
+            stride_sample_x = s03 / 2;
+        } else if (ggml_cuda_tq3_4s_fp4_transient_enabled()) {
+            // Convert all rows TQ3_4S -> NVFP4 once into a pool buffer (freed at
+            // return). Same contiguous block_nvfp4 layout as the persistent cache,
+            // so the NVFP4 loader and /2 strides apply unchanged.
+            const int64_t nrows = ne01 * ne02 * ne03;
+            const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
+            const size_t buf_size = (size_t) nrows * nv_blocks_per_row * sizeof(block_nvfp4);
+            src0_nvfp4_transient.alloc(buf_size);
+            quantize_tq3_4s_to_nvfp4_cuda(src0->data, src0_nvfp4_transient.get(), ne00, nrows, stream);
+            CUDA_CHECK(cudaGetLastError());
+            src0_d = src0_nvfp4_transient.get();
             type_x = GGML_TYPE_NVFP4;
             stride_row_x = s01 / 2;
             stride_channel_x = s02 / 2;
