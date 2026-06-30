@@ -375,7 +375,8 @@ void ggml_cuda_mul_mat_q(
         src0->buffer != nullptr &&
         ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
         src0->view_src == nullptr &&
-        ggml_is_contiguous(src0);
+        ggml_is_contiguous(src0) &&
+        ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(src0->name);
     ggml_type type_x = src0->type;
     int64_t stride_row_x = s01;
     int64_t stride_channel_x = s02;
