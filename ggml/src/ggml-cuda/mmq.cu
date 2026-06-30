@@ -362,19 +362,33 @@ void ggml_cuda_mul_mat_q(
         }
     }
 
-    const bool use_tq3_4s_native_fp4_cache =
+    const bool use_tq3_4s_native_fp4 =
         ne11 >= tq3_4s_native_fp4_min_cols &&
         blackwell_mma_available(cc) &&
         ggml_cuda_tq3_4s_fp4_enabled() &&
         src0->type == GGML_TYPE_TQ3_4S &&
+        ne00 % QK_NVFP4 == 0;
+    const bool use_tq3_4s_native_fp4_cache =
+        use_tq3_4s_native_fp4 &&
+        ggml_cuda_tq3_4s_fp4_cache_enabled() &&
+        src0->type == GGML_TYPE_TQ3_4S &&
         src0->buffer != nullptr &&
         ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
         src0->view_src == nullptr &&
-        ggml_is_contiguous(src0) &&
-        ne00 % QK_NVFP4 == 0;
+        ggml_is_contiguous(src0);
+    ggml_type type_x = src0->type;
+    int64_t stride_row_x = s01;
+    int64_t stride_channel_x = s02;
+    int64_t stride_sample_x = s03;
     if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
-        GGML_ASSERT(use_tq3_4s_native_fp4_cache);
-        src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
+        GGML_ASSERT(use_tq3_4s_native_fp4);
+        if (use_tq3_4s_native_fp4_cache) {
+            src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
+            type_x = GGML_TYPE_NVFP4;
+            stride_row_x = s01 / 2;
+            stride_channel_x = s02 / 2;
+            stride_sample_x = s03 / 2;
+        }
     }
 
     // TODO: tighter pool buffer size vs q8 path
