@@ -1147,6 +1147,11 @@ struct test_case {
         return true;
     }
 
+    virtual bool backend_supported(ggml_backend_t backend) {
+        GGML_UNUSED(backend);
+        return true;
+    }
+
     virtual double max_nmse_err() {
         return 1e-7;
     }
@@ -8874,8 +8879,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 4096, 128, 4096, {1, 1}, {1, 1},
                 {0, 1, 2, 3}, 0, 1, "BLACKWELL_NATIVE_FP4"));
     // Batched shapes exercise Blackwell native FP4 MMQ instead of MMVQ.
-    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 2880,  32, 2880, {1, 1}, {1, 1}));
-    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 4096, 128, 4096, {1, 1}, {1, 1}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 2880,  32, 2880, {1, 1}, {1, 1},
+                {0, 1, 2, 3}, 0, 1, "BLACKWELL_NATIVE_FP4"));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 4096, 128, 4096, {1, 1}, {1, 1},
+                {0, 1, 2, 3}, 0, 1, "BLACKWELL_NATIVE_FP4"));
 
 
 #if 0
