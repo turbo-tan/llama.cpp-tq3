@@ -40,6 +40,7 @@ concurrency:
 
 jobs:
   server-metal:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, llama-server, macOS, ARM64]
 
     steps:
@@ -100,6 +101,7 @@ jobs:
           pytest -v -x -m "not slow"
 
   server-cuda:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, llama-server, Linux, NVIDIA]
 
     steps:

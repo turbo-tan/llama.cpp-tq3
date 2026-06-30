@@ -5,6 +5,7 @@ on:
 
 jobs:
   linux:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, CPU]
     steps:
       - uses: actions/checkout@v6
