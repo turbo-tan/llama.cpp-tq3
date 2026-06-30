@@ -87,6 +87,16 @@ static bool ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(const char * name) {
     return !ggml_cuda_env_list_has(exclude, name);
 }
 
+static bool ggml_cuda_tq3_4s_fp4_tensor_enabled(const char * name) {
+    const char * include = std::getenv("GGML_CUDA_TQ3_4S_FP4_INCLUDE");
+    if (include != nullptr && include[0] != '\0') {
+        return ggml_cuda_env_list_has(include, name);
+    }
+
+    const char * exclude = std::getenv("GGML_CUDA_TQ3_4S_FP4_EXCLUDE");
+    return !ggml_cuda_env_list_has(exclude, name);
+}
+
 static size_t ggml_cuda_tq3_4s_nvfp4_cache_size(ggml_backend_cuda_context & ctx) {
     size_t total = 0;
     for (const auto & it : ctx.tq3_4s_nvfp4_cache) {
@@ -278,7 +288,8 @@ void ggml_cuda_mul_mat_q(
         blackwell_mma_available(cc) &&
         ggml_cuda_tq3_4s_fp4_enabled() &&
         src0->type == GGML_TYPE_TQ3_4S &&
-        ne00 % QK_NVFP4 == 0;
+        ne00 % QK_NVFP4 == 0 &&
+        ggml_cuda_tq3_4s_fp4_tensor_enabled(src0->name);
     const bool use_tq3_4s_native_fp4_cache =
         use_tq3_4s_native_fp4 &&
         ggml_cuda_tq3_4s_fp4_cache_enabled() &&
@@ -295,7 +306,7 @@ void ggml_cuda_mul_mat_q(
     // Held at function scope so the transient NVFP4 buffer stays valid until the
     // MMQ kernel is launched on this stream (Option E).
     ggml_cuda_pool_alloc<char> src0_nvfp4_transient(ctx.pool());
-    if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
+    if (use_tq3_4s_native_fp4) {
         GGML_ASSERT(use_tq3_4s_native_fp4);
         // NVFP4 weight is stored row-padded to MATRIX_ROW_PADDING so the FP4 MMA
         // never reads past a row for non-512-aligned ne00 (e.g. Gemma K=2816).
