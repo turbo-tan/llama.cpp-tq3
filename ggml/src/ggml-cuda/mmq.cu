@@ -4,15 +4,17 @@
 #include "mmid.cuh"
 #include "tq3-native.cuh"
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 static constexpr int64_t tq3_4s_native_fp4_min_cols = 512;
 
-static bool ggml_cuda_tq3_4s_fp4_enabled() {
-    const char * value = std::getenv("GGML_CUDA_TQ3_4S_FP4");
+static bool ggml_cuda_env_enabled(const char * name, const bool default_value) {
+    const char * value = std::getenv(name);
     if (value == nullptr) {
-        return true;
+        return default_value;
     }
 
     return std::strcmp(value, "0") != 0 &&
@@ -21,16 +23,84 @@ static bool ggml_cuda_tq3_4s_fp4_enabled() {
         std::strcmp(value, "no") != 0;
 }
 
+static bool ggml_cuda_tq3_4s_fp4_enabled() {
+    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4", true);
+}
+
 static bool ggml_cuda_tq3_4s_fp4_cache_enabled() {
-    const char * value = std::getenv("GGML_CUDA_TQ3_4S_FP4_CACHE");
-    if (value == nullptr) {
-        return true;
+    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_CACHE", true);
+}
+
+static bool ggml_cuda_tq3_4s_fp4_cache_log_enabled() {
+    return ggml_cuda_env_enabled("GGML_CUDA_TQ3_4S_FP4_CACHE_LOG", false);
+}
+
+static bool ggml_cuda_env_list_has(const char * list, const char * name) {
+    if (list == nullptr || list[0] == '\0') {
+        return false;
     }
 
-    return std::strcmp(value, "0") != 0 &&
-        std::strcmp(value, "false") != 0 &&
-        std::strcmp(value, "off") != 0 &&
-        std::strcmp(value, "no") != 0;
+    const char * tok = list;
+    while (*tok != '\0') {
+        while (*tok == ',' || *tok == ' ' || *tok == '\t') {
+            ++tok;
+        }
+
+        const char * end = tok;
+        while (*end != '\0' && *end != ',') {
+            ++end;
+        }
+
+        const size_t len = end - tok;
+        if (len > 0) {
+            const std::string token(tok, len);
+            if (std::strstr(name, token.c_str()) != nullptr) {
+                return true;
+            }
+        }
+
+        if (*end == '\0') {
+            break;
+        }
+
+        tok = end + 1;
+    }
+
+    return false;
+}
+
+static bool ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(const char * name) {
+    const char * include = std::getenv("GGML_CUDA_TQ3_4S_FP4_CACHE_INCLUDE");
+    if (include != nullptr && include[0] != '\0') {
+        return ggml_cuda_env_list_has(include, name);
+    }
+
+    const char * exclude = std::getenv("GGML_CUDA_TQ3_4S_FP4_CACHE_EXCLUDE");
+    return !ggml_cuda_env_list_has(exclude, name);
+}
+
+static size_t ggml_cuda_tq3_4s_nvfp4_cache_size(ggml_backend_cuda_context & ctx) {
+    size_t total = 0;
+    for (const auto & it : ctx.tq3_4s_nvfp4_cache) {
+        total += it.second.size;
+    }
+
+    return total;
+}
+
+static void ggml_cuda_tq3_4s_nvfp4_cache_log(
+        ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const size_t src_size, const size_t cache_size) {
+    if (!ggml_cuda_tq3_4s_fp4_cache_log_enabled()) {
+        return;
+    }
+
+    const double mib = 1024.0 * 1024.0;
+    std::fprintf(stderr,
+        "ggml_cuda_tq3_4s_fp4_cache: tensor=%s src=%.3f MiB cache=%.3f MiB total=%.3f MiB\n",
+        src0->name,
+        src_size / mib,
+        cache_size / mib,
+        ggml_cuda_tq3_4s_nvfp4_cache_size(ctx) / mib);
 }
 
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
@@ -140,6 +210,7 @@ static const char * ggml_cuda_tq3_4s_nvfp4_cache_get(
     quantize_tq3_4s_to_nvfp4_cuda(src0->data, entry.data, ne00, nrows, stream);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaStreamSynchronize(stream));
+    ggml_cuda_tq3_4s_nvfp4_cache_log(ctx, src0, src_size, cache_size);
 
     return (const char *) entry.data;
 }
@@ -204,7 +275,8 @@ void ggml_cuda_mul_mat_q(
         src0->buffer != nullptr &&
         ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
         src0->view_src == nullptr &&
-        ggml_is_contiguous(src0);
+        ggml_is_contiguous(src0) &&
+        ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(src0->name);
     ggml_type type_x = src0->type;
     int64_t stride_row_x = s01;
     int64_t stride_channel_x = s02;
