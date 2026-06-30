@@ -3714,7 +3714,7 @@ template <int mmq_y, bool need_check> static __device__ __forceinline__ void loa
             uint32_t q1 = 0;
 
 #pragma unroll
-            for (int candidate = 0; candidate < 5; ++candidate) {
+            for (int candidate = 0; candidate < 1; ++candidate) { /* PROBE 5->1: skip ue4m3 scale search */
                 const int test_code = first_scale_code + scale_offsets[candidate];
                 if (test_code < 0 || test_code > 0x7e) {
                     continue;
