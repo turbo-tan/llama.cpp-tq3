@@ -4,6 +4,23 @@
 #include "mmid.cuh"
 #include "tq3-native.cuh"
 
+#include <cstdlib>
+#include <cstring>
+
+static constexpr int64_t tq3_4s_native_fp4_min_cols = 512;
+
+static bool ggml_cuda_tq3_4s_fp4_enabled() {
+    const char * value = std::getenv("GGML_CUDA_TQ3_4S_FP4");
+    if (value == nullptr) {
+        return true;
+    }
+
+    return std::strcmp(value, "0") != 0 &&
+        std::strcmp(value, "false") != 0 &&
+        std::strcmp(value, "off") != 0 &&
+        std::strcmp(value, "no") != 0;
+}
+
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
     switch (args.type_x) {
         case GGML_TYPE_Q4_0:
@@ -162,8 +179,16 @@ void ggml_cuda_mul_mat_q(
     const bool use_stream_k = (GGML_CUDA_CC_IS_NVIDIA(cc) && ggml_cuda_highest_compiled_arch(cc) >= GGML_CUDA_CC_VOLTA)
                             || GGML_CUDA_CC_IS_CDNA(cc);
 
-    const bool use_tq3_4s_native_fp4_cache = blackwell_mma_available(cc) &&
-        src0->type == GGML_TYPE_TQ3_4S && src0->view_src == nullptr && ggml_is_contiguous(src0) && ne00 % QK_NVFP4 == 0;
+    const bool use_tq3_4s_native_fp4_cache =
+        ne11 >= tq3_4s_native_fp4_min_cols &&
+        blackwell_mma_available(cc) &&
+        ggml_cuda_tq3_4s_fp4_enabled() &&
+        src0->type == GGML_TYPE_TQ3_4S &&
+        src0->buffer != nullptr &&
+        ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS &&
+        src0->view_src == nullptr &&
+        ggml_is_contiguous(src0) &&
+        ne00 % QK_NVFP4 == 0;
     if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
         GGML_ASSERT(use_tq3_4s_native_fp4_cache);
         src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
@@ -339,6 +364,12 @@ bool ggml_cuda_should_use_mmq(enum ggml_type type, int cc, int64_t ne11, int64_t
 #ifdef GGML_CUDA_FORCE_CUBLAS
     return false;
 #endif // GGML_CUDA_FORCE_CUBLAS
+
+    if (type == GGML_TYPE_TQ3_4S && blackwell_mma_available(cc)) {
+        return ggml_cuda_tq3_4s_fp4_enabled() &&
+            n_experts == 0 &&
+            ne11 >= tq3_4s_native_fp4_min_cols;
+    }
 
     // TQ3_4S: use MMQ for prefill on NVIDIA tensor-core GPUs. Narrower prefill
     // shapes (ne11 >= 16) also benefit, matching the 8ad718007 reference; the
