@@ -87,14 +87,27 @@ static bool ggml_cuda_tq3_4s_fp4_cache_tensor_enabled(const char * name) {
     return !ggml_cuda_env_list_has(exclude, name);
 }
 
-static bool ggml_cuda_tq3_4s_fp4_tensor_enabled(const char * name) {
+static bool ggml_cuda_tq3_4s_fp4_default_excluded(const ggml_tensor * src0) {
+    if (src0->ne[0] % MMQ_ITER_K_FP4 == 0) {
+        return false;
+    }
+
+    return std::strstr(src0->name, "ffn_gate") != nullptr ||
+        std::strstr(src0->name, "ffn_up") != nullptr;
+}
+
+static bool ggml_cuda_tq3_4s_fp4_tensor_enabled(const ggml_tensor * src0) {
     const char * include = std::getenv("GGML_CUDA_TQ3_4S_FP4_INCLUDE");
     if (include != nullptr && include[0] != '\0') {
-        return ggml_cuda_env_list_has(include, name);
+        return ggml_cuda_env_list_has(include, src0->name);
     }
 
     const char * exclude = std::getenv("GGML_CUDA_TQ3_4S_FP4_EXCLUDE");
-    return !ggml_cuda_env_list_has(exclude, name);
+    if (ggml_cuda_env_list_has(exclude, src0->name)) {
+        return false;
+    }
+
+    return !ggml_cuda_tq3_4s_fp4_default_excluded(src0);
 }
 
 static size_t ggml_cuda_tq3_4s_nvfp4_cache_size(ggml_backend_cuda_context & ctx) {
@@ -289,7 +302,7 @@ void ggml_cuda_mul_mat_q(
         ggml_cuda_tq3_4s_fp4_enabled() &&
         src0->type == GGML_TYPE_TQ3_4S &&
         ne00 % QK_NVFP4 == 0 &&
-        ggml_cuda_tq3_4s_fp4_tensor_enabled(src0->name);
+        ggml_cuda_tq3_4s_fp4_tensor_enabled(src0);
     const bool use_tq3_4s_native_fp4_cache =
         use_tq3_4s_native_fp4 &&
         ggml_cuda_tq3_4s_fp4_cache_enabled() &&
@@ -508,7 +521,7 @@ bool ggml_cuda_should_use_mmq(const ggml_tensor * src0, int cc, int64_t ne11, in
     const ggml_type type = src0->type;
     if (type == GGML_TYPE_TQ3_4S && blackwell_mma_available(cc)) {
         return ggml_cuda_tq3_4s_fp4_enabled() &&
-            ggml_cuda_tq3_4s_fp4_tensor_enabled(src0->name) &&
+            ggml_cuda_tq3_4s_fp4_tensor_enabled(src0) &&
             n_experts == 0 &&
             ne11 >= tq3_4s_native_fp4_min_cols;
     }
