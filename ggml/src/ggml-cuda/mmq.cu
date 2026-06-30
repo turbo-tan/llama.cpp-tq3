@@ -368,7 +368,7 @@ void ggml_cuda_mul_mat_q(
         ggml_cuda_tq3_4s_fp4_enabled() &&
         src0->type == GGML_TYPE_TQ3_4S &&
         ne00 % QK_NVFP4 == 0 &&
-        ggml_cuda_tq3_4s_fp4_tensor_enabled(src0->name);
+        ggml_cuda_tq3_4s_fp4_tensor_enabled(src0);
     const bool use_tq3_4s_native_fp4_cache =
         use_tq3_4s_native_fp4 &&
         ggml_cuda_tq3_4s_fp4_cache_enabled() &&
