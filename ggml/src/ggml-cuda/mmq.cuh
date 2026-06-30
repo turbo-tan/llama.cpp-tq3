@@ -4067,7 +4067,7 @@ template <int mmq_x, int mmq_y, bool need_check>
 struct mmq_type_traits<mmq_x, mmq_y, need_check, GGML_TYPE_TQ3_4S> {
     static constexpr int              vdr          = VDR_Q8_0_Q8_1_MMQ;
 #ifdef BLACKWELL_MMA_AVAILABLE
-    static constexpr load_tiles_mmq_t load_tiles   = load_tiles_tq3_4s_cached_nvfp4<mmq_y, need_check>;
+    static constexpr load_tiles_mmq_t load_tiles   = load_tiles_tq3_4s_to_nvfp4<mmq_y, need_check>;
     static constexpr vec_dot_mmq_t    vec_dot_mma  = vec_dot_fp4_fp4_mma<mmq_x, mmq_y, GGML_TYPE_TQ3_4S>;
 #else
     static constexpr load_tiles_mmq_t load_tiles   = load_tiles_tq3_4s<mmq_y, need_check>;
