@@ -318,6 +318,7 @@ jobs:
           LLAMA_ARG_THREADS=$(nproc) GG_BUILD_HIGH_PERF=1 GG_BUILD_EXTRA_TESTS_0=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-high-perf-graviton4:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ah-ubuntu_22_04-c8g_8x
 
     steps:
@@ -357,6 +358,7 @@ jobs:
           LLAMA_ARG_THREADS=$(nproc) GG_BUILD_HIGH_PERF=1 GG_BUILD_NO_BF16=1 GG_BUILD_EXTRA_TESTS_0=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-graviton4-kleidiai:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ah-ubuntu_22_04-c8g_8x
 
     steps:
