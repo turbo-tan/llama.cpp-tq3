@@ -172,7 +172,8 @@ static __global__ void quantize_mmq_nvfp4(
 
 static __global__ void quantize_tq3_4s_to_nvfp4(
         const block_tq3_4s * __restrict__ x, block_nvfp4 * __restrict__ y,
-        const int64_t blocks_per_row, const int64_t nv_blocks_per_row, const int64_t nrows) {
+        const int64_t blocks_per_row, const int64_t nv_blocks_per_row,
+        const int64_t nv_blocks_per_row_padded, const int64_t nrows) {
 #if defined(BLACKWELL_MMA_AVAILABLE)
     constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
                                           0.230106f,  0.725222f,  1.277503f,  1.988943f };
@@ -195,7 +196,9 @@ static __global__ void quantize_tq3_4s_to_nvfp4(
     const int64_t row = idx / nv_blocks_per_row;
     const int64_t col = idx - row * nv_blocks_per_row;
     const block_tq3_4s * src = x + row * blocks_per_row + 2 * col;
-    block_nvfp4 * dst = y + idx;
+    // Write into a row-padded layout so K-padding blocks (read by the FP4 MMA up
+    // to the 512-aligned K) stay in bounds; they were zeroed by the caller.
+    block_nvfp4 * dst = y + row * nv_blocks_per_row_padded + col;
 
 #pragma unroll
     for (int sub = 0; sub < QK_NVFP4 / QK_NVFP4_SUB; ++sub) {
@@ -573,10 +576,18 @@ void quantize_tq3_4s_to_nvfp4_cuda(const void * x, void * y, const int64_t ne00,
 
     const int64_t blocks_per_row = ne00 / QK_TQ3_0;
     const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
+    // K is padded to MATRIX_ROW_PADDING for the FP4 MMA; the converted weight must
+    // be wide enough or the kernel reads past each row (crash on non-512-aligned
+    // ne00, e.g. Gemma K=2816). For 512-aligned ne00 (Qwen) this is a no-op.
+    const int64_t nv_blocks_per_row_padded = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
     const int64_t nblocks = nv_blocks_per_row * nrows;
+
+    if (nv_blocks_per_row_padded != nv_blocks_per_row) {
+        CUDA_CHECK(cudaMemsetAsync(y, 0, (size_t) nrows * nv_blocks_per_row_padded * sizeof(block_nvfp4), stream));
+    }
 
     constexpr int block_size = 256;
     const dim3 num_blocks((nblocks + block_size - 1) / block_size, 1, 1);
     quantize_tq3_4s_to_nvfp4<<<num_blocks, block_size, 0, stream>>>(
-        (const block_tq3_4s *) x, (block_nvfp4 *) y, blocks_per_row, nv_blocks_per_row, nrows);
+        (const block_tq3_4s *) x, (block_nvfp4 *) y, blocks_per_row, nv_blocks_per_row, nv_blocks_per_row_padded, nrows);
 }

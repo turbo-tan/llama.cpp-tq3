@@ -192,10 +192,13 @@ static const char * ggml_cuda_tq3_4s_nvfp4_cache_get(
     const int64_t nrows = src0->ne[1] * src0->ne[2] * src0->ne[3];
     const int64_t tq_blocks_per_row = ne00 / QK_TQ3_0;
     const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
+    // Pad K to MATRIX_ROW_PADDING so the FP4 MMA never reads past a weight row
+    // (non-512-aligned ne00 like Gemma K=2816 would otherwise crash). No-op for Qwen.
+    const int64_t nv_blocks_per_row_padded = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
     GGML_ASSERT(tq_blocks_per_row == 2 * nv_blocks_per_row);
 
     const size_t src_size = (size_t) nrows * tq_blocks_per_row * sizeof(block_tq3_4s);
-    const size_t cache_size = (size_t) nrows * nv_blocks_per_row * sizeof(block_nvfp4);
+    const size_t cache_size = (size_t) nrows * nv_blocks_per_row_padded * sizeof(block_nvfp4);
     const void * key = src0;
 
     std::lock_guard<std::mutex> lock(ctx.tq3_4s_nvfp4_cache_mutex);
@@ -294,27 +297,29 @@ void ggml_cuda_mul_mat_q(
     ggml_cuda_pool_alloc<char> src0_nvfp4_transient(ctx.pool());
     if (blackwell_mma_available(cc) && src0->type == GGML_TYPE_TQ3_4S) {
         GGML_ASSERT(use_tq3_4s_native_fp4);
+        // NVFP4 weight is stored row-padded to MATRIX_ROW_PADDING so the FP4 MMA
+        // never reads past a row for non-512-aligned ne00 (e.g. Gemma K=2816).
+        // For 512-aligned ne00 (Qwen) bpr_pad == ne00/QK_NVFP4 == s01/2 (no-op).
+        const int64_t bpr_pad = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
         if (use_tq3_4s_native_fp4_cache) {
             src0_d = ggml_cuda_tq3_4s_nvfp4_cache_get(ctx, src0, ne00, stream);
             type_x = GGML_TYPE_NVFP4;
-            stride_row_x = s01 / 2;
-            stride_channel_x = s02 / 2;
-            stride_sample_x = s03 / 2;
+            stride_row_x = bpr_pad;
+            stride_channel_x = ne01 * bpr_pad;
+            stride_sample_x = ne01 * ne02 * bpr_pad;
         } else if (ggml_cuda_tq3_4s_fp4_transient_enabled()) {
             // Convert all rows TQ3_4S -> NVFP4 once into a pool buffer (freed at
-            // return). Same contiguous block_nvfp4 layout as the persistent cache,
-            // so the NVFP4 loader and /2 strides apply unchanged.
+            // return). Same row-padded block_nvfp4 layout as the persistent cache.
             const int64_t nrows = ne01 * ne02 * ne03;
-            const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
-            const size_t buf_size = (size_t) nrows * nv_blocks_per_row * sizeof(block_nvfp4);
+            const size_t buf_size = (size_t) nrows * bpr_pad * sizeof(block_nvfp4);
             src0_nvfp4_transient.alloc(buf_size);
             quantize_tq3_4s_to_nvfp4_cuda(src0->data, src0_nvfp4_transient.get(), ne00, nrows, stream);
             CUDA_CHECK(cudaGetLastError());
             src0_d = src0_nvfp4_transient.get();
             type_x = GGML_TYPE_NVFP4;
-            stride_row_x = s01 / 2;
-            stride_channel_x = s02 / 2;
-            stride_sample_x = s03 / 2;
+            stride_row_x = bpr_pad;
+            stride_channel_x = ne01 * bpr_pad;
+            stride_sample_x = ne01 * ne02 * bpr_pad;
         }
     }
 
