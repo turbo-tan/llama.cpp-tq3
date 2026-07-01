@@ -100,5 +100,6 @@ __global__ void ggml_cuda_native_tq3_dot_kernel(
         float * __restrict__ out,
         int nblocks);
 
-// Rotate activations in-place (declaration - implementation in tq3-native.cu)
-void ggml_cuda_tq3_rotate_act(float * x, int64_t n, cudaStream_t stream);
+// Rotate activations out-of-place: dst = rotate(src). Folds the previous
+// cudaMemcpy+in-place-rotate into one pass. src and dst may be equal.
+void ggml_cuda_tq3_rotate_act(const float * src, float * dst, int64_t n, cudaStream_t stream);

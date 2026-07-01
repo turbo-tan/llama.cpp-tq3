@@ -1353,8 +1353,7 @@ void ggml_cuda_mul_mat_vec_q(
     if (src0->type == GGML_TYPE_TQ3_4S) {
         const int64_t n_act = ne13 * ne12 * ne11 * ne10;
         ggml_cuda_pool_alloc<float> src1_rot(ctx.pool(), n_act);
-        CUDA_CHECK(cudaMemcpyAsync(src1_rot.get(), src1_d, n_act*sizeof(float), cudaMemcpyDeviceToDevice, stream));
-        ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
+        ggml_cuda_tq3_rotate_act(src1_d, src1_rot.get(), n_act, stream);
 
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
@@ -1429,8 +1428,7 @@ void ggml_cuda_op_mul_mat_vec_q(
     if (src0->type == GGML_TYPE_TQ3_4S) {
         const int64_t n_act = src1_ncols * ne10;
         ggml_cuda_pool_alloc<float> src1_rot(ctx.pool(id), n_act);
-        CUDA_CHECK(cudaMemcpyAsync(src1_rot.get(), src1_ddf_i, n_act*sizeof(float), cudaMemcpyDeviceToDevice, stream));
-        ggml_cuda_tq3_rotate_act(src1_rot.get(), n_act, stream);
+        ggml_cuda_tq3_rotate_act(src1_ddf_i, src1_rot.get(), n_act, stream);
 
         ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(id), src1_ncols * src1_padded_row_size * sizeof(block_q8_1)/QK8_1);
         quantize_row_q8_1_cuda(src1_rot.get(), nullptr, src1_q8_1.get(), src0->type, ne10, ne10, src1_ncols*ne10, src1_ncols*ne10, src1_padded_row_size, src1_ncols, 1, 1, stream);
