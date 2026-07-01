@@ -380,7 +380,6 @@ static __global__ void quantize_mmq_nvfp4_rot(
     }
 
     const int64_t blocks_per_col = (ne0 + QK_K - 1) / QK_K;
-    static constexpr int test_offsets[5] = { 0, -1, 1, -2, 2 };
 
     // Quantize the two 16-value NVFP4 sub-blocks. Both share one block_fp4_mmq
     // (QK_TQ3_0 divides QK_K, so a 32-group never straddles a 256-superblock).
@@ -401,32 +400,9 @@ static __global__ void quantize_mmq_nvfp4_rot(
         for (int k = 0; k < QK_NVFP4_SUB; k++) {
             amax_raw = fmaxf(amax_raw, fabsf(vals_raw[k]));
         }
-        const int first_fp8_code = (int) ggml_cuda_fp32_to_ue4m3(amax_raw / 6.0f);
-        float best_err = FLT_MAX;
         uint8_t fp8_code = 0;
         float subblock_scale = 0.0f;
-#pragma unroll
-        for (int i = 0; i < 5; i++) {
-            const int test_code = first_fp8_code + test_offsets[i];
-            if (test_code < 0 || test_code > 0x7e) {
-                continue;
-            }
-            const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
-            const float test_inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
-            float cur_err = 0.0f;
-#pragma unroll
-            for (int k = 0; k < QK_NVFP4_SUB; ++k) {
-                const float vv = vals_raw[k];
-                const uint8_t q = ggml_cuda_float_to_fp4_e2m1(vv, test_inv_scale);
-                const float err_diff = fabsf(vv) - fabsf(kvalues_mxfp4[q & 0x7]) * test_scale;
-                cur_err = fmaf(err_diff, err_diff, cur_err);
-            }
-            if (cur_err < best_err) {
-                best_err = cur_err;
-                fp8_code = (uint8_t) test_code;
-                subblock_scale = test_scale;
-            }
-        }
+        ggml_cuda_nvfp4_act_scale(vals_raw, amax_raw, fp8_code, subblock_scale);
         const float inv_scale = subblock_scale > 0.0f ? 0.5f / subblock_scale : 0.0f;
         uint32_t q0 = 0, q1 = 0;
 #pragma unroll
