@@ -58,11 +58,13 @@ jobs:
 
   ui-build:
     name: Build static output
+    if: github.repository == 'ggml-org/llama.cpp'
     uses: ./.github/workflows/ui-build.yml
 
   ui-checks:
     name: Checks
     needs: [changes, ui-build]
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
@@ -126,6 +128,7 @@ jobs:
   e2e-tests:
     name: E2E Tests
     needs: [changes, ui-build]
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout code
