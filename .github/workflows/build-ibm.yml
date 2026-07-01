@@ -36,6 +36,7 @@ env:
 jobs:
 
   ubuntu-24-s390x:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ubuntu-24.04-s390x
 
     steps:
@@ -95,6 +96,7 @@ jobs:
           ./bin/llama-completion -m stories260K-be.gguf -p "One day, Lily met a Shoggoth" -n 500 -c 256
 
   ubuntu-24-ppc64le:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ubuntu-24.04-ppc64le
 
     steps:

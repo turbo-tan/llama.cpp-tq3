@@ -63,13 +63,13 @@ jobs:
   ui-build:
     name: Build static output
     needs: changes
-    if: ${{ needs.changes.outputs.ui == 'true' }}
+    if: ${{ github.repository == 'ggml-org/llama.cpp' && needs.changes.outputs.ui == 'true' }}
     uses: ./.github/workflows/ui-build-self-hosted.yml
 
   ui-checks:
     name: Checks
     needs: [changes, ui-build]
-    if: ${{ needs.changes.outputs.ui == 'true' }}
+    if: ${{ github.repository == 'ggml-org/llama.cpp' && needs.changes.outputs.ui == 'true' }}
     runs-on: [self-hosted, PLAYWRIGHT]
     continue-on-error: true
     steps:
@@ -113,7 +113,7 @@ jobs:
   e2e-tests:
     name: E2E Tests
     needs: [changes, ui-build]
-    if: ${{ needs.changes.outputs.ui == 'true' }}
+    if: ${{ github.repository == 'ggml-org/llama.cpp' && needs.changes.outputs.ui == 'true' }}
     runs-on: [self-hosted, PLAYWRIGHT]
     steps:
       - name: Checkout code
