@@ -24,8 +24,16 @@ static int ffs(int x) {
     unsigned long i;
     return _BitScanForward(&i, (unsigned long)x) ? (int)(i + 1) : 0;
 }
+
+static int ggml_popcount_u32(uint32_t x) {
+    return (int) __popcnt(x);
+}
 #else
 #include <strings.h>
+
+static int ggml_popcount_u32(uint32_t x) {
+    return __builtin_popcount(x);
+}
 #endif
 
 #define GROUP_MAX_EPS 1e-15f
@@ -6936,7 +6944,7 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 const block_tq3_1s_ap1 * q = (const block_tq3_1s_ap1 *) data;
                 for (size_t i = 0; i < nb; ++i) {
-                    if (__builtin_popcount((unsigned) q[i].mask) != 1) {
+                    if (ggml_popcount_u32((uint32_t) q[i].mask) != 1) {
                         return false;
                     }
                 }
