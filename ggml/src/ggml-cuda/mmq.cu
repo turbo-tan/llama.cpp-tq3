@@ -329,6 +329,7 @@ void ggml_cuda_mul_mat_q(
     int64_t stride_row_x = s01;
     int64_t stride_channel_x = s02;
     int64_t stride_sample_x = s03;
+    bool used_tq3_4s_native_fp4_transient = false;
     // Held at function scope so the transient NVFP4 buffer stays valid until the
     // MMQ kernel is launched on this stream (Option E).
     ggml_cuda_pool_alloc<char> src0_nvfp4_transient(ctx.pool());
@@ -357,6 +358,7 @@ void ggml_cuda_mul_mat_q(
             stride_row_x = bpr_pad;
             stride_channel_x = ne01 * bpr_pad;
             stride_sample_x = ne01 * ne02 * bpr_pad;
+            used_tq3_4s_native_fp4_transient = true;
         }
     }
 
@@ -416,6 +418,9 @@ void ggml_cuda_mul_mat_q(
             ne03, ne13, stride_sample_x, s13, s3,
             use_stream_k, ne1};
         ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
+        if (used_tq3_4s_native_fp4_transient) {
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+        }
         return;
     }
 
@@ -510,6 +515,9 @@ void ggml_cuda_mul_mat_q(
         use_stream_k, ne12};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
+    if (used_tq3_4s_native_fp4_transient) {
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+    }
 }
 
 void ggml_cuda_op_mul_mat_q(
