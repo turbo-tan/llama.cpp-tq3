@@ -1453,31 +1453,22 @@ static __device__ __forceinline__ float tq3_4s_ratio4s(const uint8_t byte) {
     return __uint_as_float(bits);
 }
 
+// Int8 centroid levels {-127,-79,-45,-14,14,45,79,127} packed into two registers so a
+// single PRMT (__byte_perm) maps four 3-bit indices to four dp4a-ready int8 weights.
+#define TQ3_4S_LEVELS_LO 0xF2D3B181u // bytes {-127, -79, -45, -14}
+#define TQ3_4S_LEVELS_HI 0x7F4F2D0Eu // bytes {  14,  45,  79, 127}
+
 static __device__ __forceinline__ float tq3_4s_dot_subgroup_q8_1(
-    const block_tq3_4s * __restrict__ bq,
+    const uint32_t packed,
     const block_q8_1 * __restrict__ bq8_1,
     const int subgroup) {
 
-    // Int8 centroid levels matching the float centroids scaled to [-127,127]
-    static constexpr int8_t levels[8] = {-127, -79, -45, -14, 14, 45, 79, 127};
-
-    const uint8_t * qp = bq->qs + subgroup * 3;
-    const uint32_t packed = (uint32_t)qp[0] | ((uint32_t)qp[1] << 8) | ((uint32_t)qp[2] << 16);
-    const float d = tq3_4s_ratio4s(bq->d[subgroup]);
-
-    // Unpack 8 3-bit indices into 8 int8 weight values
-    const int8_t w0 = levels[(packed >>  0) & 7];
-    const int8_t w1 = levels[(packed >>  3) & 7];
-    const int8_t w2 = levels[(packed >>  6) & 7];
-    const int8_t w3 = levels[(packed >>  9) & 7];
-    const int8_t w4 = levels[(packed >> 12) & 7];
-    const int8_t w5 = levels[(packed >> 15) & 7];
-    const int8_t w6 = levels[(packed >> 18) & 7];
-    const int8_t w7 = levels[(packed >> 21) & 7];
-
-    // Pack into two int32 for dp4a
-    const int w_lo = (uint8_t)w0 | ((uint8_t)w1 << 8) | ((uint8_t)w2 << 16) | ((uint8_t)w3 << 24);
-    const int w_hi = (uint8_t)w4 | ((uint8_t)w5 << 8) | ((uint8_t)w6 << 16) | ((uint8_t)w7 << 24);
+    // Spread the eight 3-bit indices of `packed` into two PRMT selector words
+    // (one 4-bit selector nibble per output byte; index bit 3 stays 0 so no sign-fill).
+    const uint32_t sel_lo = (packed         & 7) | ((packed << 1) & 0x70) | ((packed << 2) & 0x700) | ((packed << 3) & 0x7000);
+    const uint32_t sel_hi = ((packed >> 12) & 7) | ((packed >> 11) & 0x70) | ((packed >> 10) & 0x700) | ((packed >> 9) & 0x7000);
+    const int w_lo = __byte_perm(TQ3_4S_LEVELS_LO, TQ3_4S_LEVELS_HI, sel_lo);
+    const int w_hi = __byte_perm(TQ3_4S_LEVELS_LO, TQ3_4S_LEVELS_HI, sel_hi);
 
     // Pack activation q8 values (already int8 in bq8_1->qs)
     const int q8 = subgroup * 8;
@@ -1488,7 +1479,7 @@ static __device__ __forceinline__ float tq3_4s_dot_subgroup_q8_1(
     int sumi = ggml_cuda_dp4a(w_lo, a_lo, 0);
     sumi     = ggml_cuda_dp4a(w_hi, a_hi, sumi);
 
-    return (float)sumi * d;
+    return (float)sumi;
 }
 
 #define VDR_TQ3_4S_Q8_1_MMVQ 8
@@ -1496,16 +1487,27 @@ static __device__ __forceinline__ float vec_dot_tq3_4s_q8_1(
     const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs) {
 
     const block_tq3_4s * bq = (const block_tq3_4s *) vbq + kbx;
-    const int subgroup0 = iqs / 4;
+
+    // One 16-byte load covers the whole block: x = the 4 E3M5 scales, y/z/w = the 12 index bytes.
+    // block_tq3_4s is 16 bytes and rows are whole blocks, so the pointer is always 16-aligned.
+    const uint4 b = *(const uint4 *) bq;
+
+    const int g0 = iqs / 4; // this call covers subgroups g0 and g0+1, with g0 in {0, 2}
+    const bool hi = g0 != 0;
+
+    // Funnel-shift the two 24-bit index groups out of the loaded words.
+    const uint32_t p0 = __funnelshift_r(hi ? b.z : b.y, hi ? b.w : b.z, hi ? 16 :  0) & 0xFFFFFF;
+    const uint32_t p1 = __funnelshift_r(hi ? b.w : b.y, hi ? b.w : b.z, hi ?  8 : 24) & 0xFFFFFF;
+
+    const float d0 = tq3_4s_ratio4s((b.x >> (8*g0    )) & 0xFF);
+    const float d1 = tq3_4s_ratio4s((b.x >> (8*g0 + 8)) & 0xFF);
+
     const float2 ds8 = __half22float2(bq8_1->ds);
     // Hoist the activation-side scale once per block instead of reloading it per subgroup.
     const float scale = (2.1519f / 127.0f) * ds8.x;
-    float sum = 0.0f;
 
-#pragma unroll
-    for (int s = 0; s < VDR_TQ3_4S_Q8_1_MMVQ / 4; ++s) {
-        sum += tq3_4s_dot_subgroup_q8_1(bq, bq8_1, subgroup0 + s);
-    }
+    const float sum = tq3_4s_dot_subgroup_q8_1(p0, bq8_1, g0    ) * d0
+                    + tq3_4s_dot_subgroup_q8_1(p1, bq8_1, g0 + 1) * d1;
 
     return sum * scale;
 }
