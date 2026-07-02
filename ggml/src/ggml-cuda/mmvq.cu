@@ -357,11 +357,9 @@ static constexpr __host__ __device__ int calc_nwarps(ggml_type type, int ncols_d
     if (table_id == MMVQ_PARAMETERS_GENERIC) {
         switch (ncols_dst) {
             case 1:
-                if (type == GGML_TYPE_TQ3_4S) {
-                    // TQ3_4S has a heavier vec_dot than simple q4/q8 paths.
-                    // On NVIDIA, 4 warps overpay in shared reduction for bs=1 decode.
-                    return 2;
-                }
+                // TQ3_4S used to run 2 warps here: its old LUT-based vec_dot made 4 warps
+                // overpay in shared reduction. With the PRMT vec_dot the default 4 warps
+                // win (RTX 3090 tg128 43.1 -> 47.4 t/s; 8 warps regresses to 36.9).
                 [[fallthrough]];
             case 2:
             case 3:
