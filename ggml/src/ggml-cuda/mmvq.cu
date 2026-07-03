@@ -362,11 +362,9 @@ static constexpr __host__ __device__ int calc_nwarps(ggml_type type, int ncols_d
     if (table_id == MMVQ_PARAMETERS_GENERIC) {
         switch (ncols_dst) {
             case 1:
-                if (type == GGML_TYPE_TQ3_4S) {
-                    // TQ3_4S has a heavier vec_dot than simple q4/q8 paths.
-                    // On NVIDIA, 4 warps overpay in shared reduction for bs=1 decode.
-                    return 2;
-                }
+                // TQ3_4S used to run 2 warps here: its old LUT-based vec_dot made 4 warps
+                // overpay in shared reduction. With the PRMT vec_dot the default 4 warps
+                // win (RTX 3090 tg128 43.1 -> 47.4 t/s; 8 warps regresses to 36.9).
                 [[fallthrough]];
             case 2:
             case 3:
@@ -1350,16 +1348,8 @@ void ggml_cuda_mul_mat_vec_q(
 
     const int64_t ne10_padded = GGML_PAD(ne10, MATRIX_ROW_PADDING);
     ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(), ne13*ne12 * ne11*ne10_padded * sizeof(block_q8_1)/QK8_1);
-    if (src0->type == GGML_TYPE_TQ3_4S) {
-        const int64_t n_act = ne13 * ne12 * ne11 * ne10;
-        ggml_cuda_pool_alloc<float> src1_rot(ctx.pool(), n_act);
-        ggml_cuda_tq3_rotate_act(src1_d, src1_rot.get(), n_act, stream);
-
-        const int64_t s11 = src1->nb[1] / ts_src1;
-        const int64_t s12 = src1->nb[2] / ts_src1;
-        const int64_t s13 = src1->nb[3] / ts_src1;
-        quantize_row_q8_1_cuda(src1_rot.get(), nullptr, src1_q8_1.get(), src0->type, ne10, s11, s12, s13, ne10_padded, ne11, ne12, ne13, stream);
-    } else {
+    {
+        // TQ3_4S activation rotation is fused into quantize_row_q8_1_cuda (keyed on type_src0).
         const int64_t s11 = src1->nb[1] / ts_src1;
         const int64_t s12 = src1->nb[2] / ts_src1;
         const int64_t s13 = src1->nb[3] / ts_src1;
@@ -1426,12 +1416,9 @@ void ggml_cuda_op_mul_mat_vec_q(
     const int64_t nrows_dst = id == ctx.device ? ne0 : row_diff;
 
     if (src0->type == GGML_TYPE_TQ3_4S) {
-        const int64_t n_act = src1_ncols * ne10;
-        ggml_cuda_pool_alloc<float> src1_rot(ctx.pool(id), n_act);
-        ggml_cuda_tq3_rotate_act(src1_ddf_i, src1_rot.get(), n_act, stream);
-
+        // Rotation is fused into quantize_row_q8_1_cuda (keyed on type_src0).
         ggml_cuda_pool_alloc<char> src1_q8_1(ctx.pool(id), src1_ncols * src1_padded_row_size * sizeof(block_q8_1)/QK8_1);
-        quantize_row_q8_1_cuda(src1_rot.get(), nullptr, src1_q8_1.get(), src0->type, ne10, ne10, src1_ncols*ne10, src1_ncols*ne10, src1_padded_row_size, src1_ncols, 1, 1, stream);
+        quantize_row_q8_1_cuda(src1_ddf_i, nullptr, src1_q8_1.get(), src0->type, ne10, ne10, src1_ncols*ne10, src1_ncols*ne10, src1_padded_row_size, src1_ncols, 1, 1, stream);
 
         const int stride_row_x = ne00 / ggml_blck_size(src0->type);
         const int stride_col_y = src1_padded_row_size / QK8_1;
