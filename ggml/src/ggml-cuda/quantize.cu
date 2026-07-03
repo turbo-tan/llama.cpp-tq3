@@ -100,7 +100,9 @@ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
 #endif
 
 // Pick the ue4m3 sub-block scale for NVFP4 activation quantization.
-static __device__ __forceinline__ void ggml_cuda_nvfp4_act_scale(
+// [[maybe_unused]]: the only callers live in BLACKWELL_MMA_AVAILABLE blocks, so on
+// non-Blackwell device passes (e.g. sm_89 CI) this is unreferenced under -Werror all-warnings.
+[[maybe_unused]] static __device__ __forceinline__ void ggml_cuda_nvfp4_act_scale(
         const float * vals, const float amax, uint8_t & fp8_code, float & subblock_scale) {
     const int first_fp8_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
 #if GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
