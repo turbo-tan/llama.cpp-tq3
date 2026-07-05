@@ -1333,6 +1333,10 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                     return false;
                 }
 
+                if (op->src[1]->type != GGML_TYPE_I32 && op->src[1]->type != GGML_TYPE_I64) {
+                    return false;
+                }
+
                 switch (op->type) {
                     case GGML_TYPE_F32:
                     case GGML_TYPE_F16:
