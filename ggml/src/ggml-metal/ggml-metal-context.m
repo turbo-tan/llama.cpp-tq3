@@ -706,6 +706,9 @@ void ggml_metal_set_n_cb(ggml_metal_t ctx, int n_cb) {
 
         for (int idx = 0; idx < ggml_metal_op_n_nodes(ctx_op); ++idx) {
             const int res = ggml_metal_op_encode(ctx_op, idx);
+            if (res < 0) {
+                GGML_ABORT("metal op encoding returned invalid fused node count");
+            }
             if (res == 0) {
                 break;
             }
