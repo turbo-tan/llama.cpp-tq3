@@ -73,6 +73,39 @@ jobs:
           cd build
           ctest -L main -E "test-llama-archs" --verbose --timeout 900
 
+  macos-latest-arm64-no-metal:
+    runs-on: macos-latest
+
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v6
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.21
+        with:
+          key: apple-arm64-no-metal
+          evict-old-files: 1d
+          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+
+      - name: Build
+        id: cmake_build
+        run: |
+          sysctl -a
+          cmake -B build \
+            -DCMAKE_BUILD_RPATH="@loader_path" \
+            -DLLAMA_FATAL_WARNINGS=ON \
+            -DLLAMA_BUILD_BORINGSSL=ON \
+            -DGGML_METAL=OFF \
+            -DGGML_RPC=ON
+          time cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: Test
+        id: cmake_test
+        run: |
+          cd build
+          ctest -L main -E "test-llama-archs" --verbose --timeout 900
+
   macos-latest-x64:
     runs-on: macos-15-intel
 

@@ -160,7 +160,26 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows(ggml_me
     return res;
 }
 
+<<<<<<< HEAD
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows(ggml_metal_library_t lib, const ggml_tensor * op) {
+=======
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq3_rht(ggml_metal_library_t lib) {
+    char base[256];
+    char name[256];
+
+    snprintf(base, 256, "kernel_tq3_4s_rht_f32");
+    snprintf(name, 256, "%s", base);
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
+    }
+
+    return res;
+}
+
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows(ggml_metal_library_t lib, ggml_type tidx, ggml_type tdst) {
+>>>>>>> f8397b2a2 (metal: add TQ3_4S GPU support (#59))
     char base[256];
     char name[256];
 
@@ -917,6 +936,11 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                 nsg = N_SG_IQ4_XS;
                 nr0 = N_R0_IQ4_XS;
                 smem = 32*sizeof(float);
+            } break;
+        case GGML_TYPE_TQ3_4S:
+            {
+                nsg = N_SG_TQ3_4S;
+                nr0 = N_R0_TQ3_4S;
             } break;
         default:
             {

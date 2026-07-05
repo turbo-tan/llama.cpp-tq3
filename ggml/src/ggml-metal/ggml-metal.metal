@@ -87,6 +87,79 @@ static inline float sum(float4 x) {
     return x[0] + x[1] + x[2] + x[3];
 }
 
+// ---------------------------------------------------------------------------
+// TurboQuant TQ3_4S (ggml type 46) helpers
+// block_tq3_4s (see ggml-common.h): uint8_t d[4] (E3M5 scales / group of 8)
+//                                   uint8_t qs[12] (32 x 3-bit packed indices)
+// Dequant = 8-level codebook lookup * per-group scale, then inverse randomized
+// Hadamard transform (sign flip + Walsh-Hadamard + 1/sqrt(32) norm) over the
+// 32-element block. Mirrors the CPU reference (ggml-quants.c) and the CUDA
+// kernel (ggml-cuda/convert.cu). The block size QK_TQ3_0 == 32 maps to one
+// 32-lane SIMD-group so the WHT butterfly is done with simd_shuffle_xor.
+// ---------------------------------------------------------------------------
+constant float TQ3_0_CENTROIDS_M[8] = {
+    -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+     0.230106f,  0.725222f,  1.277503f,  1.988943f
+};
+
+constant float TQ3_0_SIGNS_M[32] = {
+    +1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, +1.0f, -1.0f, +1.0f,
+    -1.0f, -1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+    -1.0f, +1.0f, +1.0f, -1.0f, +1.0f, -1.0f, -1.0f, +1.0f,
+};
+
+// E3M5 mini-float scale decode: scale = 2^((sb>>5)-9) * (1 + (sb&31)/32).
+// Implemented via direct IEEE-754 bit construction (matches CUDA MMQ path):
+//   exponent field = (sb>>5) + 118  (bias 127 => actual exp (sb>>5)-9)
+//   top 5 mantissa bits = (sb&31)
+static inline float tq3_4s_decode_scale(uint8_t sb) {
+    if (sb == 0) {
+        return 0.0f;
+    }
+    const uint bits = (((uint)(sb >> 5) + 118u) << 23) | ((uint)(sb & 31u) << 18);
+    return as_type<float>(bits);
+}
+
+// Fast path: a whole 16-byte block loaded as one aligned uint4 (avoids slow
+// byte-addressed loads). Layout: raw.x = d[0..3] (E3M5 scales), raw.yzw = qs[12].
+// Because each group packs 8 indices in exactly 3 bytes (24 bits), the index of
+// element j sits at bit 3*j of the 96-bit little-endian qs stream.
+static inline uint8_t tq3_4s_idx_from_block(uint4 raw, ushort j) {
+    const uint bitpos = 3u * (uint) j;
+    const uint w      = bitpos >> 5;   // qs word: 0,1,2
+    const uint off    = bitpos & 31u;
+    const uint cur = (w == 0u) ? raw.y : ((w == 1u) ? raw.z : raw.w);
+    uint v = cur >> off;
+    if (off > 29u && w < 2u) {         // 3-bit field straddles two words
+        const uint nxt = (w == 0u) ? raw.z : raw.w;
+        v |= nxt << (32u - off);
+    }
+    return (uint8_t) (v & 7u);
+}
+
+static inline float tq3_4s_scale_from_block(uint4 raw, ushort g) {
+    return tq3_4s_decode_scale((raw.x >> (8u * (uint) g)) & 0xffu);
+}
+
+// LOCAL dequant (codebook lookup * per-group scale, NO inverse RHT) for the GEMM
+// path. Valid only when the activation has been RHT-pre-transformed
+// (kernel_tq3_4s_rht_f32): dot(W_dequant, x) == dot(centroid*scale, RHT_fwd(x)).
+// Element ordering matches dequantize_q8_0 (contiguous: element 16*il + i).
+template <typename type4x4>
+void dequantize_tq3_4s(device const block_tq3_4s * xb, short il, thread type4x4 & reg) {
+    const uint4 raw = ((device const uint4 *) xb)[0];
+
+    float4x4 reg_f;
+    for (short i = 0; i < 16; ++i) {
+        const ushort e   = 16*il + i;
+        const ushort g   = e / 8;
+        const uint8_t idx = tq3_4s_idx_from_block(raw, e);
+        reg_f[i/4][i%4] = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
+    }
+    reg = (type4x4) reg_f;
+}
+
 // NOTE: this is not dequantizing - we are simply fitting the template
 template <typename type4x4>
 void dequantize_f32(device const float4x4 * src, short il, thread type4x4 & reg) {
@@ -9806,6 +9879,173 @@ kernel void kernel_mul_mv_mxfp4_f32(
     kernel_mul_mv_mxfp4_f32_impl<N_R0_MXFP4, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, shmem, tgpig, tiisg, sgitg);
 }
 
+// Pre-pass for TQ3_4S mat-mul: forward randomized Hadamard transform of the
+// activation, per 32-element block along K, written to a contiguous f32 buffer.
+// By RHT orthogonality, dot(W_dequant_row, x) == dot(centroid*scale, RHT_fwd(x)),
+// so after this pass the mat-vec needs only a local codebook lookup on the
+// weights (no per-weight butterfly), which frees the lane mapping to do fully
+// coalesced weight loads. One 32-element block maps to one 32-lane SIMD-group.
+kernel void kernel_tq3_4s_rht_f32(
+        constant ggml_metal_kargs_tq3_rht & args,
+        device const char * src1,
+        device       char * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+    const int    ib  = tgpig.x;            // 32-element block along K
+    const int    i11 = tgpig.y;            // activation column
+    const int    b   = tgpig.z;            // flattened batch (i12 + i13*ne12)
+    const int    i12 = b % args.ne12;
+    const int    i13 = b / args.ne12;
+    const ushort j   = tiisg;              // element within the block
+
+    device const float * y = (device const float *) (src1 + i13*args.nb13 + i12*args.nb12 + i11*args.nb11) + ib*QK_TQ3_0 + j;
+
+    float v = y[0] * TQ3_0_SIGNS_M[j];
+    for (ushort step = 1; step < 32; step <<= 1) {
+        const float o = simd_shuffle_xor(v, step);
+        v = (j & step) ? (o - v) : (o + v);
+    }
+    v *= 1.0f / sqrt(32.0f);
+
+    device float * o = (device float *) (dst + i13*args.ob13 + i12*args.ob12 + i11*args.ob11) + ib*QK_TQ3_0 + j;
+    o[0] = v;
+}
+
+// Matrix-vector product for TQ3_4S weights.
+//
+// src1 here is the RHT-pre-transformed activation (see kernel_tq3_4s_rht_f32),
+// so the weights only need a local codebook lookup + per-group scale. Each lane
+// owns whole 32-element K-blocks, strided by the SIMD-group width, so the 32
+// lanes read 32 consecutive 16-byte blocks per step -> fully coalesced loads.
+template<int nr0, typename args_t>
+void kernel_mul_mv_tq3_4s_f32_impl(
+        args_t args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        threadgroup  char * shmem,
+        uint3  tgpig,
+        ushort tiisg,
+        ushort sgitg) {
+    const short NSG = FC_mul_mv_nsg;
+
+    const int nb = args.ne00 / QK_TQ3_0; // number of 32-element K-blocks
+
+    const int r0 = tgpig.x;
+    const int r1 = tgpig.y;
+    const int im = tgpig.z;
+
+    const int first_row = (r0 * NSG + sgitg) * nr0;
+
+    const uint i12 = im%FC_mul_mv_ne12;
+    const uint i13 = im/FC_mul_mv_ne12;
+
+    const uint64_t offset0 = first_row*args.nb01 + (i12/FC_mul_mv_r2)*args.nb02 + (i13/FC_mul_mv_r3)*args.nb03;
+    const uint64_t offset1 =        r1*args.nb11 + (i12        )*args.nb12 + (i13        )*args.nb13;
+
+    device const char  * cx = src0 + offset0;
+    device const float * y  = (device const float *) (src1 + offset1); // RHT-pre-transformed activation
+
+    float sumf[nr0] = {0.f};
+
+    for (int ib = tiisg; ib < nb; ib += 32) {
+        device const float * ya = y + ib*QK_TQ3_0; // 32 pre-transformed activations
+
+        for (short row = 0; row < nr0; ++row) {
+            device const uint4 * bp = (device const uint4 *) (cx + row*args.nb01) + ib;
+            const uint4 raw = bp[0];
+
+            const float s0 = tq3_4s_decode_scale((raw.x      ) & 0xffu);
+            const float s1 = tq3_4s_decode_scale((raw.x >>  8) & 0xffu);
+            const float s2 = tq3_4s_decode_scale((raw.x >> 16) & 0xffu);
+            const float s3 = tq3_4s_decode_scale((raw.x >> 24) & 0xffu);
+
+            // 24-bit packed indices per group of 8 (qs = raw.yzw, little-endian)
+            const uint p0 =  (raw.y                       ) & 0xFFFFFFu;
+            const uint p1 = ((raw.y >> 24) | (raw.z <<  8)) & 0xFFFFFFu;
+            const uint p2 = ((raw.z >> 16) | (raw.w << 16)) & 0xFFFFFFu;
+            const uint p3 =  (raw.w >>  8                 ) & 0xFFFFFFu;
+
+            float a0 = 0.f, a1 = 0.f, a2 = 0.f, a3 = 0.f;
+            for (short r = 0; r < 8; ++r) {
+                a0 += TQ3_0_CENTROIDS_M[(p0 >> (3*r)) & 7] * ya[     r];
+                a1 += TQ3_0_CENTROIDS_M[(p1 >> (3*r)) & 7] * ya[ 8 + r];
+                a2 += TQ3_0_CENTROIDS_M[(p2 >> (3*r)) & 7] * ya[16 + r];
+                a3 += TQ3_0_CENTROIDS_M[(p3 >> (3*r)) & 7] * ya[24 + r];
+            }
+
+            sumf[row] += s0*a0 + s1*a1 + s2*a2 + s3*a3;
+        }
+    }
+
+    device float * dst_f32 = (device float *) dst + (int64_t)im*args.ne0*args.ne1 + (int64_t)r1*args.ne0;
+
+    for (int row = 0; row < nr0 && first_row + row < args.ne0; ++row) {
+        const float sum_all = simd_sum(sumf[row]);
+        if (tiisg == 0) {
+            dst_f32[first_row + row] = sum_all;
+        }
+    }
+}
+
+[[host_name("kernel_mul_mv_tq3_4s_f32")]]
+kernel void kernel_mul_mv_tq3_4s_f32(
+        constant ggml_metal_kargs_mul_mv & args,
+        device const char * src0,
+        device const char * src1,
+        device       char * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]],
+        ushort sgitg[[simdgroup_index_in_threadgroup]]) {
+
+    kernel_mul_mv_tq3_4s_f32_impl<N_R0_TQ3_4S, constant ggml_metal_kargs_mul_mv &>(args, src0, src1, dst, nullptr, tgpig, tiisg, sgitg);
+}
+
+// Custom get_rows for TQ3_4S: the generic template dequantizes per-thread which
+// cannot do the block-wide inverse RHT. Dispatched as one 32-lane SIMD-group per
+// gathered row (see ggml_metal_op_get_rows); the simd-group loops over the row's
+// 32-element blocks and applies the inverse RHT via simd_shuffle_xor.
+kernel void kernel_get_rows_tq3_4s(
+        constant ggml_metal_kargs_get_rows & args,
+        device const void * src0,
+        device const void * src1,
+        device       void * dst,
+        uint3  tgpig[[threadgroup_position_in_grid]],
+        ushort tiisg[[thread_index_in_simdgroup]]) {
+    const int32_t i10 = tgpig.x;
+    const int32_t i11 = tgpig.y;
+    const int32_t i12 = tgpig.z;
+
+    const int32_t r = ((const device int32_t *) ((const device char *) src1 + i12*args.nb12 + i11*args.nb11 + i10*args.nb10))[0];
+
+    const int32_t i02 = i11;
+    const int32_t i03 = i12;
+
+    device const block_tq3_4s * psrc = (device const block_tq3_4s *) ((const device char *) src0 + i03*args.nb03 + i02*args.nb02 + r*args.nb01);
+    device       float        * pdst = (device       float        *) ((      device char *) dst  + i12*args.nb3  + i11*args.nb2  + i10*args.nb1);
+
+    const int    nb   = args.ne00 / QK_TQ3_0; // 32-element blocks in the row
+    const ushort j    = tiisg;                // lane == element index within block
+    const ushort g    = j / 8;
+    const float  sign = TQ3_0_SIGNS_M[j];
+    const float  norm = 1.0f / sqrt(32.0f);
+
+    for (int ib = 0; ib < nb; ++ib) {
+        const uint4 raw = ((device const uint4 *) psrc)[ib];
+
+        const uint8_t idx = tq3_4s_idx_from_block(raw, j);
+        float val = TQ3_0_CENTROIDS_M[idx] * tq3_4s_scale_from_block(raw, g);
+
+        // inverse randomized Hadamard transform across the 32 lanes
+        for (ushort step = 1; step < 32; step <<= 1) {
+            const float o = simd_shuffle_xor(val, step);
+            val = (j & step) ? (o - val) : (o + val);
+        }
+
+        pdst[ib*QK_TQ3_0 + j] = val * sign * norm;
+    }
+}
+
 template<typename block_q, short nl, void (*dequantize_func)(device const block_q *, short, thread float4x4 &)>
 kernel void kernel_get_rows_q(
         constant ggml_metal_kargs_get_rows & args,
@@ -10755,6 +10995,7 @@ template [[host_name("kernel_mul_mm_q4_1_f32")]]    kernel mul_mm_t kernel_mul_m
 template [[host_name("kernel_mul_mm_q5_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_0,    2,     dequantize_q5_0,    float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q5_1_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q5_1,    2,     dequantize_q5_1,    float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q8_0_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q8_0,    2,     dequantize_q8_0,    float,  float4x4,  float, float2x4>;
+template [[host_name("kernel_mul_mm_tq3_4s_f32")]]  kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_tq3_4s,  2,     dequantize_tq3_4s,  float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_mxfp4_f32")]]   kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_mxfp4,   2,     dequantize_mxfp4,   float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q2_K_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q2_K,    QK_NL, dequantize_q2_K,    float,  float4x4,  float, float2x4>;
 template [[host_name("kernel_mul_mm_q3_K_f32")]]    kernel mul_mm_t kernel_mul_mm<half,   half4x4,   simdgroup_half8x8,   half,   half2x4,   simdgroup_half8x8,   block_q3_K,    QK_NL, dequantize_q3_K,    float,  float4x4,  float, float2x4>;

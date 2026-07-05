@@ -1351,8 +1351,11 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                             default:
                                 return false;
                         }
+<<<<<<< HEAD
                     case GGML_TYPE_Q1_0:
                     case GGML_TYPE_Q2_0:
+=======
+>>>>>>> f8397b2a2 (metal: add TQ3_4S GPU support (#59))
                     case GGML_TYPE_Q4_0:
                     case GGML_TYPE_Q4_1:
                     case GGML_TYPE_Q5_0:
@@ -1380,6 +1383,10 @@ bool ggml_metal_device_supports_op(ggml_metal_device_t dev, const struct ggml_te
                 }
 
                 if (op->src[0]->type != GGML_TYPE_F32) {
+                    return false;
+                }
+
+                if (op->src[1]->type != GGML_TYPE_I32 && op->src[1]->type != GGML_TYPE_I64) {
                     return false;
                 }
 
