@@ -205,6 +205,7 @@ struct tool_arguments_analysis {
     std::string value_prefix;  // e.g., "", "<arg_value>", ""
     std::string value_suffix;  // e.g., "</param>", "</arg_value>", ""
     std::string separator;     // e.g., "", "\n", ","
+    bool tolerate_intertag_whitespace = false; // Laguna: accept optional whitespace between arg tags
 };
 
 struct tool_id_analysis {
@@ -387,6 +388,7 @@ struct autoparser {
 
     // Preserved tokens for tokenizer (union of all non-empty markers)
     std::vector<std::string> preserved_tokens;
+    std::vector<std::string> additional_stops;  // literal stop strings (e.g. Laguna </assistant>) caught however tokenized
 
     autoparser() = default;
 
