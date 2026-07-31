@@ -428,6 +428,7 @@ extern "C" {
         // GGML_TYPE_IQ4_NL_8_8 = 38,
         GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
+        GGML_TYPE_Q2_0    = 41, // restored: fork uses Q2_0 extensively (upstream removed)
         GGML_TYPE_Q1_0    = 42,
         GGML_TYPE_TQ3_1S  = 44, // TurboQuant 3-bit with two half-block scales
         GGML_TYPE_TQ3_4S  = 46, // TurboQuant 3-bit with four u8 per-8 scales (4.0 bpw)

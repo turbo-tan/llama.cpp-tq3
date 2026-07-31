@@ -2186,9 +2186,9 @@ size_t quantize_q1_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, 
 size_t quantize_q2_0(const float * GGML_RESTRICT src, void * GGML_RESTRICT dst, int64_t nrow, int64_t n_per_row, const float * quant_weights) {
     if (!quant_weights) {
         quantize_row_q2_0_ref(src, dst, (int64_t)nrow*n_per_row);
-        return nrow * (n_per_row / QK2_0) * sizeof(block_q2_0);
+        return nrow * ggml_row_size(GGML_TYPE_Q2_0, n_per_row);
     }
-    size_t row_size = (n_per_row / QK2_0) * sizeof(block_q2_0);
+    size_t row_size = ggml_row_size(GGML_TYPE_Q2_0, n_per_row);
     char * qrow = (char *)dst;
     for (int64_t row = 0; row < nrow; ++row) {
         quantize_row_q2_0_ref(src, (block_q2_0*)qrow, n_per_row);
@@ -6856,7 +6856,7 @@ bool ggml_validate_row_data(enum ggml_type type, const void * data, size_t nbyte
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q1_0, data, nb);
             } break;
-        case GGML_TYPE_TQ2_0:  // was Q2_0, removed upstream
+        case GGML_TYPE_Q2_0:
             {
                 VALIDATE_ROW_DATA_D_F16_IMPL(block_q2_0, data, nb);
             } break;
