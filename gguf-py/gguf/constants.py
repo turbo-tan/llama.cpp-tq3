@@ -212,11 +212,6 @@ class Keys:
         SINKHORN_ITERATIONS  = "{arch}.hyper_connection.sinkhorn_iterations"
         EPSILON              = "{arch}.hyper_connection.epsilon"
 
-    class HyperConnection:
-        COUNT                = "{arch}.hyper_connection.count"
-        SINKHORN_ITERATIONS  = "{arch}.hyper_connection.sinkhorn_iterations"
-        EPSILON              = "{arch}.hyper_connection.epsilon"
-
     class Rope:
         DIMENSION_COUNT           = "{arch}.rope.dimension_count"
         DIMENSION_COUNT_SWA       = "{arch}.rope.dimension_count_swa"
