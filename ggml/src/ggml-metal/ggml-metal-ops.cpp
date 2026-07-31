@@ -1214,7 +1214,7 @@ int ggml_metal_op_set_rows(ggml_metal_op_t ctx, int idx) {
     GGML_TENSOR_LOCALS( int32_t, ne,  op,         ne);
     GGML_TENSOR_LOCALS(uint64_t, nb,  op,         nb);
 
-    auto pipeline = ggml_metal_library_get_pipeline_set_rows(lib, op->src[1]->type, op->type);
+    auto pipeline = ggml_metal_library_get_pipeline_set_rows(lib, op);
     if (!pipeline.pipeline) {
         GGML_LOG_ERROR("%s: missing set_rows pipeline for dst type %s and idx type %s\n", __func__, ggml_type_name(op->type), ggml_type_name(op->src[1]->type));
         return -1;
@@ -2265,10 +2265,6 @@ int ggml_metal_op_mul_mat(ggml_metal_op_t ctx, int idx) {
     }
     const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
 
-    if (op->src[0]->type == GGML_TYPE_TQ3_4S) {
-        return ggml_metal_op_mul_mat_tq3_4s(ctx, idx);
-    }
-
     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);
     GGML_TENSOR_LOCALS( int32_t, ne1, op->src[1], ne);
@@ -2517,6 +2513,10 @@ int ggml_metal_op_mul_mat_id(ggml_metal_op_t ctx, int idx) {
     ggml_metal_encoder_t enc = ctx->enc;
 
     const ggml_metal_device_props * props_dev = ggml_metal_device_get_props(ctx->dev);
+
+    if (op->src[0]->type == GGML_TYPE_TQ3_4S) {
+        return ggml_metal_op_mul_mat_tq3_4s(ctx, idx);
+    }
 
     GGML_TENSOR_LOCALS( int32_t, ne0, op->src[0], ne);
     GGML_TENSOR_LOCALS(uint64_t, nb0, op->src[0], nb);

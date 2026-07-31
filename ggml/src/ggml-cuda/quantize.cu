@@ -2,6 +2,7 @@
 #include "tq3-native.cuh"
 #include <cstdint>
 
+template <bool tq3_rotate>
 #if defined(BLACKWELL_MMA_AVAILABLE)
 // this maps to 256-bit loads in PTX on supported devices,
 // and otherwise falls back to 2 128-bit loads
@@ -51,6 +52,7 @@ static __device__ __forceinline__ float nvfp4_native_scale_error(
 }
 #endif // CUDART_VERSION >= 12080
 
+template <bool tq3_rotate>
 __launch_bounds__(CUDA_QUANTIZE_BLOCK_SIZE, 1)
 static __global__ void quantize_q8_1(
         const float * x_ptr, void * vy_ptr,
@@ -138,6 +140,57 @@ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
     return static_cast<uint8_t>(biased);
 }
 
+// Number of ue4m3 scale candidates tested per NVFP4 sub-block when quantizing
+// activations: 1 = use ue4m3(amax/6) directly, 3 = also test the {-1,+1}
+// neighboring codes, 5 = also test {-2,+2}. More candidates reduce activation
+// quantization error at the cost of extra ALU per thread; on bandwidth-lean
+// parts (GB10) the search dominates the quantizer's runtime.
+#ifndef GGML_CUDA_NVFP4_ACT_CANDIDATES
+#define GGML_CUDA_NVFP4_ACT_CANDIDATES 1
+#endif
+
+// Pick the ue4m3 sub-block scale for NVFP4 activation quantization.
+// [[maybe_unused]]: the only callers live in BLACKWELL_MMA_AVAILABLE blocks, so on
+// non-Blackwell device passes (e.g. sm_89 CI) this is unreferenced under -Werror all-warnings.
+[[maybe_unused]] static __device__ __forceinline__ void ggml_cuda_nvfp4_act_scale(
+        const float * vals, const float amax, uint8_t & fp8_code, float & subblock_scale) {
+    const int first_fp8_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
+#if GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
+    GGML_UNUSED(vals);
+    fp8_code       = (uint8_t) min(first_fp8_code, 0x7e);
+    subblock_scale = ggml_cuda_ue4m3_to_fp32(fp8_code);
+#else
+    static constexpr int test_offsets[5] = { 0, -1, 1, -2, 2 };
+
+    float best_err = FLT_MAX;
+    fp8_code       = 0;
+    subblock_scale = 0.0f;
+
+#pragma unroll // Check neighboring codes to find the one with the lowest NVFP4 activation loss.
+    for (int i = 0; i < GGML_CUDA_NVFP4_ACT_CANDIDATES; i++) {
+        const int test_code = first_fp8_code + test_offsets[i];
+        if (test_code < 0 || test_code > 0x7e) {
+            continue;
+        }
+        const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
+        const float test_inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
+        float cur_err = 0.0f;
+#pragma unroll
+        for (int k = 0; k < QK_NVFP4_SUB; ++k) {
+            const float v = vals[k];
+            const uint8_t q = ggml_cuda_float_to_fp4_e2m1(v, test_inv_scale);
+            const float err_diff = fabsf(v) - fabsf(kvalues_mxfp4[q & 0x7]) * test_scale;
+            cur_err = fmaf(err_diff, err_diff, cur_err);
+        }
+
+        if (cur_err < best_err) {
+            best_err       = cur_err;
+            fp8_code       = (uint8_t) test_code;
+            subblock_scale = test_scale;
+        }
+    }
+#endif // GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
+}
 // scatter: grid over tokens, quantize once, write to all the token's compact rows
 template <bool scatter, bool use_aligned_float8>
 static __global__ void quantize_mmq_nvfp4(
@@ -869,11 +922,9 @@ void quantize_scatter_mmq_fp4_cuda(
 void quantize_mmq_fp4_cuda(
         const float * x, const int32_t * ids, void * vy, float * scale, const ggml_type type_src0, const bool use_aligned_float8,
         const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
-        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream,
-        bool rotate) {
+        const int64_t ne0, const int64_t ne1, const int64_t ne2, const int64_t ne3, cudaStream_t stream) {
     GGML_ASSERT(type_src0 == GGML_TYPE_MXFP4 || type_src0 == GGML_TYPE_NVFP4);
     GGML_ASSERT(ne0 > 0);
-    GGML_ASSERT(!rotate || type_src0 == GGML_TYPE_NVFP4); // fused TQ3 rotate is NVFP4-only
 
     if (type_src0 == GGML_TYPE_NVFP4) {
         GGML_ASSERT(scale);

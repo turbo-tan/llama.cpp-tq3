@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cinttypes>
-#include <cstring>
 #include <exception>
 #include <memory>
 #include <filesystem>
@@ -48,41 +47,11 @@ static uint32_t server_n_outputs_max(const common_params & params) {
         return n_batch;
     }
 
-    const bool spec_mtp = std::find(params.speculative.types.begin(), params.speculative.types.end(),
-                                    COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end()
-                       || std::find(params.speculative.types.begin(), params.speculative.types.end(),
-                                    COMMON_SPECULATIVE_TYPE_DRAFT_MTP) != params.speculative.types.end();
-    if (spec_mtp) {
-        return n_batch;
-    }
-
     const uint32_t n_outputs_per_seq = 1 + common_speculative_n_max(&params.speculative);
 
     const uint64_t n_outputs = (uint64_t) params.n_parallel * n_outputs_per_seq;
 
     return std::max<uint32_t>(1, std::min<uint64_t>(n_batch, n_outputs));
-}
-
-static common_context_seq_rm_type server_seq_rm_type_for_startup(llama_context * ctx, bool warmup_enabled) {
-    if (ctx == nullptr) {
-        return COMMON_CONTEXT_SEQ_RM_TYPE_NO;
-    }
-
-    if (warmup_enabled) {
-        return common_context_can_seq_rm(ctx);
-    }
-
-    if (llama_get_memory(ctx) == nullptr) {
-        return COMMON_CONTEXT_SEQ_RM_TYPE_NO;
-    }
-
-    // Avoid decode-based probing during --no-warmup startup. Use the most
-    // conservative rollback mode that still keeps speculative decoding usable.
-    if (llama_n_rs_seq(ctx) > 0) {
-        return COMMON_CONTEXT_SEQ_RM_TYPE_RS;
-    }
-
-    return COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
 }
 
 // state diagram: https://github.com/ggml-org/llama.cpp/pull/9283
@@ -1206,14 +1175,6 @@ private:
             }
         }
 
-        if (spec_mtp) {
-            string_parse_kv_override("llama.nomtp_trunk_only=bool:true", params_base.kv_overrides);
-            if (params_base.kv_overrides.empty() || params_base.kv_overrides.back().key[0] != 0) {
-                params_base.kv_overrides.emplace_back();
-                params_base.kv_overrides.back().key[0] = 0;
-            }
-        }
-
         // attach a progress callback
         {
             params_base.load_progress_callback = load_progress_callback;
@@ -1335,7 +1296,7 @@ private:
 
         slots.clear();
 
-        ctx_tgt_seq_rm_type = server_seq_rm_type_for_startup(ctx_tgt, params_base.warmup);
+        ctx_tgt_seq_rm_type = common_context_can_seq_rm(ctx_tgt);
         if (ctx_tgt_seq_rm_type == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
             SRV_WRN("%s", "speculative decoding not supported by this context\n");
         }
@@ -1493,7 +1454,7 @@ private:
 
         if (params_base.cache_idle_slots) {
             if (params_base.cache_ram_mib == 0) {
-                SRV_WRN("%s: --cache-idle-slots requires --cache-ram, disabling\n", __func__);
+                SRV_WRN("%s", "--cache-idle-slots requires --cache-ram, disabling\n");
                 params_base.cache_idle_slots = false;
             } else {
                 if (params_base.kv_unified) {
@@ -1705,22 +1666,15 @@ private:
             if (update_cache) {
                 SRV_TRC("%s", "updating prompt cache\n");
 
-                const int64_t t_start = ggml_time_us();                // Save the current slot's KV to cache-ram (frees VRAM), if any
-                const bool saved_prompt = ret->prompt_save(*prompt_cache);
+                const int64_t t_start = ggml_time_us();
 
-                // Always try to load the target prompt from cache-ram.
-                // This is needed even when saved_prompt is false (e.g. cache-idle-slots
-                // already cleared the slot's tokens in process_single_task but the KV
-                // was previously saved to cache-ram).
+                ret->prompt_save(*prompt_cache);
+
                 if (!ret->prompt_load(*prompt_cache, task.tokens)) {
-                    // If we saved something but couldn't load, clear the slot
-                    if (saved_prompt) {
-                        ret->prompt_clear(false);
-                    }
+                    ret->prompt_clear();
                 }
-                if (saved_prompt) {
-                    prompt_cache->update();
-                }
+
+                prompt_cache->update();
 
                 SRV_TRC("prompt cache update took %.2f ms\n", (ggml_time_us() - t_start) / 1000.0);
             }
@@ -2137,8 +2091,7 @@ private:
             res->is_begin = true;
         } else {
             res->content = tkn.text_to_send;
-            res->tokens.clear();
-            res->tokens.push_back(tkn.tok);
+            res->tokens  = { tkn.tok };
         }
 
         res->n_decoded             = slot.n_decoded;
@@ -3006,10 +2959,6 @@ private:
         std::vector<server_slot *> generating;
         std::vector<server_slot *> drafting;
 
-        const uint32_t spec_ckpt_flags =
-            LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY |
-            ((params_base.n_ctx_checkpoints == 0 && params_base.cache_ram_mib == 0) ? LLAMA_STATE_SEQ_FLAGS_ON_DEVICE : 0);
-
         // determine which slots are generating and drafting
         iterate(slots, [&](server_slot & slot) {
             if (slot.state != SLOT_STATE_GENERATING) {
@@ -3106,7 +3055,7 @@ private:
                 if (use_ckpt_tgt) {
                     //const int64_t t_start = ggml_time_us();
 
-                    ckpt.update_tgt(ctx_tgt, slot.id, spec_ckpt_flags);
+                    ckpt.update_tgt(ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
 
                     //const int64_t t_total = ggml_time_us() - t_start;
                     //printf("checkpoint total: %f ms\n", t_total / 1000.0);
@@ -3532,8 +3481,8 @@ private:
                         has_mtmd = true;
                     }
 
-                    const int32_t n_before_user = slot.task->params.n_before_user;
-                    const bool n_before_user_known = n_before_user > 0;
+                    const auto & spans = slot.task->params.message_spans;
+                    const auto last_user_pos = spans.last_user_message_pos();
 
                     // add prompt tokens for processing in the current batch
                     while (slot.prompt.n_tokens() < slot.task->n_tokens() && batch.size() < n_batch) {
@@ -3557,7 +3506,7 @@ private:
                         add_ok &= batch.add(slot.id,
                             cur_tok,
                             slot.prompt.tokens.pos_next(),
-                            slot.need_embd() || slot.need_embd_nextn());
+                            slot.need_embd());
                         slot.prompt.tokens.push_back(cur_tok);
 
                         slot.n_prompt_tokens_processed++;
@@ -3601,6 +3550,9 @@ private:
 
                     const bool near_prompt_end = slot.task->n_tokens() < slot.prompt.n_tokens() + n_ubatch;
 
+                    const bool is_user_start = spans.is_user_start(n_tokens_start);
+                    const bool is_last_user_message = n_tokens_start == last_user_pos;
+
                     // entire prompt has been processed
                     if (slot.prompt.n_tokens() == slot.task->n_tokens()) {
                         slot.state = SLOT_STATE_DONE_PROMPT;
@@ -3615,28 +3567,10 @@ private:
 
                         slot.init_sampler();
                     } else {
-                        // skip ordinary mid-prompt checkpoints
-                        if (!n_before_user_known && !near_prompt_end) {
+                        // skip ordinary mid-prompt checkpoints, unless the batch starts a user
+                        // message or we are near the end of the prompt
+                        if (!is_user_start && !near_prompt_end) {
                             do_checkpoint = false;
-                        }
-
-                        {
-                            const bool is_on_user =
-                                n_before_user_known &&
-                                n_tokens_start == n_before_user;
-
-                            const bool is_after_user =
-                                n_before_user_known &&
-                                n_tokens_start > n_before_user;
-
-                            const bool is_allowed =
-                                !n_before_user_known ||
-                                is_on_user ||
-                                (is_after_user && near_prompt_end);
-
-                            if (do_checkpoint && !is_allowed) {
-                                do_checkpoint = false;
-                            }
                         }
                     }
 
@@ -3947,23 +3881,10 @@ private:
 
                         SLT_DBG(slot, "restoring speculative checkpoint (pos_min = %d, pos_max = %d, size = %zu)\n", ckpt.pos_min, ckpt.pos_max, ckpt.size());
 
-                        // the speculative checkpoint restore flags must match the flags used to
-                        // save it in pre_decode(); otherwise an ON_DEVICE checkpoint is read back
-                        // in host mode and overruns the (device-metadata-only) buffer.
-                        const uint32_t spec_ckpt_flags =
-                            LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY |
-                            ((params_base.n_ctx_checkpoints == 0 && params_base.cache_ram_mib == 0) ? LLAMA_STATE_SEQ_FLAGS_ON_DEVICE : 0);
-
-                        {
-                            ckpt.load_tgt(slot.ctx_tgt, slot.id, spec_ckpt_flags);
-
-                            common_context_seq_rm(slot.ctx_tgt, slot.id, ckpt.pos_max + 1, -1);
-                        }
+                        ckpt.load_tgt(slot.ctx_tgt, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
 
                         if (slot.ctx_dft) {
-                            ckpt.load_dft(slot.ctx_dft, slot.id, spec_ckpt_flags);
-
-                            common_context_seq_rm(slot.ctx_dft, slot.id, ckpt.pos_max + 1, -1);
+                            ckpt.load_dft(slot.ctx_dft, slot.id, LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY);
                         }
 
                         slot.mem.seq_rm(slot.id, ckpt.pos_max + 1, -1);
