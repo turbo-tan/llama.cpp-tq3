@@ -1184,14 +1184,6 @@ private:
             }
         }
 
-        if (spec_mtp) {
-            string_parse_kv_override("llama.nomtp_trunk_only=bool:true", params_base.kv_overrides);
-            if (params_base.kv_overrides.empty() || params_base.kv_overrides.back().key[0] != 0) {
-                params_base.kv_overrides.emplace_back();
-                params_base.kv_overrides.back().key[0] = 0;
-            }
-        }
-
         // attach a progress callback
         {
             params_base.load_progress_callback = load_progress_callback;
@@ -1267,41 +1259,11 @@ private:
             params_base.speculative.draft.ctx_tgt = ctx_tgt;
             params_base.speculative.draft.ctx_dft = ctx_dft.get();
         } else if (spec_mtp) {
-            char trunk_arch[64] = {0};
-            llama_model_meta_val_str(model_tgt, "general.architecture", trunk_arch, sizeof(trunk_arch));
+            // no new model load: the MTP draft context shares the target model weights
+            load_progress_callback(0.0f, &load_progress_spec);
 
-            const char * mtp_arch = nullptr;
-            if (std::string(trunk_arch) == "qwen35" || std::string(trunk_arch) == "qwen35moe") {
-                mtp_arch = "qwen35_mtp";
-            } else {
-                SRV_ERR("MTP not supported for trunk architecture '%s'\n", trunk_arch);
-                return false;
-            }
-
-            SRV_TRC("loading MTP head from '%s' (override_arch=%s)\n",
-                    params_base.model.path.c_str(), mtp_arch);
-
-            auto params_mtp = params_base;
-            params_mtp.kv_overrides.erase(
-                    std::remove_if(params_mtp.kv_overrides.begin(), params_mtp.kv_overrides.end(), [](const llama_model_kv_override & ovrd) {
-                        return ovrd.key[0] == 0 ||
-                               std::strcmp(ovrd.key, "llama.nomtp_trunk_only") == 0 ||
-                               std::strcmp(ovrd.key, "llama.mtp_only") == 0;
-                    }),
-                    params_mtp.kv_overrides.end());
-            string_parse_kv_override("llama.mtp_only=bool:true", params_mtp.kv_overrides);
-            if (params_mtp.kv_overrides.empty() || params_mtp.kv_overrides.back().key[0] != 0) {
-                params_mtp.kv_overrides.emplace_back();
-                params_mtp.kv_overrides.back().key[0] = 0;
-            }
-
-            auto mparams_mtp = common_model_params_to_llama(params_mtp);
-
-            model_dft.reset(llama_model_load_from_file(params_base.model.path.c_str(), mparams_mtp));
-            if (model_dft == nullptr) {
-                SRV_ERR("failed to load MTP head from '%s'\n", params_base.model.path.c_str());
-                return false;
-            }
+            SRV_TRC("creating MTP draft context against the target model '%s'\n",
+                    params_base.model.path.c_str());
 
             auto cparams_mtp = common_context_params_to_llama(params_base);
             cparams_mtp.ctx_type      = LLAMA_CONTEXT_TYPE_MTP;
@@ -1311,7 +1273,7 @@ private:
             cparams_mtp.n_outputs_max = params_base.n_parallel;
             cparams_mtp.ctx_other     = ctx_tgt;
 
-            ctx_dft.reset(llama_init_from_model(model_dft.get(), cparams_mtp));
+            ctx_dft.reset(llama_init_from_model(model_tgt, cparams_mtp));
             if (ctx_dft == nullptr) {
                 SRV_ERR("%s", "failed to create MTP context\n");
                 return false;
