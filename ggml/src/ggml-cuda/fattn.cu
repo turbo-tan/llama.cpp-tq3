@@ -258,15 +258,6 @@ static void ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2(ggml_backend_cuda_c
     ggml_cuda_flash_attn_ext_mma_turbo_case<DKQ, DV, 8, 1, type_K, type_V>(ctx, dst);
 }
 
-// Default ON. Set GGML_TURBO_MMA_FUSED=0 to fall back to VEC.
-static bool ggml_cuda_turbo_mma_fused() {
-    static const bool v = [] {
-        const char * s = getenv("GGML_TURBO_MMA_FUSED");
-        return !(s && s[0] == '0');
-    }();
-    return v;
-}
-
 #define FATTN_VEC_CASE(D, type_K, type_V)                                                                        \
     {                                                                                                            \
         const bool type_K_okay = K->type == (type_K) || (K->type == GGML_TYPE_F32 && (type_K) == GGML_TYPE_F16); \
