@@ -53,15 +53,8 @@ TEXT_MODEL_MAP: dict[str, str] = {
     "DeepseekV3ForCausalLM": "deepseek",
     "DeepseekV32ForCausalLM": "deepseek",
     "DFlashDraftModel": "qwen",
-<<<<<<< HEAD
-<<<<<<< HEAD
     "Qwen3DSparkModel": "qwen",
     "DeepseekV4ForCausalLM": "deepseek",
-=======
->>>>>>> dd18e43b8 (spec : add DFlash support (#22105))
-=======
-    "DeepseekV4ForCausalLM": "deepseek",
->>>>>>> cfdcf7f9b (DeepSeek V4  (#24162))
     "DistilBertForMaskedLM": "bert",
     "DistilBertForSequenceClassification": "bert",
     "DistilBertModel": "bert",

@@ -2,7 +2,6 @@
 #include "tq3-native.cuh"
 #include <cstdint>
 
-template <bool tq3_rotate>
 #if defined(BLACKWELL_MMA_AVAILABLE)
 // this maps to 256-bit loads in PTX on supported devices,
 // and otherwise falls back to 2 128-bit loads

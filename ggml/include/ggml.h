@@ -2743,6 +2743,10 @@ extern "C" {
             struct ggml_tensor  * b,  // labels
             struct ggml_tensor  * c); // gradients of cross_entropy_loss result
 
+    GGML_API struct ggml_tensor * ggml_turbo_wht(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
+
     // AdamW optimizer step
     // Paper: https://arxiv.org/pdf/1711.05101v3.pdf
     // PyTorch: https://pytorch.org/docs/stable/generated/torch.optim.AdamW.html
