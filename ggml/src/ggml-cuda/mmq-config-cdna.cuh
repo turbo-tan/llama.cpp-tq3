@@ -59,7 +59,7 @@ static constexpr __host__ __device__ ggml_cuda_mmq_config ggml_cuda_mmq_get_conf
 
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  16, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  32, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, true);
-    CASE(GGML_TYPE_Q2_K, 512, 1, 128,  64, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, true);
+    CASE(GGML_TYPE_Q2_K, 512, 1,  64,  64, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, true);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  16, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  32, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, false);
     CASE(GGML_TYPE_Q2_K, 512, 1, 128,  48, GGML_CUDA_MMQ_SRAM_LAYOUT_Q2_K, MMQ_ITER_K, true, false);
