@@ -88,17 +88,6 @@ static int ffs(int x) {
 #include <strings.h>
 #endif
 
-// Portable ffs (find first set bit) for Windows/MSVC compatibility
-#if defined(_MSC_VER)
-#include <intrin.h>
-static int ffs(int x) {
-    unsigned long i;
-    return _BitScanForward(&i, (unsigned long)x) ? (int)(i + 1) : 0;
-}
-#else
-#include <strings.h>
-#endif
-
 // precomputed f32 table for f16 (256 KB) (simd-mappings.h)
 float ggml_table_f32_f16[1 << 16];
 
