@@ -106,15 +106,19 @@ struct mtmd_cli_context {
     mtmd_cli_context(common_params & params) : llama_init(common_init_from_params(params)) {
         model = llama_init->model();
         lctx = llama_init->context();
+
+        if (!model || !lctx) {
+            // guard before any dereference: load failure leaves model == nullptr,
+            // and llama_model_get_vocab()/common_sampler_init() would segfault
+            // (FAULT-002, fork fault registry 2026-08-07; also present upstream)
+            exit(1);
+        }
+
         vocab = llama_model_get_vocab(model);
         smpl = common_sampler_init(model, params.sampling);
         n_threads = params.cpuparams.n_threads;
         batch = llama_batch_init(1, 0, 1); // batch for next token generation
         n_batch = params.n_batch;
-
-        if (!model || !lctx) {
-            exit(1);
-        }
 
         if (!llama_model_chat_template(model, nullptr) && params.chat_template.empty()) {
             LOG_ERR("Model does not have chat template.\n");
