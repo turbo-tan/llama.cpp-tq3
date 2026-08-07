@@ -39,6 +39,7 @@ export * from './max-bundle-size';
 export * from './mcp';
 export * from './mcp-form';
 export * from './mcp-resource';
+export * from './mention-badge';
 export * from './message-export';
 export * from './model-id';
 export * from './model-loading';
