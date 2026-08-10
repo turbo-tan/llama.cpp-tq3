@@ -3,6 +3,9 @@
 	import { type AgenticSection } from '$lib/utils';
 	import { parseFileGlobSearchMeta } from './parsers/file-glob-search';
 	import ToolCallBlock from './ToolCallBlock.svelte';
+	import { XCircle } from '@lucide/svelte';
+	import { toolsStore } from '$lib/stores/tools.svelte';
+	import { abbreviateHome, type AgenticSection } from '$lib/utils';
 
 	interface Props {
 		section: AgenticSection;
@@ -11,7 +14,7 @@
 		onToggle?: () => void;
 	}
 
-	let { section, open, isStreaming, onToggle }: Props = $props();
+	let { isStreaming, onToggle, open, section }: Props = $props();
 
 	const fileGlobMeta = $derived(parseFileGlobSearchMeta(section));
 </script>

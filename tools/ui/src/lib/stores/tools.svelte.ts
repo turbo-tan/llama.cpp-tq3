@@ -10,6 +10,25 @@ import {
 	TOOL_SERVER_LABELS
 } from '$lib/constants';
 
+import {
+	buildSandboxToolDefinition,
+	DISABLED_TOOL_KEYS_LOCALSTORAGE_KEY,
+	HOME_TILDE,
+	TOOL_GROUP_LABELS,
+	TOOL_SERVER_LABELS
+} from '$lib/constants';
+import {
+	BuiltInTool,
+	GlobSearchType,
+	HealthCheckStatus,
+	JsonSchemaType,
+	ToolCallType,
+	ToolSource
+} from '$lib/enums';
+import { ToolsService } from '$lib/services/tools.service';
+import { mcpStore } from '$lib/stores/mcp.svelte';
+import { config } from '$lib/stores/settings.svelte';
+import type { OpenAIToolDefinition, ToolEntry, ToolGroup } from '$lib/types';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
 /** Stable selection identity for a tool, shared by the disabled set and the permission store */
@@ -27,8 +46,10 @@ class ToolsStore {
 	constructor() {
 		try {
 			const stored = localStorage.getItem(DISABLED_TOOL_KEYS_LOCALSTORAGE_KEY);
+
 			if (stored) {
 				const parsed = JSON.parse(stored);
+
 				if (Array.isArray(parsed)) {
 					for (const key of parsed) {
 						if (typeof key === 'string') this._disabledTools.add(key);
@@ -68,10 +89,15 @@ class ToolsStore {
 
 	private inferTypeFromDefault(value: unknown): string | undefined {
 		if (typeof value === 'string') return 'string';
+
 		if (typeof value === 'boolean') return 'boolean';
+
 		if (typeof value === 'number') return Number.isInteger(value) ? 'integer' : 'number';
+
 		if (Array.isArray(value)) return 'array';
+
 		if (value !== null && typeof value === 'object') return 'object';
+
 		return undefined;
 	}
 
@@ -88,9 +114,11 @@ class ToolsStore {
 		if (normalized.properties && typeof normalized.properties === 'object') {
 			const props = normalized.properties as Record<string, Record<string, unknown>>;
 			const normalizedProps: Record<string, Record<string, unknown>> = {};
+
 			for (const [key, prop] of Object.entries(props)) {
 				if (!prop || typeof prop !== 'object') {
 					normalizedProps[key] = prop;
+
 					continue;
 				}
 
@@ -98,6 +126,7 @@ class ToolsStore {
 
 				if (!normalizedProp.type && normalizedProp.default !== undefined) {
 					const inferred = this.inferTypeFromDefault(normalizedProp.default);
+
 					if (inferred) normalizedProp.type = inferred;
 				}
 
@@ -128,12 +157,12 @@ class ToolsStore {
 		schema?: Record<string, unknown>
 	): OpenAIToolDefinition {
 		return {
-			type: ToolCallType.FUNCTION,
 			function: {
-				name,
 				description,
-				parameters: schema ?? { type: JsonSchemaType.OBJECT, properties: {}, required: [] }
-			}
+				name,
+				parameters: schema ?? { properties: {}, required: [], type: JsonSchemaType.OBJECT }
+			},
+			type: ToolCallType.FUNCTION
 		};
 	}
 
@@ -153,10 +182,12 @@ class ToolsStore {
 
 	get customTools(): OpenAIToolDefinition[] {
 		const raw = config().customJson;
+
 		if (!raw || typeof raw !== 'string') return [];
 
 		try {
 			const parsed = JSON.parse(raw);
+
 			if (!Array.isArray(parsed)) return [];
 
 			return parsed.filter(
@@ -180,28 +211,30 @@ class ToolsStore {
 		definition: OpenAIToolDefinition;
 	}[] {
 		const out: { serverId: string; serverName: string; definition: OpenAIToolDefinition }[] = [];
-
 		const connections = mcpStore.getConnections();
+
 		if (connections.size > 0) {
 			for (const [serverId, connection] of connections) {
 				const serverName = mcpStore.getServerDisplayName(serverId);
+
 				for (const tool of connection.tools) {
 					const rawSchema = (tool.inputSchema as Record<string, unknown>) ?? {
-						type: JsonSchemaType.OBJECT,
 						properties: {},
-						required: []
+						required: [],
+						type: JsonSchemaType.OBJECT
 					};
+
 					out.push({
-						serverId,
-						serverName,
 						definition: {
-							type: ToolCallType.FUNCTION,
 							function: {
-								name: tool.name,
 								description: tool.description,
+								name: tool.name,
 								parameters: this.normalizeJsonSchema(rawSchema)
-							}
-						}
+							},
+							type: ToolCallType.FUNCTION
+						},
+						serverId,
+						serverName
 					});
 				}
 			}
@@ -209,9 +242,9 @@ class ToolsStore {
 			for (const { serverId, serverName, tools } of this.getMcpToolsFromHealthChecks()) {
 				for (const tool of tools) {
 					out.push({
+						definition: this.mcpDefinition(tool.name, tool.description),
 						serverId,
-						serverName,
-						definition: this.mcpDefinition(tool.name, tool.description)
+						serverName
 					});
 				}
 			}
@@ -224,48 +257,52 @@ class ToolsStore {
 	get allTools(): ToolEntry[] {
 		const entries: ToolEntry[] = [];
 		const seen = new SvelteSet<string>();
-
 		const push = (entry: ToolEntry) => {
 			if (seen.has(entry.key)) return;
+
 			seen.add(entry.key);
 			entries.push(entry);
 		};
 
 		for (const def of this._builtinTools) {
 			const name = def.function.name;
+
 			push({
-				source: ToolSource.BUILTIN,
+				definition: def,
 				key: this.toolKey(ToolSource.BUILTIN, name),
-				definition: def
+				source: ToolSource.BUILTIN
 			});
 		}
 
 		for (const def of this.frontendTools) {
 			const name = def.function.name;
+
 			push({
-				source: ToolSource.FRONTEND,
+				definition: def,
 				key: this.toolKey(ToolSource.FRONTEND, name),
-				definition: def
+				source: ToolSource.FRONTEND
 			});
 		}
 
-		for (const { serverId, serverName, definition } of this.mcpEntries()) {
+		for (const { definition, serverId, serverName } of this.mcpEntries()) {
 			const name = definition.function.name;
+
 			push({
-				source: ToolSource.MCP,
+				definition,
+				key: this.toolKey(ToolSource.MCP, name, serverId),
 				serverId,
 				serverName,
-				key: this.toolKey(ToolSource.MCP, name, serverId),
-				definition
+				source: ToolSource.MCP
 			});
 		}
 
 		for (const def of this.customTools) {
 			const name = def.function.name;
+
 			push({
-				source: ToolSource.CUSTOM,
+				definition: def,
 				key: this.toolKey(ToolSource.CUSTOM, name),
-				definition: def
+				source: ToolSource.CUSTOM
 			});
 		}
 
@@ -282,12 +319,13 @@ class ToolsStore {
 				entry.source === ToolSource.MCP ? `mcp:${entry.serverId ?? ''}` : entry.source;
 
 			let group = byKey.get(groupKey);
+
 			if (!group) {
 				group = {
-					source: entry.source,
 					key: groupKey,
 					label: this.groupLabel(entry),
 					serverId: entry.serverId,
+					source: entry.source,
 					tools: []
 				};
 				byKey.set(groupKey, group);
@@ -321,6 +359,7 @@ class ToolsStore {
 	 */
 	getEnabledToolsForLLM(): OpenAIToolDefinition[] {
 		const enabledNames = new SvelteSet<string>();
+
 		for (const entry of this.allTools) {
 			if (!this._disabledTools.has(entry.key)) {
 				enabledNames.add(entry.definition.function.name);
@@ -329,10 +368,11 @@ class ToolsStore {
 
 		const result: OpenAIToolDefinition[] = [];
 		const seen = new SvelteSet<string>();
-
 		const take = (def: OpenAIToolDefinition) => {
 			const name = def.function.name;
+
 			if (!enabledNames.has(name) || seen.has(name)) return;
+
 			seen.add(name);
 			result.push(def);
 		};
@@ -376,6 +416,7 @@ class ToolsStore {
 		} else {
 			this._disabledTools.add(key);
 		}
+
 		this.persistDisabledTools();
 	}
 
@@ -390,7 +431,9 @@ class ToolsStore {
 	/** Enable all tools belonging to a specific MCP server */
 	enableAllToolsForServer(serverId: string): void {
 		const connection = mcpStore.getConnections().get(serverId);
+
 		if (!connection) return;
+
 		for (const tool of connection.tools) {
 			this._disabledTools.delete(this.toolKey(ToolSource.MCP, tool.name, serverId));
 		}
@@ -400,6 +443,7 @@ class ToolsStore {
 	toggleGroup(group: ToolGroup): void {
 		const allEnabled = group.tools.every((t) => this.isToolEnabled(t.key));
 		const target = !allEnabled;
+
 		for (const tool of group.tools) {
 			if (target) this._disabledTools.delete(tool.key);
 			else this._disabledTools.add(tool.key);
@@ -418,9 +462,12 @@ class ToolsStore {
 		tools: { name: string; description?: string }[];
 	}[] {
 		const result: ReturnType<ToolsStore['getMcpToolsFromHealthChecks']> = [];
+
 		for (const server of mcpStore.getServers()) {
 			if (!server.enabled) continue;
+
 			const health = mcpStore.getHealthCheckState(server.id);
+
 			if (health.status === HealthCheckStatus.SUCCESS && health.tools.length > 0) {
 				result.push({
 					serverId: server.id,
@@ -429,6 +476,7 @@ class ToolsStore {
 				});
 			}
 		}
+
 		return result;
 	}
 
@@ -437,6 +485,7 @@ class ToolsStore {
 		for (const entry of this.allTools) {
 			if (entry.definition.function.name === toolName) return entry;
 		}
+
 		return null;
 	}
 
@@ -448,11 +497,17 @@ class ToolsStore {
 	/** Get the display label for the server that owns a given tool */
 	getToolServerLabel(toolName: string): string {
 		const entry = this.findEntryByName(toolName);
+
 		if (!entry) return '';
+
 		if (entry.serverName) return mcpStore.getServerDisplayName(entry.serverName);
+
 		if (entry.source === ToolSource.BUILTIN) return TOOL_SERVER_LABELS[ToolSource.BUILTIN];
+
 		if (entry.source === ToolSource.CUSTOM) return TOOL_SERVER_LABELS[ToolSource.CUSTOM];
+
 		if (entry.source === ToolSource.FRONTEND) return TOOL_SERVER_LABELS[ToolSource.FRONTEND];
+
 		return '';
 	}
 
@@ -490,13 +545,16 @@ class ToolsStore {
 
 		try {
 			const toolInfos = await ToolsService.list();
+
 			this._builtinTools = toolInfos.map((info) => info.definition);
 			this._cwdAwareTools = new SvelteSet(
 				toolInfos.filter((info) => info.uses_cwd).map((info) => info.tool)
 			);
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
+
 			this._error = errorMessage;
+
 			// 403 from /tools means the server was started without --tools
 			// TODO: check status code instead of relying on message
 			if (errorMessage.includes('this feature is disabled')) {
@@ -508,6 +566,32 @@ class ToolsStore {
 		} finally {
 			this._loading = false;
 		}
+	}
+
+	/**
+	 * Absolute home directory on the server, resolved once per session via
+	 * file_glob_search's `base` field (the server expands `~`). Anchors the
+	 * directory picker's search scope and the `~` abbreviation of cwd
+	 * displays. Returns null when tools are unavailable.
+	 */
+	async resolveServerHome(): Promise<string | null> {
+		if (this._serverHome !== undefined) return this._serverHome;
+
+		try {
+			const res = await ToolsService.executeToolRaw(BuiltInTool.FILE_GLOB_SEARCH, {
+				limit: 1,
+				max_depth: 1,
+				path: HOME_TILDE,
+				type: GlobSearchType.DIR
+			});
+
+			this._serverHome = typeof res.base === 'string' ? res.base : null;
+		} catch {
+			// searches still work via a literal `~`, only `~` abbreviation degrades
+			this._serverHome = null;
+		}
+
+		return this._serverHome;
 	}
 }
 

@@ -7,7 +7,6 @@
 // (see ChatMessageToolCallBlockGetDatetime and
 // ChatMessageToolCallBlockSearchResults for prior art).
 
-import type { Component } from 'svelte';
 import {
 	Braces,
 	Clock,
@@ -19,6 +18,7 @@ import {
 	Terminal
 } from '@lucide/svelte';
 import { BuiltInTool, ToolSource } from '$lib/enums';
+import type { Component } from 'svelte';
 
 export interface BuiltinToolUiEntry {
 	icon: Component;
@@ -27,7 +27,6 @@ export interface BuiltinToolUiEntry {
 }
 
 export const BUILTIN_TOOL_UI: Readonly<Record<BuiltInTool, BuiltinToolUiEntry>> = {
-	[BuiltInTool.READ_FILE]: { icon: FileText, label: 'Read file', source: ToolSource.BUILTIN },
 	[BuiltInTool.EDIT_FILE]: { icon: FilePen, label: 'Edit file', source: ToolSource.BUILTIN },
 	[BuiltInTool.WRITE_FILE]: { icon: FilePlus, label: 'Write file', source: ToolSource.BUILTIN },
 	[BuiltInTool.FILE_GLOB_SEARCH]: {
@@ -46,14 +45,29 @@ export const BUILTIN_TOOL_UI: Readonly<Record<BuiltInTool, BuiltinToolUiEntry>> 
 		label: 'Run command',
 		source: ToolSource.BUILTIN
 	},
+	[BuiltInTool.FILE_GLOB_SEARCH]: {
+		icon: FileSearch,
+		label: 'Search files',
+		source: ToolSource.BUILTIN
+	},
+	[BuiltInTool.GET_DATETIME]: { icon: Clock, label: 'Current time', source: ToolSource.BUILTIN },
+	[BuiltInTool.GET_INFO]: { icon: Info, label: 'Runtime info', source: ToolSource.BUILTIN },
+	[BuiltInTool.GREP_SEARCH]: {
+		icon: SearchCode,
+		label: 'Search in files',
+		source: ToolSource.BUILTIN
+	},
+	[BuiltInTool.READ_FILE]: { icon: FileText, label: 'Read file', source: ToolSource.BUILTIN },
 	[BuiltInTool.RUN_JAVASCRIPT]: {
 		icon: Braces,
 		label: 'Run JavaScript',
 		source: ToolSource.FRONTEND
-	}
+	},
+	[BuiltInTool.WRITE_FILE]: { icon: FilePlus, label: 'Write file', source: ToolSource.BUILTIN }
 } as const;
 
 export function getBuiltinToolUi(toolName: string | undefined): BuiltinToolUiEntry | null {
 	if (!toolName) return null;
+
 	return (BUILTIN_TOOL_UI as Record<string, BuiltinToolUiEntry>)[toolName] ?? null;
 }
