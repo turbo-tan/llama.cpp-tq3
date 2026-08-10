@@ -66,7 +66,14 @@ void llama_model_dflash::load_arch_hparams(llama_model_loader & ml) {
     // DFlash has a single rope, so the SWA rope == main rope.
     if (ml.get_key(LLM_KV_ATTENTION_SLIDING_WINDOW, hparams.n_swa, false) && hparams.n_swa > 0) {
         hparams.swa_type = LLAMA_SWA_TYPE_STANDARD;
-        ml.get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.is_swa_impl, hparams.n_layer());
+        // optional: absent on some dspark drafter files (e.g. the official
+        // DeepSeek-V4-Flash-0731 drafter GGUF); DSV4 DSpark stages use a
+        // uniform sliding window, so default to all-SWA
+        if (!ml.get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN, hparams.is_swa_impl, hparams.n_layer(), false)) {
+            for (uint32_t il = 0; il < hparams.n_layer(); ++il) {
+                hparams.is_swa_impl[il] = true;
+            }
+        }
         hparams.rope_freq_base_train_swa  = hparams.rope_freq_base_train;
         hparams.rope_freq_scale_train_swa = hparams.rope_freq_scale_train;
     }
