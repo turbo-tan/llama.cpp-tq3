@@ -166,7 +166,7 @@ jobs:
             -DLLAMA_BUILD_BORINGSSL=ON `
             -DHIP_PATH="${env:HIP_PATH}" `
             -DGGML_HIP=ON `
-            -DGPU_TARGETS="gfx1100"  `
+            -DGPU_TARGETS="gfx1100" `
             -DGGML_RPC=ON
           cmake --build build -j ${env:NUMBER_OF_PROCESSORS}
 
