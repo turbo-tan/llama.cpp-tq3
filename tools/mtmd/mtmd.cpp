@@ -262,6 +262,14 @@ struct mtmd_context {
     struct clip_ctx * ctx_a; // audio
     std::vector<float> out_embd; // image embedding vector
 
+    // generation context
+    struct clip_ctx * ctx_gen_a; // audio
+    std::vector<int32_t> gen_out_codes; // this frame's 16 sampled codes (GEN_CODE)
+    std::vector<float>   gen_out_feats; // this frame's continuous features, if any (GEN_CODE)
+    std::vector<float>   gen_out_embd;  // next-step hidden state fed back to backbone (GEN_CODE)
+    std::vector<float>   gen_out_audio; // decoded PCM samples for the current frame (GEN_WAV)
+    std::vector<uint8_t> gen_out_state; // state to feed into the next GEN_WAV call
+
     bool print_timings;
     int n_threads;
     std::string media_marker;
@@ -745,6 +753,14 @@ struct mtmd_context {
                     aud_beg = "<|mimo_audio_start|>";
                     aud_end = "<|mimo_audio_end|>";
                     audio_preproc = std::make_unique<mtmd_audio_preprocessor_mimo_audio>(ctx_a);
+                } break;
+            case PROJECTOR_TYPE_QWEN3TTS_SPKENC:
+                {
+                    audio_preproc = std::make_unique<mtmd_audio_preprocessor_qwen3tts_spk>(ctx_a);
+                } break;
+            case PROJECTOR_TYPE_POCKETTTS_SPKENC:
+                {
+                    audio_preproc = std::make_unique<mtmd_audio_preprocessor_pockettts>(ctx_a);
                 } break;
             default:
                 throw std::runtime_error(string_format("%s: unexpected audio projector type %d\n", __func__, proj));
@@ -1563,6 +1579,181 @@ int32_t mtmd_encode(mtmd_context * ctx, const mtmd_image_tokens * image_tokens) 
 
 float * mtmd_get_output_embd(mtmd_context * ctx) {
     return ctx->out_embd.data();
+}
+
+//
+// audio generation
+//
+
+mtmd_gen_audio_info mtmd_gen_audio_get_info(const mtmd_context * ctx) {
+    mtmd_gen_audio_info info{};
+    info.model_variant = "";
+    if (!ctx->ctx_gen_a) {
+        info.type = MTMD_GEN_AUDIO_TYPE_NONE;
+        return info;
+    }
+    info.model_variant = clip_get_hparams(ctx->ctx_gen_a)->gen_model_variant.c_str();
+    switch (clip_get_projector_type(ctx->ctx_gen_a)) {
+        case PROJECTOR_TYPE_QWEN3TTS_GEN:
+            info.type = MTMD_GEN_AUDIO_TYPE_QWEN3TTS;
+            info.sample_rate = 24000;
+            break;
+        case PROJECTOR_TYPE_POCKETTTS_GEN:
+            info.type = MTMD_GEN_AUDIO_TYPE_POCKETTTS;
+            info.sample_rate = 24000;
+            break;
+        default:
+            info.type = MTMD_GEN_AUDIO_TYPE_NONE;
+            break;
+    }
+    return info;
+}
+
+mtmd_gen_inp mtmd_gen_inp_default(const mtmd_context * ctx) {
+    mtmd_gen_inp inp{};
+    inp.type = MTMD_GEN_PROCESS_TYPE_GEN_CODE;
+    inp.seed = UINT32_MAX;
+    if (!ctx->ctx_gen_a) {
+        return inp;
+    }
+
+    switch (clip_get_projector_type(ctx->ctx_gen_a)) {
+        case PROJECTOR_TYPE_QWEN3TTS_GEN:
+            // https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-Base/blob/main/generation_config.json
+            inp.top_k = 50;
+            inp.top_p = 1.0f;
+            inp.temp  = 0.9f; // TODO: handle this on graph
+            break;
+        case PROJECTOR_TYPE_POCKETTTS_GEN:
+            // https://github.com/kyutai-labs/pocket-tts/blob/main/pocket_tts/default_parameters.py
+            inp.top_k = 50;
+            inp.top_p = 1.0f;
+            inp.temp  = 0.7f;
+            break;
+        default:
+            break;
+    }
+    return inp;
+}
+
+static int32_t mtmd_gen_audio_process_impl(mtmd_context * ctx, const mtmd_gen_inp * inp, mtmd_gen_out * out) {
+    clip_ctx * ctx_clip = ctx->ctx_gen_a;
+    if (!ctx_clip) {
+        LOG_ERR("%s: model does not support audio generation\n", __func__);
+        return 1;
+    }
+
+    *out = {};
+
+    if (inp->type == MTMD_GEN_PROCESS_TYPE_GEN_CODE) {
+        const size_t n_embd = (size_t) clip_n_mmproj_embd(ctx_clip);
+
+        clip_image_f32 hidden_state;
+        hidden_state.set_size({(int) n_embd, 1}, false, true);
+        hidden_state.cpy_buf(std::vector<float>(inp->embd, inp->embd + n_embd));
+
+        clip_image_f32_batch batch;
+        batch.is_audio = true;
+        batch.entries.push_back(std::move(hidden_state));
+
+        std::vector<float>   out_embd(n_embd);
+        std::vector<int32_t> out_codes;
+        std::vector<float>   out_feats;
+        bool is_eos = false;
+
+        clip_encode_params params;
+        params.imgs          = &batch;
+        params.n_threads     = ctx->n_threads;
+        params.gen_process   = CLIP_GEN_PROCESS_GEN_CODE;
+        params.out_embd      = &out_embd;
+        params.out_codes     = &out_codes;
+        params.out_feats     = &out_feats;
+        params.code0         = inp->code0;
+        params.top_k         = inp->top_k;
+        params.top_p         = inp->top_p;
+        params.seed          = inp->seed;
+        params.temp          = inp->temp;
+        params.out_is_eos    = &is_eos;
+
+        if (!clip_encode(ctx_clip, &params)) {
+            LOG_ERR("%s: clip_encode failed (gen_code)\n", __func__);
+            return 1;
+        }
+
+        ctx->gen_out_embd  = std::move(out_embd);
+        ctx->gen_out_codes = std::move(out_codes);
+        ctx->gen_out_feats = std::move(out_feats);
+
+        out->embd      = ctx->gen_out_embd.data();
+        out->codes     = ctx->gen_out_codes.data();
+        out->n_codes   = ctx->gen_out_codes.size();
+        out->feats     = ctx->gen_out_feats.data();
+        out->n_feats   = ctx->gen_out_feats.size();
+        out->is_eos    = is_eos;
+        return 0;
+    }
+
+    // MTMD_GEN_PROCESS_TYPE_GEN_WAV
+    const bool has_codes = inp->codes && inp->n_codes > 0;
+    const bool has_feats = inp->feats && inp->n_feats > 0;
+    if (has_codes == has_feats) {
+        LOG_ERR("%s: gen_wav requires exactly one of codes or feats\n", __func__);
+        return 1;
+    }
+    std::vector<int32_t> in_codes;
+    std::vector<float>   in_feats;
+    if (has_codes) {
+        in_codes.assign(inp->codes, inp->codes + inp->n_codes);
+    } else {
+        in_feats.assign(inp->feats, inp->feats + inp->n_feats);
+    }
+    std::vector<uint8_t> in_state;
+    if (inp->state_data) {
+        in_state.assign(inp->state_data, inp->state_data + inp->state_size);
+    }
+
+    // gen_wav has no hidden-state input, the batch entry is an unused placeholder
+    // TODO @ngxson : some models in the future may require hidden-state input, need to update this code later
+    clip_image_f32 dummy;
+    dummy.set_size({1, 1}, false, true);
+    dummy.cpy_buf(std::vector<float>(1, 0.0f));
+
+    clip_image_f32_batch batch;
+    batch.is_audio = true;
+    batch.entries.push_back(std::move(dummy));
+
+    clip_encode_params params;
+    params.imgs        = &batch;
+    params.n_threads   = ctx->n_threads;
+    params.gen_process = CLIP_GEN_PROCESS_GEN_WAV;
+    // gen_wav draws no randomness, but keep the seed so it does not reseed mid-generation
+    params.seed        = inp->seed;
+    params.codes       = has_codes ? &in_codes : nullptr;
+    params.feats       = has_feats ? &in_feats : nullptr;
+    params.out_audio   = &ctx->gen_out_audio;
+    params.state_in    = inp->state_data ? &in_state : nullptr;
+    params.state_out   = &ctx->gen_out_state;
+
+    if (!clip_encode(ctx_clip, &params)) {
+        LOG_ERR("%s: clip_encode failed (code2wav)\n", __func__);
+        return 1;
+    }
+
+    out->audio      = ctx->gen_out_audio.data();
+    out->n_samples  = ctx->gen_out_audio.size();
+    out->state_data = (const char *) ctx->gen_out_state.data();
+    out->state_size = ctx->gen_out_state.size();
+
+    return 0;
+}
+
+int32_t mtmd_gen_audio_process(mtmd_context * ctx, const struct mtmd_gen_inp * inp, struct mtmd_gen_out * out) {
+    try {
+        return mtmd_gen_audio_process_impl(ctx, inp, out);
+    } catch (const std::exception & e) {
+        LOG_ERR("%s: error: %s\n", __func__, e.what());
+        return 1;
+    }
 }
 
 mtmd_batch * mtmd_batch_init(mtmd_context * ctx) {

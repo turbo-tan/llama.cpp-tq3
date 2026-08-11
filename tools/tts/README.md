@@ -115,3 +115,28 @@ And to play the audio we can again use aplay or any other media player:
 ```console
 $ aplay output.wav
 ```
+
+## Pocket TTS
+
+Available params:
+- `--tts-speaker-file` should point to a speaker reference audio file (wav, mp3). It is required, the model produces almost no audio without it
+- Note: `lang` is not used, the language is a property of the weights
+
+Example usage:
+
+```sh
+llama-tts -m pocket-tts.gguf \
+    -mm mmproj-pocket-tts.gguf \
+    -p "Hello world" \
+    --tts-speaker-file speaker.mp3 \
+    --output out.wav
+```
+
+**Note for GGUF conversion:**
+
+The [upstream repository](https://huggingface.co/kyutai/pocket-tts) holds one complete model per language under `languages/`, next to a set of shared files at the root. Convert one of the `languages/<name>` directories, **not** the root directory:
+
+```sh
+python convert_hf_to_gguf.py path/to/pocket-tts/languages/english --outfile pocket-tts.gguf
+python convert_hf_to_gguf.py path/to/pocket-tts/languages/english --mmproj --outfile mmproj-pocket-tts.gguf
+```

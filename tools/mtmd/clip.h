@@ -84,6 +84,38 @@ int clip_n_mmproj_embd(const struct clip_ctx * ctx);
 bool clip_image_encode      (struct clip_ctx * ctx, int n_threads, const clip_image_f32 * img, std::vector<float> & out_vec);
 bool clip_image_batch_encode(struct clip_ctx * ctx, int n_threads, const struct clip_image_f32_batch * imgs, std::vector<float> & out_batch_embd);
 
+enum clip_gen_process_type {
+    CLIP_GEN_PROCESS_GEN_UNKNOWN,
+    CLIP_GEN_PROCESS_GEN_CODE, // h_state to codes
+    CLIP_GEN_PROCESS_GEN_WAV,  // codes to raw PCM audio
+};
+struct clip_encode_params {
+    int n_threads = 1;
+    const clip_image_f32_batch * imgs = nullptr;
+    std::vector<float> * out_embd = nullptr;
+
+    // for audio gen, imgs has exactly one entry: hidden state from backbone (GEN_CODE) or unused (GEN_WAV)
+    clip_gen_process_type gen_process = CLIP_GEN_PROCESS_GEN_UNKNOWN;
+
+    // GEN_CODE: out_embd receives the embd to feed back to the backbone
+    int32_t code0 = 0; // semantic code sampled by the backbone
+    int32_t top_k = 50;
+    float   top_p = 1.0f;
+    std::vector<int32_t> * out_codes = nullptr; // this frame's 16 sampled codes
+    std::vector<float> * out_feats = nullptr; // continuous counterpart of out_codes
+    uint32_t seed = UINT32_MAX;               // UINT32_MAX for random
+    float   temp = 0.0f;                      // sampling temperature, noise scale for flow-matching decoders
+    bool * out_is_eos = nullptr;
+
+    // GEN_WAV
+    const std::vector<int32_t> * codes = nullptr;     // this frame's 16 RVQ codes
+    const std::vector<float> *   feats = nullptr;     // continuous counterpart of codes
+    std::vector<float> * out_audio = nullptr;         // decoded PCM samples, F32
+    const std::vector<uint8_t> * state_in  = nullptr; // state from previous call, null or wrong size means cold start
+    std::vector<uint8_t> *       state_out = nullptr; // state for the next call
+};
+bool clip_encode(struct clip_ctx * ctx, struct clip_encode_params * params);
+
 bool clip_is_llava(const struct clip_ctx * ctx);
 // note for contributor: this clip_is_(model) pattern is deprecated
 //                       do NOT add new functions like this
