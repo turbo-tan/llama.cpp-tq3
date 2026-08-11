@@ -73,7 +73,7 @@ jobs:
         run: |
           cd tools/server/tests
           source venv/bin/activate
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
       - name: Tests (GPUx1, backend-sampling)
         id: server_integration_tests_backend_sampling
@@ -82,7 +82,7 @@ jobs:
           cd tools/server/tests
           source venv/bin/activate
           export LLAMA_ARG_BACKEND_SAMPLING=1
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
       - name: Tests (GPUx2)
         id: server_integration_tests_gpu2
@@ -91,7 +91,7 @@ jobs:
           cd tools/server/tests
           source venv/bin/activate
           export GGML_METAL_DEVICES=2
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
       - name: Tests (GPUx2, backend-sampling)
         id: server_integration_tests_gpu2_backend_sampling
@@ -100,7 +100,7 @@ jobs:
           cd tools/server/tests
           source venv/bin/activate
           export GGML_METAL_DEVICES=2 LLAMA_ARG_BACKEND_SAMPLING=1
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
   server-cuda:
     if: github.repository == 'ggml-org/llama.cpp'
@@ -134,7 +134,7 @@ jobs:
         run: |
           cd tools/server/tests
           source venv/bin/activate
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
       - name: Tests (GPUx1, backend-sampling)
         id: server_integration_tests_backend_sampling
@@ -143,7 +143,7 @@ jobs:
           cd tools/server/tests
           source venv/bin/activate
           export LLAMA_ARG_BACKEND_SAMPLING=1
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
       - name: Tests (GPUx2)
         id: server_integration_tests_gpu2
@@ -152,7 +152,7 @@ jobs:
           cd tools/server/tests
           source venv/bin/activate
           export GGML_CUDA_DEVICES=2
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
       - name: Tests (GPUx2, backend-sampling)
         id: server_integration_tests_gpu2_backend_sampling
@@ -161,7 +161,7 @@ jobs:
           cd tools/server/tests
           source venv/bin/activate
           export GGML_CUDA_DEVICES=2 LLAMA_ARG_BACKEND_SAMPLING=1
-          pytest -v -x -m "not slow"
+          ./tests.sh
 
   server-kleidiai:
     runs-on: ah-ubuntu_22_04-c8g_8x
@@ -221,4 +221,4 @@ jobs:
         run: |
           cd tools/server/tests
           source venv/bin/activate
-          pytest -v -x -m "not slow"
+          ./tests.sh
