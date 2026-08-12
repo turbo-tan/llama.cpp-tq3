@@ -33,7 +33,9 @@ import { SandboxService } from '$lib/services/sandbox.service';
 import { isAbortError } from '$lib/utils';
 import { DEFAULT_AGENTIC_CONFIG, NEWLINE } from '$lib/constants';
 import {
+	AUDIO_MIME_TO_EXTENSION,
 	DATA_URI_BASE64_REGEX,
+	DEFAULT_AUDIO_EXTENSION,
 	DEFAULT_IMAGE_EXTENSION,
 	IMAGE_MIME_TO_EXTENSION,
 	MCP_ATTACHMENT_NAME_PREFIX
@@ -47,6 +49,7 @@ import {
 	ToolCallType
 } from '$lib/enums';
 import { ChatService } from '$lib/services';
+import { ReadMediaService } from '$lib/services/read-media.service';
 import { SandboxService } from '$lib/services/sandbox.service';
 import { ToolsService } from '$lib/services/tools.service';
 import { conversationsStore } from '$lib/stores/conversations.svelte';
@@ -86,9 +89,10 @@ import type {
 import type {
 	DatabaseMessage,
 	DatabaseMessageExtra,
+	DatabaseMessageExtraAudioFile,
 	DatabaseMessageExtraImageFile
 } from '$lib/types/database';
-import { isAbortError } from '$lib/utils';
+import { getAudioInputFormat, isAbortError } from '$lib/utils';
 import { SvelteMap } from 'svelte/reactivity';
 
 function createDefaultSession(): AgenticSession {
@@ -915,7 +919,18 @@ class AgenticStore {
 							if (executionResult.isError) toolSuccess = false;
 						} else if (toolSource === ToolSource.FRONTEND) {
 							const args = this.parseToolArguments(toolCall.function.arguments);
-							const executionResult = await SandboxService.executeTool(toolName, args, signal);
+							const executionResult =
+								toolName === BuiltInTool.READ_MEDIA
+									? await ReadMediaService.executeTool(
+											args,
+											{
+												audio: modelsStore.modelSupportsAudio(effectiveModel),
+												vision: modelsStore.modelSupportsVision(effectiveModel)
+											},
+											signal,
+											conversationsStore.activeConversation?.cwd
+										)
+									: await SandboxService.executeTool(toolName, args, signal);
 
 							result = executionResult.content;
 
@@ -1005,7 +1020,19 @@ class AgenticStore {
 				];
 
 				for (const attachment of attachments) {
-					if (attachment.type === AttachmentType.IMAGE) {
+					if (attachment.type === AttachmentType.AUDIO) {
+						if (modelsStore.modelSupportsAudio(effectiveModel)) {
+							contentParts.push({
+								input_audio: {
+									data: (attachment as DatabaseMessageExtraAudioFile).base64Data,
+									format: getAudioInputFormat(
+										(attachment as DatabaseMessageExtraAudioFile).mimeType
+									)
+								},
+								type: ContentPartType.INPUT_AUDIO
+							});
+						}
+					} else if (attachment.type === AttachmentType.IMAGE) {
 						if (modelsStore.modelSupportsVision(effectiveModel)) {
 							contentParts.push({
 								image_url: {
@@ -1116,6 +1143,18 @@ class AgenticStore {
 				return `[Attachment saved: ${name}]`;
 			}
 
+			if (mimeType.startsWith(MimeTypePrefix.AUDIO)) {
+				// audio extras hold the bare base64, the input_audio part has no room for a data URI
+				attachments.push({
+					base64Data,
+					mimeType,
+					name,
+					type: AttachmentType.AUDIO
+				});
+
+				return `[Attachment saved: ${name}]`;
+			}
+
 			return line;
 		});
 
@@ -1123,7 +1162,9 @@ class AgenticStore {
 	}
 
 	private buildAttachmentName(mimeType: string, index: number): string {
-		const extension = IMAGE_MIME_TO_EXTENSION[mimeType] ?? DEFAULT_IMAGE_EXTENSION;
+		const extension = mimeType.startsWith(MimeTypePrefix.AUDIO)
+			? (AUDIO_MIME_TO_EXTENSION[mimeType] ?? DEFAULT_AUDIO_EXTENSION)
+			: (IMAGE_MIME_TO_EXTENSION[mimeType] ?? DEFAULT_IMAGE_EXTENSION);
 
 		return `${MCP_ATTACHMENT_NAME_PREFIX}-${Date.now()}-${index}.${extension}`;
 	}
