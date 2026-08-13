@@ -11,30 +11,14 @@
  * @see ChatService in services/chat.service.ts for API operations
  */
 
-import { CONTENT_TYPE_HEADER } from '$lib/constants';
 import {
-	selectedModelName,
-	modelsStore,
-	selectedModelContextSize
-} from '$lib/stores/models.svelte';
-import {
-	normalizeModelName,
-	filterByLeafNodeId,
-	findDescendantMessages,
-	findLeafNode,
-	findMessageById,
-	isAbortError,
-	generateConversationTitle
-} from '$lib/utils';
-import { classifyContinueIntent } from '$lib/utils/agentic';
-import {
-	MAX_INACTIVE_CONVERSATION_STATES,
-	INACTIVE_CONVERSATION_STATE_MAX_AGE_MS,
-	MAX_INACTIVE_CONVERSATION_STATES,
+	CONVERSATION_ID_SEPARATOR,
+	HEADERS,
+	INACTIVE_CONVERSATION,
+	STREAM_RESUME_RETRY_MS,
 	SYSTEM_MESSAGE_PLACEHOLDER,
 	TITLE_GENERATION
 } from '$lib/constants';
-import { STREAM_RESUME_RETRY_MS } from '$lib/constants/api-endpoints';
 import { MimeTypeApplication } from '$lib/enums';
 import {
 	ContinueIntentKind,
@@ -250,7 +234,7 @@ class ChatStore {
 			// POST the one conv id we are probing
 			listResp = await fetch(`./v1/streams/lookup`, {
 				body: JSON.stringify({ conversation_ids: [convId] }),
-				headers: { ...getAuthHeaders(), [CONTENT_TYPE_HEADER]: MimeTypeApplication.JSON },
+				headers: { ...getAuthHeaders(), [HEADERS.CONTENT_TYPE]: MimeTypeApplication.JSON },
 				method: 'POST'
 			});
 		} catch (e) {
@@ -430,7 +414,7 @@ class ChatStore {
 
 		// extract the model suffix, the resume calls in handleStreamResponse must reuse the model
 		// the session was tagged with, not the live dropdown
-		const sepIdx = id.indexOf('::');
+		const sepIdx = id.indexOf(CONVERSATION_ID_SEPARATOR);
 		const attachedModel: string | null = sepIdx === -1 ? null : id.slice(sepIdx + 2);
 
 		this.setChatStreaming(convId, existingContent, targetMessageId, attachedModel);
@@ -824,7 +808,7 @@ class ChatStore {
 		try {
 			const resp = await fetch('./v1/streams/lookup', {
 				body: JSON.stringify({ conversation_ids: lookupIds }),
-				headers: { ...getAuthHeaders(), [CONTENT_TYPE_HEADER]: MimeTypeApplication.JSON },
+				headers: { ...getAuthHeaders(), [HEADERS.CONTENT_TYPE]: MimeTypeApplication.JSON },
 				method: 'POST'
 			});
 
@@ -845,7 +829,7 @@ class ChatStore {
 		for (const s of sessions) {
 			if (s && !s.is_done && typeof s.conversation_id === 'string' && s.conversation_id) {
 				// strip the optional ::model suffix, the sidebar set is keyed by the bare conv id
-				const sepIdx = s.conversation_id.indexOf('::');
+				const sepIdx = s.conversation_id.indexOf(CONVERSATION_ID_SEPARATOR);
 				const bareId = sepIdx === -1 ? s.conversation_id : s.conversation_id.slice(0, sepIdx);
 
 				running.add(bareId);
@@ -946,8 +930,8 @@ class ChatStore {
 
 		for (const { convId, lastAccessed } of cleanupCandidates) {
 			if (
-				cleanupCandidates.length - cleanedUp > MAX_INACTIVE_CONVERSATION_STATES ||
-				now - lastAccessed > INACTIVE_CONVERSATION_STATE_MAX_AGE_MS
+				cleanupCandidates.length - cleanedUp > INACTIVE_CONVERSATION.MAX_STATES ||
+				now - lastAccessed > INACTIVE_CONVERSATION.MAX_AGE_MS
 			) {
 				this.cleanupConversationState(convId);
 				cleanedUp++;
@@ -996,7 +980,8 @@ class ChatStore {
 		content: string,
 		type: MessageType = MessageType.TEXT,
 		parent: string = '-1',
-		extras?: DatabaseMessageExtra[]
+		extras?: DatabaseMessageExtra[],
+		isSynthetic?: boolean
 	): Promise<DatabaseMessage> {
 		const activeConv = conversationsStore.activeConversation;
 
@@ -1026,8 +1011,6 @@ class ChatStore {
 				role,
 				timestamp: Date.now(),
 				toolCalls: '',
-				children: [],
-				extra: extras
 				type
 			},
 			parentId
@@ -1265,8 +1248,6 @@ class ChatStore {
 					);
 
 					conversationsStore.addMessageToActive(systemMessage);
-					parentIdForUserMessage = systemMessage.id;
-				} else parentIdForUserMessage = rootId;
 					sysOrRootId = systemMessage.id;
 				}
 
@@ -1535,63 +1516,6 @@ class ChatStore {
 					await DatabaseService.updateCurrentNode(convId, currentMessageId);
 				}
 			},
-			createToolResultMessage: async (
-				toolCallId: string,
-				content: string,
-				extras?: DatabaseMessageExtra[]
-			) => {
-				const msg = await DatabaseService.createMessageBranch(
-					{
-						convId,
-						type: MessageType.TEXT,
-						role: MessageRole.TOOL,
-						content,
-						toolCallId,
-						timestamp: Date.now(),
-						toolCalls: '',
-						children: [],
-						extra: extras
-					},
-					currentMessageId
-				);
-				// mirror into the active store and move the node pointer only when this
-				// conversation is displayed; otherwise persist the node move straight to
-				// the db for the owning conv so a foreign conv's currNode stays untouched
-				if (conversationsStore.activeConversation?.id === convId) {
-					conversationsStore.addMessageToActive(msg);
-					await conversationsStore.updateCurrentNode(msg.id);
-				} else {
-					await DatabaseService.updateCurrentNode(convId, msg.id);
-				}
-				lastCreatedInFlow = msg.id;
-				return msg;
-			},
-			updateToolResultMessage: async (
-				messageId: string,
-				content: string,
-				extras?: DatabaseMessageExtra[]
-			) => {
-				// Persist latest content + merged extras; mirror into the active
-				// store so the chat view sees live updates for streaming tools
-				// (e.g. exec_shell_command). The existing tool message node
-				// pointer stays put - the renderer is already scoped to it.
-				const updates: Partial<DatabaseMessage> = { content };
-				if (extras) {
-					const idx = conversationsStore.findMessageIndex(messageId);
-					const existing = idx >= 0 ? (conversationsStore.activeMessages[idx]?.extra ?? []) : [];
-					const merged = [...existing, ...extras];
-					updates.extra = merged;
-				}
-				if (conversationsStore.activeConversation?.id === convId) {
-					const idx = conversationsStore.findMessageIndex(messageId);
-					if (idx >= 0) conversationsStore.updateMessageAtIndex(idx, updates);
-				}
-				await DatabaseService.updateMessage(messageId, updates);
-			},
-			createAssistantMessage: async () => {
-				// Reset streaming state for new message
-				streamedContent = '';
-				streamedReasoningContent = '';
 			onAttachments: (messageId: string, extras: DatabaseMessageExtra[]) => {
 				if (!extras.length) return;
 
