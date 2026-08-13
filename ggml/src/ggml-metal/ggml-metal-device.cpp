@@ -160,21 +160,6 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_get_rows(ggml_me
     return res;
 }
 
-ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_tq3_rht(ggml_metal_library_t lib) {
-    char base[256];
-    char name[256];
-
-    snprintf(base, 256, "kernel_tq3_4s_rht_f32");
-    snprintf(name, 256, "%s", base);
-
-    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
-    if (!res.pipeline) {
-        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
-    }
-
-    return res;
-}
-
 ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_set_rows(ggml_metal_library_t lib, const ggml_tensor * op) {
     char base[256];
     char name[256];
@@ -488,6 +473,41 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_soft_max(ggml_me
     }
 
     res.smem = 32*sizeof(float);
+
+    return res;
+}
+
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_lightning_indexer(
+        ggml_metal_library_t lib,
+        const ggml_tensor * op) {
+    GGML_ASSERT(op->op == GGML_OP_LIGHTNING_INDEXER);
+
+    char name[256];
+
+    snprintf(name, 256, "kernel_lightning_indexer_%s", ggml_type_name(op->src[1]->type));
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
+    }
+
+    return res;
+}
+
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_dsv4_hc(ggml_metal_library_t lib, ggml_op op) {
+    const char * name = nullptr;
+
+    switch (op) {
+        case GGML_OP_DSV4_HC_COMB: name = "kernel_dsv4_hc_comb_f32"; break;
+        case GGML_OP_DSV4_HC_PRE:  name = "kernel_dsv4_hc_pre_f32";  break;
+        case GGML_OP_DSV4_HC_POST: name = "kernel_dsv4_hc_post_f32"; break;
+        default: GGML_ABORT("fatal error");
+    }
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, name, name, nullptr);
+    }
 
     return res;
 }
@@ -933,10 +953,10 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv(ggml_meta
                 nr0 = N_R0_IQ4_XS;
                 smem = 32*sizeof(float);
             } break;
-        case GGML_TYPE_TQ3_4S:
+        case GGML_TYPE_TQ2_0:
             {
-                nsg = N_SG_TQ3_4S;
-                nr0 = N_R0_TQ3_4S;
+                nsg = N_SG_TQ2_0;
+                nr0 = N_R0_TQ2_0;
             } break;
         default:
             {
@@ -1166,6 +1186,11 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_mul_mv_id(ggml_m
                 nsg = N_SG_IQ4_XS;
                 nr0 = N_R0_IQ4_XS;
                 smem = 32*sizeof(float);
+            } break;
+        case GGML_TYPE_TQ2_0:
+            {
+                nsg = N_SG_TQ2_0;
+                nr0 = N_R0_TQ2_0;
             } break;
         default:
             {
@@ -2127,6 +2152,23 @@ ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_opt_step_sgd(ggm
     char name[256];
 
     snprintf(base, 256, "kernel_opt_step_sgd_%s", ggml_type_name(op->src[0]->type));
+    snprintf(name, 256, "%s", base);
+
+    ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
+    if (!res.pipeline) {
+        res = ggml_metal_library_compile_pipeline(lib, base, name, nullptr);
+    }
+
+    return res;
+}
+
+ggml_metal_pipeline_with_params ggml_metal_library_get_pipeline_silu_back(ggml_metal_library_t lib, const ggml_tensor * op) {
+    assert(op->op == GGML_OP_SILU_BACK);
+
+    char base[256];
+    char name[256];
+
+    snprintf(base, 256, "kernel_silu_back_%s", ggml_type_name(op->src[0]->type));
     snprintf(name, 256, "%s", base);
 
     ggml_metal_pipeline_with_params res = ggml_metal_library_get_pipeline(lib, name);
