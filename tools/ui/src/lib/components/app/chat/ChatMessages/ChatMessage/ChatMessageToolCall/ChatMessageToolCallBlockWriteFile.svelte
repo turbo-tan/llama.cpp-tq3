@@ -8,7 +8,8 @@
 	import { parseWriteFileMeta } from './parsers/write-file';
 	import ToolCallBlock from './ToolCallBlock.svelte';
 	import { toolsStore } from '$lib/stores/tools.svelte';
-	import { abbreviateHome, type AgenticSection } from '$lib/utils';
+	import type { AgenticSection } from '$lib/types';
+	import { abbreviateHome } from '$lib/utils';
 
 	interface Props {
 		section: AgenticSection;
