@@ -4,10 +4,7 @@
 	import { XCircle } from '@lucide/svelte';
 	import { SyntaxHighlightedCode } from '$lib/components/app';
 	import { MAX_HEIGHT_CODE_BLOCK, RESULT_STAT_SEPARATOR } from '$lib/constants';
-	import { type AgenticSection } from '$lib/utils';
-	import { parseWriteFileMeta } from './parsers/write-file';
-	import ToolCallBlock from './ToolCallBlock.svelte';
-	import { toolsStore } from '$lib/stores/tools.svelte';
+	import { toolsStore } from '$lib/stores';
 	import type { AgenticSection } from '$lib/types';
 	import { abbreviateHome } from '$lib/utils';
 
@@ -21,12 +18,15 @@
 	let { isStreaming, onToggle, open, section }: Props = $props();
 
 	const writeFileMeta = $derived(parseWriteFileMeta(section));
+	const home = $derived(toolsStore.serverHome);
 </script>
 
 <ToolCallBlock {section} {open} {isStreaming} meta={writeFileMeta} {onToggle}>
 	{#snippet titleSnippet()}
 		<span class="text-muted-foreground">Write file </span>
-		<span class="font-mono">{writeFileMeta?.filePath}</span>
+		<span class="font-mono" title={writeFileMeta?.filePath}
+			>{abbreviateHome(writeFileMeta?.filePath ?? '', home)}</span
+		>
 		{#if writeFileMeta?.errorMessage}
 			<span class="ml-1 text-xs italic text-muted-foreground/70">(failed)</span>
 		{/if}

@@ -4,7 +4,7 @@
 	import { parseFileGlobSearchMeta } from './parsers/file-glob-search';
 	import ToolCallBlock from './ToolCallBlock.svelte';
 	import { XCircle } from '@lucide/svelte';
-	import { toolsStore } from '$lib/stores/tools.svelte';
+	import { toolsStore } from '$lib/stores';
 	import type { AgenticSection } from '$lib/types';
 	import { abbreviateHome } from '$lib/utils';
 
