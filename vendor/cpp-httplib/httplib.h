@@ -8,10 +8,8 @@
 #ifndef CPPHTTPLIB_HTTPLIB_H
 #define CPPHTTPLIB_HTTPLIB_H
 
-#define CPPHTTPLIB_VERSION "0.51.0"
-#define CPPHTTPLIB_VERSION_NUM "0x003300"
-#define CPPHTTPLIB_VERSION "0.53.0"
-#define CPPHTTPLIB_VERSION_NUM "0x003500"
+#define CPPHTTPLIB_VERSION "0.53.1"
+#define CPPHTTPLIB_VERSION_NUM "0x003501"
 
 #ifdef _WIN32
 #if defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0A00
@@ -140,6 +138,18 @@
 #define CPPHTTPLIB_RANGE_MAX_COUNT 1024
 #endif
 
+// std::regex_match's backtracking implementation (most acutely on libstdc++)
+// recurses roughly once per matched character for quantified patterns such
+// as "(.*)", so a long enough path can exhaust the calling thread's stack; on
+// a default ~8MB thread stack that has been observed to take on the order of
+// a couple thousand characters for a simple pattern. 256 leaves a wide safety
+// margin below that (well under the 8192-byte request URI limit) while still
+// fitting any realistic route segment; raise it if a route legitimately needs
+// longer paths. Regex routes are never applied to paths longer than this.
+#ifndef CPPHTTPLIB_REGEX_ROUTE_PATH_MAX_LENGTH
+#define CPPHTTPLIB_REGEX_ROUTE_PATH_MAX_LENGTH 256
+#endif
+
 #ifndef CPPHTTPLIB_TCP_NODELAY
 #define CPPHTTPLIB_TCP_NODELAY false
 #endif
@@ -184,7 +194,7 @@
 #endif
 
 #ifndef CPPHTTPLIB_LISTEN_BACKLOG
-#define CPPHTTPLIB_LISTEN_BACKLOG 5
+#define CPPHTTPLIB_LISTEN_BACKLOG 128
 #endif
 
 #ifndef CPPHTTPLIB_MAX_LINE_LENGTH
@@ -323,6 +333,7 @@ using socket_t = int;
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <iterator>
 #include <list>
 #include <map>
 #include <memory>
@@ -335,9 +346,11 @@ using socket_t = int;
 #include <sys/stat.h>
 #include <system_error>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 // On macOS with a TLS backend, enable Keychain root certificates by default
 // unless the user explicitly opts out. Not enabled on iOS/tvOS/watchOS since
@@ -838,6 +851,15 @@ inline bool parse_url(const std::string &url, UrlComponents &uc) {
       }
 
       pos = close + 1;
+
+      // The IPv6 literal is the whole host, so ']' must be followed by a port,
+      // path, query or fragment delimiter (or the end of input). Otherwise the
+      // trailing bytes would be folded into the path while the connection
+      // still targets the bracketed address.
+      if (pos < url.size()) {
+        auto c = url[pos];
+        if (c != ':' && c != '/' && c != '?' && c != '#') { return false; }
+      }
     } else {
       auto end = url.find_first_of(":/?#", pos);
       if (end == std::string::npos) { end = url.size(); }
@@ -970,11 +992,291 @@ enum StatusCode {
   NetworkAuthenticationRequired_511 = 511,
 };
 
-using Headers =
-    std::unordered_multimap<std::string, std::string, detail::case_ignore::hash,
-                            detail::case_ignore::equal_to>;
+namespace detail {
 
-using Params = std::multimap<std::string, std::string>;
+// A multimap that keeps its entries in the order they were inserted.
+//
+// HTTP needs that order in two places. RFC 9110 5.3 makes the order of header
+// fields sharing a field name significant and forbids a proxy from reordering
+// them, and a query string's parameters are meaningful in the order the caller
+// wrote them. Neither standard container expresses it: std::unordered_multimap
+// gives no ordering guarantee at all for equivalent keys (libstdc++ yields
+// reverse insertion order, libc++ insertion order), and std::multimap sorts by
+// key, which would drop control data such as Host behind whatever else the
+// message carries and alphabetise a query string.
+//
+// Entries are therefore kept in a flat vector, in order. Lookup is a linear
+// scan, which beats hashing for the handful of entries a message carries
+// (headers are capped at CPPHTTPLIB_HEADER_MAX_COUNT).
+//
+// KeyEqual compares keys; it is what makes Headers case-insensitive and
+// Params, whose parameter names are case-sensitive, not.
+template <typename Mapped, typename KeyEqual> class insertion_ordered_multimap {
+public:
+  using key_type = std::string;
+  using mapped_type = Mapped;
+  using value_type = std::pair<std::string, Mapped>;
+  using size_type = std::size_t;
+  using difference_type = std::ptrdiff_t;
+  using reference = value_type &;
+  using const_reference = const value_type &;
+
+private:
+  static size_type npos() { return static_cast<size_type>(-1); }
+
+  static bool keys_equal(const std::string &a, const std::string &b) {
+    return KeyEqual()(a, b);
+  }
+
+  // Iterating yields every entry in insertion order, but equal_range() and
+  // find() have to walk only the entries sharing one key, which are not
+  // adjacent. Both are the same iterator type: key_idx_ selects between the
+  // two traversals, and since equality compares only the position, an iterator
+  // restricted to one key still compares equal to end().
+  template <typename V> class iterator_t {
+  public:
+    using iterator_category = std::bidirectional_iterator_tag;
+    using value_type = insertion_ordered_multimap::value_type;
+    using difference_type = insertion_ordered_multimap::difference_type;
+    using pointer = V *;
+    using reference = V &;
+
+    iterator_t() : data_(nullptr), idx_(0), size_(0), key_idx_(npos()) {}
+
+    template <typename U,
+              typename std::enable_if<std::is_convertible<U *, V *>::value,
+                                      int>::type = 0>
+    iterator_t(const iterator_t<U> &rhs)
+        : data_(rhs.data_), idx_(rhs.idx_), size_(rhs.size_),
+          key_idx_(rhs.key_idx_) {}
+
+    reference operator*() const { return data_[idx_]; }
+    pointer operator->() const { return data_ + idx_; }
+
+    iterator_t &operator++() {
+      // Saturating, so that advancing past the last entry of a key (which
+      // get_multimap_value() does when asked for an out-of-range id) stays at
+      // end() instead of running off the container.
+      if (idx_ >= size_) { return *this; }
+      ++idx_;
+      if (key_idx_ != npos()) {
+        while (idx_ < size_ && !matches(idx_)) {
+          ++idx_;
+        }
+      }
+      return *this;
+    }
+
+    iterator_t operator++(int) {
+      auto tmp = *this;
+      ++*this;
+      return tmp;
+    }
+
+    iterator_t &operator--() {
+      if (idx_ == 0) { return *this; }
+      --idx_;
+      if (key_idx_ != npos()) {
+        while (idx_ > 0 && !matches(idx_)) {
+          --idx_;
+        }
+      }
+      return *this;
+    }
+
+    iterator_t operator--(int) {
+      auto tmp = *this;
+      --*this;
+      return tmp;
+    }
+
+    template <typename U> bool operator==(const iterator_t<U> &rhs) const {
+      return idx_ == rhs.idx_;
+    }
+
+    template <typename U> bool operator!=(const iterator_t<U> &rhs) const {
+      return idx_ != rhs.idx_;
+    }
+
+  private:
+    friend class insertion_ordered_multimap;
+    template <typename> friend class iterator_t;
+
+    iterator_t(V *data, size_type idx, size_type size, size_type key_idx)
+        : data_(data), idx_(idx), size_(size), key_idx_(key_idx) {}
+
+    bool matches(size_type i) const {
+      return keys_equal(data_[i].first, data_[key_idx_].first);
+    }
+
+    V *data_;
+    size_type idx_;
+    size_type size_;
+    size_type key_idx_;
+  };
+
+public:
+  using iterator = iterator_t<value_type>;
+  using const_iterator = iterator_t<const value_type>;
+
+  insertion_ordered_multimap() = default;
+  insertion_ordered_multimap(std::initializer_list<value_type> il)
+      : entries_(il) {}
+  template <typename InputIt>
+  insertion_ordered_multimap(InputIt first, InputIt last)
+      : entries_(first, last) {}
+
+  iterator begin() { return make_iter(0, npos()); }
+  iterator end() { return make_iter(entries_.size(), npos()); }
+  const_iterator begin() const { return make_citer(0, npos()); }
+  const_iterator end() const { return make_citer(entries_.size(), npos()); }
+  const_iterator cbegin() const { return begin(); }
+  const_iterator cend() const { return end(); }
+
+  bool empty() const { return entries_.empty(); }
+  size_type size() const { return entries_.size(); }
+  void clear() { entries_.clear(); }
+  void swap(insertion_ordered_multimap &rhs) { entries_.swap(rhs.entries_); }
+
+  iterator insert(const value_type &val) {
+    entries_.push_back(val);
+    return make_iter(entries_.size() - 1, npos());
+  }
+
+  iterator insert(value_type &&val) {
+    entries_.push_back(std::move(val));
+    return make_iter(entries_.size() - 1, npos());
+  }
+
+  template <typename... Args> iterator emplace(Args &&...args) {
+    entries_.emplace_back(std::forward<Args>(args)...);
+    return make_iter(entries_.size() - 1, npos());
+  }
+
+  // For entries that have to lead the message, such as the Host header field
+  // (RFC 9110 5.3 recommends sending control data first).
+  template <typename... Args> iterator emplace_front(Args &&...args) {
+    entries_.emplace(entries_.begin(), std::forward<Args>(args)...);
+    return make_iter(0, npos());
+  }
+
+  iterator find(const std::string &key) {
+    auto i = index_of(key);
+    return i == npos() ? end() : make_iter(i, i);
+  }
+
+  const_iterator find(const std::string &key) const {
+    auto i = index_of(key);
+    return i == npos() ? end() : make_citer(i, i);
+  }
+
+  size_type count(const std::string &key) const {
+    size_type n = 0;
+    for (const auto &entry : entries_) {
+      if (keys_equal(entry.first, key)) { n++; }
+    }
+    return n;
+  }
+
+  std::pair<iterator, iterator> equal_range(const std::string &key) {
+    auto i = index_of(key);
+    return i == npos() ? std::make_pair(end(), end())
+                       : std::make_pair(make_iter(i, i), end());
+  }
+
+  std::pair<const_iterator, const_iterator>
+  equal_range(const std::string &key) const {
+    auto i = index_of(key);
+    return i == npos() ? std::make_pair(end(), end())
+                       : std::make_pair(make_citer(i, i), end());
+  }
+
+  size_type erase(const std::string &key) {
+    auto before = entries_.size();
+    entries_.erase(std::remove_if(entries_.begin(), entries_.end(),
+                                  [&](const value_type &entry) {
+                                    return keys_equal(entry.first, key);
+                                  }),
+                   entries_.end());
+    return before - entries_.size();
+  }
+
+  iterator erase(const_iterator pos) {
+    entries_.erase(entries_.begin() + static_cast<difference_type>(pos.idx_));
+    return make_iter(pos.idx_, npos());
+  }
+
+  // Erases what iterating [first, last) would actually visit, so erasing an
+  // equal_range() removes only the entries with that key, not everything
+  // positioned between them.
+  iterator erase(const_iterator first, const_iterator last) {
+    auto from = first.idx_;
+    auto to = last.idx_;
+    if (from >= to) { return make_iter(from, npos()); }
+
+    auto begin_it = entries_.begin();
+    auto from_it = begin_it + static_cast<difference_type>(from);
+    auto to_it = begin_it + static_cast<difference_type>(to);
+
+    if (first.key_idx_ == npos()) {
+      entries_.erase(from_it, to_it);
+    } else {
+      auto key = entries_[first.key_idx_].first;
+      auto keep = from_it;
+      for (auto it = from_it; it != to_it; ++it) {
+        if (!keys_equal(it->first, key)) {
+          if (keep != it) { *keep = std::move(*it); }
+          ++keep;
+        }
+      }
+      if (keep != to_it) {
+        keep = std::move(to_it, entries_.end(), keep);
+      } else {
+        keep = entries_.end();
+      }
+      entries_.erase(keep, entries_.end());
+    }
+    return make_iter(from, npos());
+  }
+
+  friend bool operator==(const insertion_ordered_multimap &lhs,
+                         const insertion_ordered_multimap &rhs) {
+    return lhs.entries_ == rhs.entries_;
+  }
+
+  friend bool operator!=(const insertion_ordered_multimap &lhs,
+                         const insertion_ordered_multimap &rhs) {
+    return !(lhs == rhs);
+  }
+
+private:
+  size_type index_of(const std::string &key) const {
+    for (size_type i = 0; i < entries_.size(); i++) {
+      if (keys_equal(entries_[i].first, key)) { return i; }
+    }
+    return npos();
+  }
+
+  iterator make_iter(size_type idx, size_type key_idx) {
+    return iterator(entries_.data(), idx, entries_.size(), key_idx);
+  }
+
+  const_iterator make_citer(size_type idx, size_type key_idx) const {
+    return const_iterator(entries_.data(), idx, entries_.size(), key_idx);
+  }
+
+  std::vector<value_type> entries_;
+};
+
+} // namespace detail
+
+using Headers =
+    detail::insertion_ordered_multimap<std::string,
+                                       detail::case_ignore::equal_to>;
+
+// Query parameter names are case-sensitive, unlike header field names.
+using Params =
+    detail::insertion_ordered_multimap<std::string, std::equal_to<std::string>>;
 using Match = std::smatch;
 
 using DownloadProgress = std::function<bool(size_t current, size_t total)>;
@@ -1081,9 +1383,16 @@ struct FormField {
   std::string content;
   Headers headers;
 };
-using FormFields = std::multimap<std::string, FormField>;
+// RFC 7578 5.2: a form processor "SHOULD send back results in order" and
+// "Intermediaries MUST NOT reorder the results", so a handler walking these
+// should see the parts as they were sent. A std::multimap sorts by field name
+// and loses that. Field names are case-sensitive, hence std::equal_to rather
+// than the case-insensitive predicate Headers uses.
+using FormFields =
+    detail::insertion_ordered_multimap<FormField, std::equal_to<std::string>>;
 
-using FormFiles = std::multimap<std::string, FormData>;
+using FormFiles =
+    detail::insertion_ordered_multimap<FormData, std::equal_to<std::string>>;
 
 struct MultipartFormData {
   FormFields fields; // Text fields from multipart
@@ -1548,6 +1857,18 @@ public:
     (void)sec;
     (void)usec;
   }
+
+  // Bytes already pulled off the socket and sitting in this stream's own
+  // buffer. Exposing them lets a line reader scan for a terminator in one
+  // pass instead of asking for a byte at a time. A stream that does no
+  // buffering of its own reports none, and readers fall back to read().
+  virtual const char *buffered_data(size_t &size) const {
+    size = 0;
+    return nullptr;
+  }
+
+  // Discards `size` bytes previously returned by buffered_data().
+  virtual void consume_buffered(size_t size) { (void)size; }
 
   ssize_t write(const char *ptr);
   ssize_t write(const std::string &s);
@@ -2456,7 +2777,8 @@ protected:
   std::thread::id socket_requests_are_from_thread_ = std::thread::id();
   bool socket_should_be_closed_when_request_is_done_ = false;
 
-  // Hostname-IP map
+  // Hostname to connection target map. The value is an IP literal or another
+  // hostname; only the connection target changes, never the identity.
   std::map<std::string, std::string> addr_map_;
 
   // Default headers
@@ -3156,6 +3478,10 @@ private:
 std::string make_host_and_port_string(const std::string &host, int port,
                                       bool is_ssl);
 
+template <typename T>
+bool check_and_write_headers(Stream &strm, Headers &headers, T header_writer,
+                             Error &error);
+
 std::string trim_copy(const std::string &s);
 
 void divide(
@@ -3366,6 +3692,7 @@ public:
 
 private:
   void append(char c);
+  void append(const char *data, size_t size);
 
   Stream &strm_;
   char *fixed_buffer_;
@@ -4060,7 +4387,6 @@ public:
 
 private:
   void shutdown_and_close();
-  bool create_stream(std::unique_ptr<Stream> &strm);
   bool create_stream(std::unique_ptr<Stream> &strm, Error &error,
                      int &ssl_error, uint64_t &ssl_backend_error);
   void prepare_default_headers(Request &req);
@@ -4088,7 +4414,8 @@ private:
   time_t connection_timeout_usec_ = CPPHTTPLIB_CONNECTION_TIMEOUT_USECOND;
   std::string interface_;
 
-  // Hostname-IP map
+  // Hostname to connection target map. The value is an IP literal or another
+  // hostname; only the connection target changes, never the identity.
   std::map<std::string, std::string> addr_map_;
 
 #ifdef CPPHTTPLIB_SSL_ENABLED
