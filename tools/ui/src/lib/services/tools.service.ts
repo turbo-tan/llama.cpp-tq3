@@ -1,32 +1,35 @@
 import { base } from '$app/paths';
 import { API_TOOLS, HEADERS } from '$lib/constants';
 import { ToolResponseField } from '$lib/enums';
-import type { ServerBuiltinToolInfo, ToolExecutionResult } from '$lib/types';
+import type { ServerToolInfo, ToolExecutionResult } from '$lib/types';
 import { apiFetch } from '$lib/utils';
 import { getJsonHeaders } from '$lib/utils/api-headers';
 import { parseSseJsonStream, type SseJsonEvent } from '$lib/utils/sse';
 
 export class ToolsService {
 	/**
-	 * Fetch the list of built-in tools from the server.
+	 * Fetch the list of server tools from the server.
 	 *
 	 * @returns Array of tool definitions in OpenAI-compatible format
 	 */
-	static async list(): Promise<ServerBuiltinToolInfo[]> {
-		return apiFetch<ServerBuiltinToolInfo[]>(API_TOOLS.LIST);
+	static async list(): Promise<ServerToolInfo[]> {
+		return apiFetch<ServerToolInfo[]>(API_TOOLS.LIST);
 	}
 
 	/**
-	 * Execute a built-in tool on the server.
+	 * Execute a server tool on the server.
+	 *
+	 * @param cwd - Working directory for the tool call, sent as the
+	 * x-tool-cwd request header. The server resolves relative paths
+	 * against it; the model cannot override it.
 	 */
 	static async executeTool(
 		toolName: string,
 		params: Record<string, unknown>,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		cwd?: string
 	): Promise<ToolExecutionResult> {
 		const result = await apiFetch<Record<string, unknown>>(API_TOOLS.EXECUTE, {
-			method: 'POST',
-			body: JSON.stringify({ tool: toolName, params }),
 			body: JSON.stringify({ params, tool: toolName }),
 			headers: cwd ? { [HEADERS.X_TOOL_CWD_HEADER]: cwd } : undefined,
 			method: 'POST',
@@ -45,7 +48,7 @@ export class ToolsService {
 	}
 
 	/**
-	 * Execute a built-in tool and return the raw JSON response. Unlike
+	 * Execute a server tool and return the raw JSON response. Unlike
 	 * executeTool, this preserves structured fields (e.g. file_glob_search's
 	 * `entries` and `base`) that the flattened ToolExecutionResult drops.
 	 *
@@ -74,7 +77,7 @@ export class ToolsService {
 	}
 
 	/**
-	 * Stream a built-in tool's output chunks from the server. The server
+	 * Stream a server tool's output chunks from the server. The server
 	 * `POST /tools` endpoint with `{stream: true}` emits `data: {"chunk": "..."}`
 	 * events followed by a terminal `data: {"done": true}` (optionally with
 	 * `error`). Yields the chunk string for each partial event.
@@ -91,7 +94,8 @@ export class ToolsService {
 	static async *streamTool(
 		toolName: string,
 		params: Record<string, unknown>,
-		signal?: AbortSignal
+		signal?: AbortSignal,
+		cwd?: string
 	): AsyncGenerator<ToolStreamEvent> {
 		const headers = getJsonHeaders();
 
