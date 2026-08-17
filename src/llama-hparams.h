@@ -176,11 +176,11 @@ struct llama_hparams {
     // for Kimi Linear KDA
     uint32_t n_embd_head_kda = 0;
     float    kda_gate_lower_bound = -INFINITY;
+    bool     kda_safe_gate = false;
 
     // kimi-k3
     uint32_t n_expert_latent      = 0;      // routed_expert_hidden_size (0 = experts run at n_embd)
     uint32_t attn_res_block_size  = 0;      // 0 = no cross-layer attention residuals
-    float    kda_gate_lower_bound = -INFINITY;
     float    situ_beta            = 1.0f;
     float    situ_linear_beta     = 0.0f;   // 0 = no linear-beta transform on the up branch
 
