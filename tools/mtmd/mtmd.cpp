@@ -1,6 +1,7 @@
 #include "clip.h"
 #include "clip-impl.h"
 #include "mtmd.h"
+#include "mtmd-internal.h"
 #include "mtmd-audio.h"
 #include "mtmd-image.h"
 #include "debug/mtmd-debug.h"
@@ -149,6 +150,7 @@ struct mtmd_bitmap {
     uint32_t ny = 0;
     std::string id; // optional user-defined id, for ex: can be set to image hash, useful for KV cache tracking
     bool is_audio = false; // true if the bitmap is audio
+    bool mergeable = false; // [QWEN_VIDEO] set only on frames of the same video
 
     // lazy-loaded bitmap
     mtmd_bitmap_lazy_callback lazy_callback = nullptr;
@@ -186,7 +188,9 @@ struct mtmd_bitmap {
 
     bool can_merge_with(const mtmd_bitmap & other) const {
         // [QWEN_VIDEO] can (temporal) merge if both are images with same size
-        return !is_audio && !other.is_audio && nx == other.nx && ny == other.ny;
+        return mergeable && other.mergeable
+            && !is_audio && !other.is_audio
+            && nx == other.nx && ny == other.ny;
     }
 
   private:
@@ -1076,6 +1080,25 @@ void mtmd_free(mtmd_context * ctx) {
     delete ctx;
 }
 
+std::vector<std::vector<const mtmd_bitmap *>> mtmd_group_mergeable_bitmaps(std::vector<mtmd_input_part> & parts, int n_merge) {
+    std::vector<std::vector<const mtmd_bitmap *>> output;
+    for (size_t i = 0; i < parts.size(); i++) {
+        if (parts[i].bitmap == nullptr) {
+            continue; // text part
+        }
+        const bool has_next = n_merge > 1 && i + 1 < parts.size() && parts[i + 1].bitmap != nullptr;
+        if (has_next && parts[i].bitmap->can_merge_with(*parts[i + 1].bitmap)) {
+            LOG_DBG("%s: merging 2 frames at part index %zu and %zu\n", __func__, i, i + 1);
+            output.push_back({parts[i].bitmap, parts[i + 1].bitmap});
+            parts.erase(parts.begin() + i + 1);
+            continue;
+        }
+        LOG_DBG("%s: no merging for part index %zu\n", __func__, i);
+        output.push_back({parts[i].bitmap});
+    }
+    return output;
+}
+
 struct mtmd_tokenizer {
     mtmd_context * ctx;
 
@@ -1084,10 +1107,7 @@ struct mtmd_tokenizer {
     bool parse_special;
     const llama_vocab * vocab;
 
-    struct part {
-        std::string text;
-        const mtmd_bitmap * bitmap;
-    };
+    using part = mtmd_input_part;
     std::vector<part> parts;
     // these will be freed when mtmd_tokenizer finishes
     std::vector<mtmd::bitmap> bm_from_lazy; // TODO @ngxson : refactor, free bm_from_lazy progressively
@@ -1226,6 +1246,7 @@ struct mtmd_tokenizer {
                 }
             }
         }
+
 
         size_t i_bm = 0;
         for (const auto & p : parts) {
@@ -2204,6 +2225,10 @@ void mtmd_bitmap_set_id(mtmd_bitmap * bitmap, const char * id) {
     } else {
         bitmap->id.clear();
     }
+}
+
+void mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable) {
+    bitmap->mergeable = mergeable;
 }
 
 mtmd_bitmap * mtmd_bitmap_init_lazy(mtmd_context * ctx,
