@@ -2068,6 +2068,7 @@ Note that the following endpoints are exempt from being considered as incoming t
 - `GET /health`
 - `GET /props`
 - `GET /models`
+- `GET /metrics`
 
 ## More examples
 
