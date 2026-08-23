@@ -1326,8 +1326,8 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
         mtp.hook_tokens.clear();
     }
 
-    mtp.ctx_mtp     = ctx_mtp_in;
-    mtp.pending_pos = -1;
+    mtp.ctx_mtp = ctx_mtp_in;
+    mtp.reset();
 
     if (mtp.ctx_mtp) {
         const int32_t n_ub   = (int32_t) cparams.n_ubatch;
@@ -1349,110 +1349,137 @@ void llama_context::set_mtp(llama_context * ctx_mtp_in) {
 #endif
         mtp.hook_tokens.assign(n_ub, LLAMA_TOKEN_NULL);
         mtp.hook_batch.token = mtp.hook_tokens.data();
-        mtp.pending_h.assign(n_embd, 0.0f);
+        // per-sequence carryover is allocated lazily on first use per seq_id
         LLAMA_LOG_INFO("%s: MTP draft head registered (ctx_mtp=%p, n_ubatch=%d, n_embd=%d)\n",
                        __func__, (const void *) mtp.ctx_mtp, n_ub, n_embd);
     } else {
         mtp.hook_tokens.clear();
         mtp.hook_tokens.shrink_to_fit();
-        mtp.pending_h.clear();
-        mtp.pending_h.shrink_to_fit();
+        mtp.reset();
         LLAMA_LOG_INFO("%s: MTP draft head unregistered\n", __func__);
     }
 }
 
 void llama_context::handle_mtp_for_ubatch(
-        int32_t              n_tokens,
-        const llama_token  * tokens,
-        const llama_pos    * positions,
+        const llama_ubatch & ubatch,
         struct ggml_tensor * t,
         bool                 decode_mtp) {
-    if (mtp.ctx_mtp == nullptr || n_tokens == 0 || t == nullptr) {
+    if (mtp.ctx_mtp == nullptr || ubatch.n_tokens == 0 || t == nullptr) {
         return;
     }
-    if (t->ne[1] != (int64_t) n_tokens) {
+    if (t->ne[1] != (int64_t) ubatch.n_tokens) {
+        return;
+    }
+    if (ubatch.token == nullptr || ubatch.pos == nullptr || ubatch.seq_id == nullptr) {
         return;
     }
 
-    const int64_t n_embd = model.hparams.n_embd;
+    const int64_t n_embd    = model.hparams.n_embd;
+    const size_t  row_bytes = (size_t) n_embd * sizeof(float);
     GGML_ASSERT(t->ne[0] == n_embd);
 
-    const int       n_rows    = (int) n_tokens;
-    const llama_pos pos_start = positions[0];
-
-    const llama_pos pos_max_mtp = llama_memory_seq_pos_max(llama_get_memory(mtp.ctx_mtp), 0);
-    if (pos_start <= pos_max_mtp) {
-        llama_memory_seq_rm(llama_get_memory(mtp.ctx_mtp), 0, pos_start, -1);
-        if (mtp.pending_pos >= pos_start) {
-            mtp.pending_pos = -1;
-        }
-    }
-
-    synchronize();
-
-    const bool pending_continues = mtp.pending_pos >= 0 && mtp.pending_pos + 1 == pos_start;
-    if (mtp.pending_pos >= 0 && !pending_continues) {
-        mtp.pending_pos = -1;
-    }
-
-    const size_t row_bytes = (size_t) n_embd * sizeof(float);
-    const int    n_out     = (pending_continues ? 1 : 0) + (n_rows - 1);
-
-    if (decode_mtp && n_out > 0) {
-        int out_idx = 0;
-        if (pending_continues) {
-            std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, mtp.pending_h.data(), row_bytes);
-            mtp.hook_batch.token[out_idx]     = tokens[0];
-            mtp.hook_batch.pos[out_idx]       = pos_start;
-            mtp.hook_batch.n_seq_id[out_idx]  = 1;
-            mtp.hook_batch.seq_id[out_idx][0] = 0;
-            mtp.hook_batch.logits[out_idx]    = 0;
-            ++out_idx;
-        }
-        if (n_rows > 1) {
-            ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
-            GGML_ASSERT(backend_t != nullptr);
-
-            ggml_backend_tensor_get_2d_async(
-                backend_t,
-                t,
-                mtp.hook_batch.embd + (size_t) out_idx * n_embd,
-                0,
-                row_bytes,
-                (size_t) n_rows - 1,
-                row_bytes,
-                row_bytes);
-        }
-        for (int k = 0; k + 1 < n_rows; ++k) {
-            mtp.hook_batch.token[out_idx]     = tokens[k + 1];
-            mtp.hook_batch.pos[out_idx]       = positions[k + 1];
-            mtp.hook_batch.n_seq_id[out_idx]  = 1;
-            mtp.hook_batch.seq_id[out_idx][0] = 0;
-            mtp.hook_batch.logits[out_idx]    = 0;
-            ++out_idx;
-        }
-        GGML_ASSERT(out_idx == n_out);
-        mtp.hook_batch.n_tokens = n_out;
-
-        synchronize();
-
-        const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
-        if (rc_dec != 0) {
-            LLAMA_LOG_ERROR("%s: llama_decode(ctx_mtp) failed rc=%d (pos=%d, n=%d)\n",
-                            __func__, (int) rc_dec, (int) pos_start, n_out);
-        }
-    }
+    const int n_rows_total = (int) ubatch.n_tokens;
 
     ggml_backend_t backend_t = ggml_backend_sched_get_tensor_backend(sched.get(), t);
     GGML_ASSERT(backend_t != nullptr);
 
-    ggml_backend_tensor_get_async(
-        backend_t,
-        t,
-        mtp.pending_h.data(),
-        (size_t) (n_rows - 1) * row_bytes,
-        row_bytes);
-    mtp.pending_pos = pos_start + n_rows - 1;
+    // Pull every hidden-state row to the host once.
+    //
+    // The previous implementation fetched rows [0, n_rows-1) with a single
+    // strided copy, which is only valid when the whole ubatch belongs to one
+    // sequence. Under -np > 1 a ubatch may mix sequences, and a sequence's rows
+    // need not be contiguous, so the rows are staged here and distributed
+    // per sequence below.
+    mtp.host_h.resize((size_t) n_rows_total * n_embd);
+    ggml_backend_tensor_get_async(backend_t, t, mtp.host_h.data(), 0, (size_t) n_rows_total * row_bytes);
+
+    synchronize();
+
+    // Group the ubatch rows by sequence, preserving order within each sequence.
+    // A token may belong to several sequences (shared prefixes); the MTP draft
+    // state follows seq_id[0], which is what the single-sequence code did
+    // implicitly.
+    std::unordered_map<llama_seq_id, std::vector<int>> rows_by_seq;
+    for (int i = 0; i < n_rows_total; ++i) {
+        if (ubatch.n_seq_id != nullptr && ubatch.n_seq_id[i] <= 0) {
+            continue;
+        }
+        if (ubatch.seq_id[i] == nullptr) {
+            continue;
+        }
+        rows_by_seq[ubatch.seq_id[i][0]].push_back(i);
+    }
+
+    for (auto & entry : rows_by_seq) {
+        const llama_seq_id seq_id = entry.first;
+        const std::vector<int> & rows = entry.second;
+
+        const int n_rows = (int) rows.size();
+        if (n_rows == 0) {
+            continue;
+        }
+
+        auto & st = mtp.seq[seq_id];
+        if (st.pending_h.size() != (size_t) n_embd) {
+            st.pending_h.assign((size_t) n_embd, 0.0f);
+            st.pending_pos = -1;
+        }
+
+        const llama_pos pos_start = ubatch.pos[rows[0]];
+
+        // Roll back this sequence's draft KV only -- never another slot's.
+        const llama_pos pos_max_mtp = llama_memory_seq_pos_max(llama_get_memory(mtp.ctx_mtp), seq_id);
+        if (pos_start <= pos_max_mtp) {
+            llama_memory_seq_rm(llama_get_memory(mtp.ctx_mtp), seq_id, pos_start, -1);
+            if (st.pending_pos >= pos_start) {
+                st.pending_pos = -1;
+            }
+        }
+
+        const bool pending_continues = st.pending_pos >= 0 && st.pending_pos + 1 == pos_start;
+        if (st.pending_pos >= 0 && !pending_continues) {
+            st.pending_pos = -1;
+        }
+
+        const int n_out = (pending_continues ? 1 : 0) + (n_rows - 1);
+
+        if (decode_mtp && n_out > 0) {
+            int out_idx = 0;
+            if (pending_continues) {
+                std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd, st.pending_h.data(), row_bytes);
+                mtp.hook_batch.token[out_idx]     = ubatch.token[rows[0]];
+                mtp.hook_batch.pos[out_idx]       = pos_start;
+                mtp.hook_batch.n_seq_id[out_idx]  = 1;
+                mtp.hook_batch.seq_id[out_idx][0] = seq_id;
+                mtp.hook_batch.logits[out_idx]    = 0;
+                ++out_idx;
+            }
+            for (int k = 0; k + 1 < n_rows; ++k) {
+                std::memcpy(mtp.hook_batch.embd + (size_t) out_idx * n_embd,
+                            mtp.host_h.data() + (size_t) rows[k] * n_embd,
+                            row_bytes);
+                mtp.hook_batch.token[out_idx]     = ubatch.token[rows[k + 1]];
+                mtp.hook_batch.pos[out_idx]       = ubatch.pos[rows[k + 1]];
+                mtp.hook_batch.n_seq_id[out_idx]  = 1;
+                mtp.hook_batch.seq_id[out_idx][0] = seq_id;
+                mtp.hook_batch.logits[out_idx]    = 0;
+                ++out_idx;
+            }
+            GGML_ASSERT(out_idx == n_out);
+            mtp.hook_batch.n_tokens = n_out;
+
+            const int32_t rc_dec = llama_decode(mtp.ctx_mtp, mtp.hook_batch);
+            if (rc_dec != 0) {
+                LLAMA_LOG_ERROR("%s: llama_decode(ctx_mtp) failed rc=%d (seq=%d, pos=%d, n=%d)\n",
+                                __func__, (int) rc_dec, (int) seq_id, (int) pos_start, n_out);
+            }
+        }
+
+        std::memcpy(st.pending_h.data(),
+                    mtp.host_h.data() + (size_t) rows[n_rows - 1] * n_embd,
+                    row_bytes);
+        st.pending_pos = ubatch.pos[rows[n_rows - 1]];
+    }
 }
 
 void llama_context::set_causal_attn(bool value) {
@@ -2288,7 +2315,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
 
         if (mtp.ctx_mtp != nullptr && t_h_nextn != nullptr && ubatch.token != nullptr && ubatch.pos != nullptr) {
-            handle_mtp_for_ubatch((int32_t) ubatch.n_tokens, ubatch.token, ubatch.pos, t_h_nextn, true);
+            handle_mtp_for_ubatch(ubatch, t_h_nextn, true);
         }
 
         // Copy backend sampling output if this ubatch produced any sampling tensors.

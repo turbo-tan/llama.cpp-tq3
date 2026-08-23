@@ -1493,6 +1493,27 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
             auto * mem_dft = llama_get_memory(ctx_dft);
 
+            // Drop any draft KV at or after this batch's start position, for
+            // every sequence in the batch.
+            //
+            // This used to happen only under `chain_heads`. With a single MTP
+            // head (`--spec-draft-n-max 1`) chain_heads is false, so nothing
+            // rolled the draft cache back -- and when the server reuses a slot
+            // for a new task via LCP prompt-cache similarity, the draft context
+            // still holds KV past the new prompt's start. llama_decode then
+            // rejects the batch with "the last position stored in the memory
+            // module ... is X" / "starting position of Y" where X >= Y, and the
+            // request fails with "failed to process speculative batch".
+            //
+            // The target context is trimmed on slot reuse; the draft context
+            // has to be trimmed to match it. See issue #78.
+            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                if (i_batch_beg[seq_id] < 0) {
+                    continue;
+                }
+                llama_memory_seq_rm(mem_dft, seq_id, batch_in.pos[i_batch_beg[seq_id]], -1);
+            }
+
             bool ok = true;
             for (int head = 0; head < n_mtp_layers; ++head) {
                 if (chain_heads) {

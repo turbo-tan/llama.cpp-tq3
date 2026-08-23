@@ -278,10 +278,11 @@ private:
     // that differs from the layer it belongs to (usually due to missing backend support)
     void resolve_fused_ops(const llama_memory_context_i * mctx, uint32_t n_seqs);
 
+    // note: takes the whole ubatch because the MTP carryover state is per
+    //       sequence -- tokens/positions alone cannot say which sequence a row
+    //       belongs to, which is what broke under -np > 1 (issue #78).
     void handle_mtp_for_ubatch(
-            int32_t              n_tokens,
-            const llama_token  * tokens,
-            const llama_pos    * positions,
+            const llama_ubatch & ubatch,
             struct ggml_tensor * t_h_pre_norm,
             bool                 decode_mtp);
 
