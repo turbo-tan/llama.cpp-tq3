@@ -561,6 +561,7 @@ static bool arch_supported(const llm_arch arch) {
 #ifdef GGML_USE_WEBGPU
     if (arch == LLM_ARCH_DEEPSEEK32 || arch == LLM_ARCH_GLM_DSA || arch == LLM_ARCH_MINIMAX_M3 || arch == LLM_ARCH_DOTS3NOTE || arch == LLM_ARCH_QWEN4EXP || arch == LLM_ARCH_MINIMAX_01) {
 
+
         return false;
     }
 #endif // GGML_USE_WEBGPU
