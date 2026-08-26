@@ -13,6 +13,7 @@
 #include <limits>
 #include <map>
 #include <stdexcept>
+#include <unordered_map>
 
 static bool ggml_is_power_of_2(int n) {
     return (n & (n - 1)) == 0;
@@ -1254,6 +1255,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
             cells.pos_set(idx, ubatch.pos[i]);
 
             if (ubatch.is_pos_2d() || ubatch.token || hparams.ple_n_heads > 0) {
+
                 llama_kv_cell_ext ext;
 
                 if (ubatch.is_pos_2d()) {
@@ -1269,6 +1271,7 @@ void llama_kv_cache::apply_ubatch(const slot_info & sinfo, const llama_ubatch & 
                     ext.tok = hparams.ple_image_token_id != 0
                         ? (llama_token) hparams.ple_image_token_id
                         : (llama_token) hparams.ple_eos_token_id;
+
                 }
 
                 cells.ext_set(idx, ext);
@@ -1992,6 +1995,7 @@ void llama_kv_cache::set_input_v_rot(ggml_tensor * dst) const {
 bool llama_kv_cache::has_cell_ext() const {
     // M-RoPE needs the 2D position, the PLE n-gram hash needs the token id
     return hparams.n_pos_per_embd() > 1 || hparams.ple_n_heads > 0;
+
 }
 
 void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, std::vector<llama_token> & res) const {
@@ -2021,6 +2025,7 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
     }
 
     const llama_pos w0 = p_min - (llama_pos) n;
+
 
     // (seq_id, pos) -> token, for every cell that could be a predecessor of a ubatch token
     std::unordered_map<uint64_t, llama_token> hist;
@@ -2071,6 +2076,7 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
         }
     }
 
+
     for (uint32_t i = 0; i < n_tokens; ++i) {
         // TODO: a token that belongs to more than one sequence has an ambiguous history.
         //       the n-gram architectures have to reject such batches
@@ -2089,11 +2095,13 @@ void llama_kv_cache::get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, st
                 p = ubatch.pos[i] - d;
             }
 
+
             if (p < 0) {
                 continue;
             }
 
             res[i*n + j] = lookup(seq_id, p);
+
         }
     }
 }
@@ -2442,7 +2450,7 @@ void llama_kv_cache::state_write_meta(llama_io_write_i & io, const cell_ranges_t
             io.write(&pos,      sizeof(pos));
             io.write(&n_seq_id, sizeof(n_seq_id));
 
-            if (hparams.n_pos_per_embd() > 1) {
+            if (has_cell_ext()) {
                 const llama_kv_cell_ext ext = cells.ext_get(i);
                 io.write(&ext, sizeof(ext));
             }
@@ -2615,7 +2623,7 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
                 return false;
             }
 
-            if (hparams.n_pos_per_embd() > 1) {
+            if (has_cell_ext()) {
                 llama_kv_cell_ext ext;
                 io.read(&ext, sizeof(ext));
 
@@ -2628,6 +2636,7 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
                 ubatch.token[i] = ext.tok;
 
                 exts[i] = ext;
+
             }
 
             // read the sequence id, but directly discard it - we will use dest_seq_id instead
@@ -2674,7 +2683,8 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
             }
         }
 
-        // TODO: we cannot yet restore llama_kv_cell_ext as the apply_ubatch() does not support it yet
+        // note: apply_ubatch() rebuilds llama_kv_cell_ext from the ubatch
+        //       only ext.tok and the M-RoPE 2D position round-trip through it
         //       see: https://github.com/ggml-org/llama.cpp/pull/16825#issuecomment-3460868350
         apply_ubatch(sinfo, ubatch);
 
@@ -2720,7 +2730,7 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
 
             cells.pos_set(i, pos);
 
-            if (hparams.n_pos_per_embd() > 1) {
+            if (has_cell_ext()) {
                 llama_kv_cell_ext ext;
                 io.read(&ext, sizeof(ext));
                 cells.ext_set(i, ext);
