@@ -933,9 +933,11 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
     llama_token mask_token_id = 0;
 
     bool    is_dflash2     = false;
+    bool    is_mrope       = false;
     int32_t selector_top_k = 0;
     std::vector<std::mt19937> selector_rng;
     std::vector<bool> selector_reset;
+
 
     // draft-dspark: the draft carries a Markov head and uses an anchor-first block layout
     const bool is_dspark;
@@ -985,6 +987,9 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                 is_dflash2 = selector_top_k > 0;
             }
         }
+
+        selector_top_k = llama_model_dflash_selector_top_k(model_dft);
+        is_dflash2     = selector_top_k > 0;
         mask_token_id = llama_vocab_mask(llama_model_get_vocab(model_dft));
 
         LOG_INF("%s: adding speculative implementation '%s'\n", __func__, common_speculative_type_to_str(type).c_str());
@@ -1005,6 +1010,13 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
 
         batch        = llama_batch_init(llama_n_batch(ctx_dft), 0,          n_seq);
         batch_inject = llama_batch_init(llama_n_batch(ctx_dft), n_embd_dec, n_seq);
+
+        // embd batches on an M-RoPE draft need 4 position rows per token
+        is_mrope = llama_model_rope_type(model_dft) == LLAMA_ROPE_TYPE_MROPE;
+        if (is_mrope) {
+            free(batch_inject.pos);
+            batch_inject.pos = (llama_pos *) malloc(sizeof(llama_pos) * 4 * llama_n_batch(ctx_dft));
+        }
 
         smpls.resize(n_seq);
         for (auto & s : smpls) {
@@ -1117,6 +1129,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     float       * dst = features_buf.data() + (size_t) i * n_embd_enc + k * (size_t) n_embd_tgt;
                     const float * src = layer + (size_t) (offset + i) * n_embd_tgt;
                     std::memcpy(dst, src, (size_t) n_embd_tgt * sizeof(float));
+
                 }
             }
 
@@ -1238,6 +1251,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     selector_reset[seq_id] = false;
                 }
 
+
                 int32_t predecessor = 0;
                 for (int32_t i = 1; i < n_block_tokens; ++i) {
                     const float * row = lattice + (size_t) (beg + i) * n_embd_dec;
@@ -1266,6 +1280,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                                 std::max_element(scores, scores + selector_top_k));
                         result.push_back((llama_token) row[predecessor]);
                     }
+
                 }
 
                 if (result.size() < (size_t) params.n_min) {
@@ -1273,6 +1288,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     if (dp.dists) {
                         dp.dists->clear();
                     }
+
                 }
                 continue;
             }
