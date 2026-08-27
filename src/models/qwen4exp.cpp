@@ -29,6 +29,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS, hparams.n_layer_nextn, false);
     GGML_ASSERT(hparams.n_layer_nextn < hparams.n_layer_all && "n_layer_nextn must be < block_count");
 
+
     ml.get_key(LLM_KV_EXPERT_FEED_FORWARD_LENGTH,        hparams.n_ff_exp, false);
     ml.get_key(LLM_KV_EXPERT_SHARED_FEED_FORWARD_LENGTH, hparams.n_ff_shexp, false);
     ml.get_key(LLM_KV_ATTENTION_LAYERNORM_RMS_EPS,       hparams.f_norm_rms_eps);
@@ -46,6 +47,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
     qwen4exp_require_nonzero(ml, LLM_KV_SSM_TIME_STEP_RANK, hparams.ssm_dt_rank);
     qwen4exp_require_nonzero(ml, LLM_KV_SSM_GROUP_COUNT,    hparams.ssm_n_group);
 
+
     // HC; low_rank is qwen4exp-specific, DeepSeek-V4 leaves it absent (full rank)
     ml.get_key(LLM_KV_HYPER_CONNECTION_COUNT,    hparams.dsv4_hc_mult);
     ml.get_key(LLM_KV_HYPER_CONNECTION_LOW_RANK, hparams.hc_low_rank);
@@ -56,6 +58,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
                                         ml.llm_kv(LLM_KV_HYPER_CONNECTION_COUNT).c_str(), hparams.dsv4_hc_mult));
     }
     qwen4exp_require_nonzero(ml, LLM_KV_HYPER_CONNECTION_LOW_RANK, hparams.hc_low_rank);
+
     hparams.n_embd_out_impl = hparams.dsv4_hc_mult * hparams.n_embd;
 
     ml.get_key(LLM_KV_ATTENTION_INDEXER_HEAD_COUNT, hparams.indexer_n_head);
@@ -64,6 +67,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
     qwen4exp_require_nonzero(ml, LLM_KV_ATTENTION_INDEXER_HEAD_COUNT, hparams.indexer_n_head);
     qwen4exp_require_nonzero(ml, LLM_KV_ATTENTION_INDEXER_KEY_LENGTH, hparams.indexer_head_size);
     qwen4exp_require_nonzero(ml, LLM_KV_ATTENTION_INDEXER_TOP_K,      hparams.indexer_top_k);
+
     ml.get_key_or_arr(LLM_KV_ATTENTION_COMPRESS_RATIOS, hparams.dsv4_compress_ratios, hparams.n_layer_all, false);
 
     // PLE n-gram hash embeddings; if the key group is absent every field stays zero
@@ -80,6 +84,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
             throw std::runtime_error(format("%s lists %u layers, but only one PLE layer is supported",
                                             ml.llm_kv(LLM_KV_PLE_LAYERS).c_str(), n_ple));
         }
+
         for (uint32_t il : ple_layers) {
             if (il >= hparams.n_layer_all) {
                 throw std::runtime_error(format("PLE layer %u is out of range", il));
@@ -97,6 +102,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
         qwen4exp_require_nonzero(ml, LLM_KV_PLE_CONV_KERNEL,             hparams.ple_conv_kernel);
         qwen4exp_require_nonzero(ml, LLM_KV_EMBEDDING_LENGTH_PER_LAYER,  hparams.n_embd_per_layer);
 
+
         hparams.ple_n_heads  = (hparams.ple_ngram_size - 1) * hparams.ple_heads_per_ngram;
         hparams.ple_head_dim = hparams.n_embd_per_layer;
         if (hparams.ple_ngram_size < 2 || hparams.ple_ngram_size > LLAMA_MAX_PLE_NGRAM) {
@@ -109,6 +115,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
         qwen4exp_require_arr_len(ml, LLM_KV_PLE_LAYER_MULTIPLIERS, hparams.ple_ngram_size);
         qwen4exp_require_arr_len(ml, LLM_KV_PLE_HEAD_OFFSETS,      hparams.ple_n_heads);
         qwen4exp_require_arr_len(ml, LLM_KV_PLE_HEAD_VOCAB_SIZES,  hparams.ple_n_heads);
+
 
         ml.get_arr(LLM_KV_PLE_LAYER_MULTIPLIERS, hparams.ple_layer_multipliers);
 
@@ -134,6 +141,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
         uint32_t full_attn_interval = 4;
         ml.get_key(LLM_KV_FULL_ATTENTION_INTERVAL, full_attn_interval, false);
         qwen4exp_require_nonzero(ml, LLM_KV_FULL_ATTENTION_INTERVAL, full_attn_interval);
+
         for (uint32_t i = 0; i < hparams.n_layer_all; ++i) {
             hparams.is_recr_impl[i] = (i < hparams.n_layer()) && ((i + 1) % full_attn_interval != 0);
         }
@@ -145,6 +153,7 @@ void llama_model_qwen4exp::load_arch_hparams(llama_model_loader & ml) {
             throw std::runtime_error(format("PLE layer %u is not a linear attention layer", i));
         }
     }
+
 
     switch (hparams.n_layer()) {
         case 48: type = LLM_TYPE_A3B; break;
@@ -202,6 +211,7 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
         // the MTP block is structurally a trunk block: is_recr()/is_ple() are both false past
         // the trunk, so it takes the full-attention + MoE path below with no special casing
         const int flags = il < n_layer ? 0 : mtp_flags;
+
 
         const int64_t n_ff_exp   = hparams.n_ff_exp   ? hparams.n_ff_exp   : n_ff / n_expert_used;
         const int64_t n_ff_shexp = hparams.n_ff_shexp ? hparams.n_ff_shexp : n_ff;
@@ -288,6 +298,7 @@ void llama_model_qwen4exp::load_arch_tensors(llama_model_loader & ml) {
         // head falls back to the trunk's embedding table and LM head
         layer.nextn.embed_tokens     = create_tensor(tn(LLM_TENSOR_NEXTN_EMBED_TOKENS,     "weight", il), { n_embd, n_vocab }, flags | TENSOR_NOT_REQUIRED);
         layer.nextn.shared_head_head = create_tensor(tn(LLM_TENSOR_NEXTN_SHARED_HEAD_HEAD, "weight", il), { n_embd, n_vocab }, flags | TENSOR_NOT_REQUIRED);
+
     }
 }
 
@@ -295,6 +306,7 @@ std::unique_ptr<llm_graph_context> llama_model_qwen4exp::build_arch_graph(const 
     if (params.gtype == LLM_GRAPH_TYPE_DECODER_MTP) {
         return std::make_unique<graph_mtp>(*this, params);
     }
+
     return std::make_unique<graph>(*this, params);
 }
 
@@ -383,6 +395,7 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
     cb(inpL, "model.input_embed", -1);
     ggml_build_forward_expand(gf, inpL);
 
+
     auto * inp = build_inp_mem_hybrid();
 
     // qwen4exp always builds llama_memory_hybrid_idx, so this downcast is safe
@@ -405,6 +418,7 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
         ggml_build_forward_expand(gf, ple_emb);
     }
 
+
     // the wide residual starts as hc identical copies of the embedding
     ggml_tensor * res_hc = ggml_repeat_4d(ctx0,
             ggml_reshape_3d(ctx0, inpL, n_embd, 1, n_tokens),
@@ -416,6 +430,7 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
 
         if (hparams.is_ple(il)) {
             res_hc = build_ple(inp->get_recr(), ple_emb, res_hc, il);
+
         }
 
         ggml_tensor * inject = nullptr;
@@ -439,6 +454,7 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
         const bool gather_now = !cparams.embeddings_nextn || cparams.embeddings_nextn_masked;
 
         if (il == n_layer - 1 && inp_out_ids && gather_now) {
+
             // everything below is per token, so drop the rows that produce no output
             cur    = ggml_get_rows(ctx0, cur,    inp_out_ids);
             inject = ggml_get_rows(ctx0, inject, inp_out_ids);
@@ -482,6 +498,7 @@ llama_model_qwen4exp::graph::graph(const llama_model & model, const llm_graph_pa
             res_hc = ggml_reshape_3d(ctx0, res_hc, n_embd, hc, res_hc->ne[1]);
         }
     }
+
 
     // the final mixer is the output norm: there is no separate one
     ggml_tensor * cur = build_hc_mix(res_hc,
@@ -693,6 +710,7 @@ llama_model_qwen4exp::graph_mtp::graph_mtp(const llama_model & model, const llm_
     ggml_build_forward_expand(gf, cur);
 }
 
+
 std::pair<ggml_tensor *, ggml_tensor *> llama_model_qwen4exp::graph::build_qkvz(
                 ggml_tensor * input,
                         int   il) {
@@ -863,6 +881,7 @@ ggml_tensor * llama_model_qwen4exp::graph::build_qsa_top_k(
 
     // rope wants [n_dims, n_head, n_tokens]: lay every stream's blocks flat, split after.
     pooled = ggml_reshape_3d(ctx0, pooled, idx_dim, 1, n_blocks*n_stream);
+
     pooled = ggml_rope_multi(ctx0, pooled, inp->blk_pos, nullptr,
             n_rot, sections, rope_type, n_ctx_orig, freq_base, freq_scale,
             ext_factor, attn_factor, beta_fast, beta_slow);
@@ -1407,11 +1426,13 @@ ggml_tensor * llama_model_qwen4exp::graph::build_conv_state_at(
         ggml_build_forward_expand(gf, ggml_cpy(ctx0, ggml_cont(ctx0, tail), dst));
     }
 
+
     return conv_input;
 }
 
 ggml_tensor * llama_model_qwen4exp::graph::build_inp_ple(
         const llama_memory_hybrid_idx_context * mctx_hyb) {
+
     const int64_t n_heads = hparams.ple_n_heads;
 
     // the attention cells see every ubatch regardless of the layer types
@@ -1438,6 +1459,7 @@ ggml_tensor * llama_model_qwen4exp::graph::build_ple(
         int                  il) {
     const int64_t hc      = hparams.dsv4_hc_mult;
     const int64_t hc_dim  = hc * n_embd;
+
 
     ggml_tensor * key   = build_lora_mm(model.layers[il].ple_key,   emb);
     ggml_tensor * value = build_lora_mm(model.layers[il].ple_value, emb);

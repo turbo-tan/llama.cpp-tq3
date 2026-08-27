@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, cast
 
+
 import torch
 from torch import Tensor
 
@@ -14,6 +15,7 @@ from .qwen3vl import Qwen3VLVisionModel
 
 
 @ModelBase.register("Qwen4ExpForConditionalGeneration", "Qwen4ExpForCausalLM")
+
 class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
     """Qwen3.8-Flash-Next.
 
@@ -23,9 +25,11 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
 
     The checkpoint also carries a NextN/MTP draft head under `mtp.*`, exported as a
     trailing block; pass --no-nextn to leave it out.
+
     """
 
     model_arch = gguf.MODEL_ARCH.QWEN4EXP
+
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -86,6 +90,7 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
         tensors[name] = lambda: torch.cat([emb(), hid()], dim=1)
         return tensors
 
+
     def _read_hash_constants(self, suffix: str) -> list[int]:
         """Read an int64 PLE constant straight from the checkpoint.
 
@@ -126,6 +131,7 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
         # to describe either
         ple_layers = [i - 1 for i in hp["ple_layer_ids"]]
         if not ple_layers or self.mtp_only:
+
             return
         self.gguf_writer.add_ple_layers(ple_layers)
         self.gguf_writer.add_ple_ngram_size(hp["ngram_size"])
@@ -245,5 +251,6 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
 
 
 @ModelBase.register("Qwen4ExpForConditionalGeneration")
+
 class Qwen4ExpVisionModel(Qwen3VLVisionModel):
     """The vision tower is an unmodified Qwen3-VL ViT."""

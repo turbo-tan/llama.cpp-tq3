@@ -2733,6 +2733,7 @@ class TensorNameMap:
             MODEL_TENSOR.NEXTN_HC_HEAD_UP: (
                 "model.layers.{bid}.hyper_connection_mixer.input_mix_weight_up",
             ),
+
             MODEL_TENSOR.INDEXER_Q_NORM: (
                 "model.layers.{bid}.self_attn.indexer.q_layernorm",
             ),

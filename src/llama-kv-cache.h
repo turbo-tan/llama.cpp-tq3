@@ -242,7 +242,6 @@ public:
     //   tok: A B X X X C
     //   pos: 0 1 2 2 2 5
     //   prev, n=2: A -> [NULL, NULL], B -> [NULL, A], 3rd X -> [X, X], C -> [X, X]
-
     // note: used by n-gram input embeddings
     void get_prev_tokens(const llama_ubatch & ubatch, uint32_t n, std::vector<llama_token> & res) const;
 

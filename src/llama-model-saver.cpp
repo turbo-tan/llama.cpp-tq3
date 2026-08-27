@@ -342,8 +342,6 @@ void llama_model_saver::add_kv_from_model() {
                 hparams.ple_head_vocab_sizes.begin() + hparams.ple_n_heads));
     }
 
-
-
     const float rope_scaling_factor = hparams.rope_freq_scale_train == 1.0f ? 0.0f : 1.0f/hparams.rope_freq_scale_train;
 
     add_kv(LLM_KV_ROPE_DIMENSION_COUNT,              hparams.n_rot_full);
@@ -481,7 +479,6 @@ void llama_model_saver::add_tensors_from_model() {
     add_tensor(model->hc_head_norm);
     add_tensor(model->hc_head_down);
     add_tensor(model->hc_head_up);
-
 
     for (const struct llama_layer & layer : model->layers) {
         for (size_t i = 0; i < sizeof(layer)/sizeof(struct ggml_tensor *); ++i) {
