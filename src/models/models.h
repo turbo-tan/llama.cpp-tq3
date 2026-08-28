@@ -2432,7 +2432,6 @@ struct llama_model_qwen4exp : public llama_model_base {
         ggml_tensor * build_ple(
              llm_graph_input_rs * inp,
                     ggml_tensor * emb,
-
                     ggml_tensor * hidden,
                             int   il);
 
