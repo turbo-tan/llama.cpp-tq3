@@ -8,6 +8,12 @@
 #include "llama-vocab.h"
 
 #include <map>
+#define LLAMA_MAX_PLE_NGRAM 8
+#define LLAMA_MAX_PLE_HEADS 16
+#define LLAMA_MAX_PLE_NGRAM 8
+#define LLAMA_MAX_PLE_HEADS 16
+#define LLAMA_MAX_PLE_NGRAM 8
+#define LLAMA_MAX_PLE_HEADS 16
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -123,6 +129,7 @@ enum llm_type {
     LLM_TYPE_24B_A2B, // lfm2moe
     LLM_TYPE_26B_A4B, // Gemma4
     LLM_TYPE_30B_A3B,
+    LLM_TYPE_A3B, // Qwen3.8 Flash Next
     LLM_TYPE_31B_A3_5B,
     LLM_TYPE_35B_A3B, // Qwen3.5
     LLM_TYPE_48B_A3B, // Kimi Linear
@@ -224,7 +231,6 @@ struct llama_layer_nextn {
 };
 
 struct llama_layer {
-    // normalization
     struct ggml_tensor * attn_norm       = nullptr;
     struct ggml_tensor * attn_norm_b     = nullptr;
     struct ggml_tensor * attn_norm_2     = nullptr;
@@ -476,6 +482,14 @@ struct llama_layer {
     struct ggml_tensor * hc_ffn_fn    = nullptr;
     struct ggml_tensor * hc_ffn_base  = nullptr;
     struct ggml_tensor * hc_ffn_scale = nullptr;
+    struct ggml_tensor * hc_attn_norm = nullptr;
+    struct ggml_tensor * hc_attn_down = nullptr;
+    struct ggml_tensor * hc_attn_up = nullptr;
+    struct ggml_tensor * hc_attn_inject = nullptr;
+    struct ggml_tensor * hc_ffn_norm = nullptr;
+    struct ggml_tensor * hc_ffn_down = nullptr;
+    struct ggml_tensor * hc_ffn_up = nullptr;
+    struct ggml_tensor * hc_ffn_inject = nullptr;
     struct ggml_tensor * attn_comp_wkv   = nullptr;
     struct ggml_tensor * attn_comp_wgate = nullptr;
     struct ggml_tensor * attn_comp_ape   = nullptr;
@@ -484,6 +498,14 @@ struct llama_layer {
     struct ggml_tensor * indexer_comp_wgate = nullptr;
     struct ggml_tensor * indexer_comp_ape   = nullptr;
     struct ggml_tensor * indexer_comp_norm  = nullptr;
+
+    // Qwen4 PLE (Positional Learning Embedding)
+    struct ggml_tensor * ple_key         = nullptr;
+    struct ggml_tensor * ple_value       = nullptr;
+    struct ggml_tensor * ple_norm_key    = nullptr;
+    struct ggml_tensor * ple_norm_query  = nullptr;
+    struct ggml_tensor * ple_norm_conv   = nullptr;
+    struct ggml_tensor * ple_conv1d      = nullptr;
 
     // cogvlm
     struct ggml_tensor * visexp_attn_wqkv = nullptr;
@@ -585,6 +607,9 @@ struct llama_model {
     struct ggml_tensor * hc_head_fn    = nullptr;
     struct ggml_tensor * hc_head_base  = nullptr;
     struct ggml_tensor * hc_head_scale = nullptr;
+    struct ggml_tensor * hc_head_norm = nullptr;
+    struct ggml_tensor * hc_head_down = nullptr;
+    struct ggml_tensor * hc_head_up = nullptr;
 
     // classifier
     struct ggml_tensor * cls       = nullptr;
