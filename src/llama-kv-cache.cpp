@@ -2891,3 +2891,8 @@ void llama_kv_cache_context::set_input_k_rot(ggml_tensor * dst) const {
 void llama_kv_cache_context::set_input_v_rot(ggml_tensor * dst) const {
     kv->set_input_v_rot(dst);
 }
+
+const llama_kv_cells & llama_kv_cache::get_cells(llama_seq_id seq_id) const {
+    GGML_ASSERT(seq_id >= 0 && (size_t)seq_id < seq_to_stream.size());
+    return v_cells[seq_to_stream[seq_id]];
+}

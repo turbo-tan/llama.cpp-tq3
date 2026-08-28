@@ -323,10 +323,11 @@ namespace GGUFMeta {
             case GGUF_TYPE_UINT32:
             case GGUF_TYPE_INT32:   GGML_ASSERT((std::is_same<T,     int32_t>::value) ||
                                                 (std::is_same<T,    uint32_t>::value)); break;
+            case GGUF_TYPE_UINT64:  GGML_ASSERT((std::is_same<T, uint64_t>::value)); break;
             case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T,       float>::value)); break;
             case GGUF_TYPE_STRING:  GGML_ASSERT((std::is_same<T, std::string>::value)); break;
             default:
-                throw std::runtime_error(format("%s is not a string/float32/uint32/int32 array", key.c_str()));
+                throw std::runtime_error(format("%s is not a string/float32/uint32/uint64/int32 array", key.c_str()));
         }
 
         if constexpr (std::is_same<T, std::string>::value) {
@@ -365,6 +366,7 @@ namespace GGUFMeta {
             case GGUF_TYPE_UINT32:
             case GGUF_TYPE_INT32:   GGML_ASSERT((std::is_same<T,     int32_t>::value) ||
                                                 (std::is_same<T,    uint32_t>::value)); break;
+            case GGUF_TYPE_UINT64:  GGML_ASSERT((std::is_same<T, uint64_t>::value)); break;
             case GGUF_TYPE_FLOAT32: GGML_ASSERT((std::is_same<T,       float>::value)); break;
             case GGUF_TYPE_STRING:  GGML_ASSERT((std::is_same<T, std::string>::value)); break;
             default:
@@ -405,6 +407,9 @@ namespace GGUFMeta {
     template bool llama_model_loader::get_arr<std::array<int32_t, 512>>(enum llm_kv kid, std::array<int32_t, 512> & result, bool required);
     template bool llama_model_loader::get_arr<std::vector<int32_t>>(enum llm_kv kid, std::vector<int32_t> & result, bool required);
     template bool llama_model_loader::get_arr<std::array<uint32_t, LLAMA_MAX_LAYERS>>(enum llm_kv kid, std::array<uint32_t, LLAMA_MAX_LAYERS> & result, bool required);
+    template bool llama_model_loader::get_arr<std::array<unsigned long, 8>>(enum llm_kv kid, std::array<unsigned long, 8> & result, bool required);
+    template bool llama_model_loader::get_arr<std::vector<unsigned int>>(enum llm_kv kid, std::vector<unsigned int> & result, bool required);
+    template bool llama_model_loader::get_arr<std::array<unsigned long, 64>>(enum llm_kv kid, std::array<unsigned long, 64> & result, bool required);
 
     template<typename T>
     bool llama_model_loader::get_key(const std::string & key, T & result, bool required) {

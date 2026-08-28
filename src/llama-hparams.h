@@ -243,6 +243,7 @@ struct llama_hparams {
     uint32_t dsv4_o_group_count        = 0;
     uint32_t dsv4_o_lora_rank          = 0;
     uint32_t dsv4_hc_mult              = 0;
+    uint32_t hc_low_rank               = 0;
     uint32_t dsv4_hc_sinkhorn_iters    = 0;
     uint32_t dsv4_hash_layer_count     = 0;
     float    dsv4_compress_rope_base   = 0.0f;
@@ -265,6 +266,22 @@ struct llama_hparams {
 
     // gemma4 per-layer embedding
     uint32_t n_embd_per_layer = 0;
+
+    // Qwen4Exp PLE (Progressive Learning Embedding) fields
+    uint32_t ple_ngram_size      = 0;
+    uint32_t ple_heads_per_ngram = 0;
+    uint32_t ple_conv_kernel     = 0;
+    uint32_t ple_n_heads         = 0;
+    uint32_t ple_head_dim        = 0;
+    uint32_t ple_eos_token_id    = 0;
+    uint32_t ple_image_token_id  = 0;
+    std::array<uint32_t, 512> is_ple_impl;
+    std::array<uint64_t, 8>   ple_layer_multipliers;
+    std::array<uint64_t, 64>  ple_head_offsets;
+    std::array<uint64_t, 64>  ple_head_vocab_sizes;
+
+    bool is_ple(int il) const { return il < 512 && is_ple_impl[il] != 0; }
+    uint32_t ple_conv_state() const;
 
     // needed by encoder-decoder models (e.g. T5, FLAN-T5)
     // ref: https://github.com/ggml-org/llama.cpp/pull/8141
