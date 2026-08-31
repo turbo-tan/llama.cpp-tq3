@@ -717,6 +717,11 @@ function gg_check_build_requirements {
     if ! command -v ctest &> /dev/null; then
         gg_printf 'ctest not found, please install'
     fi
+
+    if ! command -v unzip &> /dev/null; then
+        gg_printf 'unzip not found, please install\n'
+        exit 1
+    fi
 }
 
 function gg_run_test_backend_ops_cpu {
