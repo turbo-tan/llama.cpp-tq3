@@ -15,17 +15,6 @@ void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
     ml.get_key(LLM_KV_SSM_TIME_STEP_RANK, hparams.ssm_dt_rank);
     ml.get_key(LLM_KV_SSM_GROUP_COUNT,    hparams.ssm_n_group);
 
-    // NextN/MTP (Qwen3.5/3.6): extra decoder block appended beyond the main stack
-    ml.get_key(LLM_KV_NEXTN_PREDICT_LAYERS, hparams.n_layer_nextn, false);
-    GGML_ASSERT(hparams.n_layer_nextn < hparams.n_layer_all && "n_layer_nextn must be < n_layer_impl");
-    ml.get_key("llama.nomtp_trunk_only", hparams.trunk_only_nomtp, false);
-    ml.get_key("llama.mtp_only",         hparams.mtp_only,         false);
-
-    if (hparams.trunk_only_nomtp) {
-        hparams.n_layer_all -= hparams.n_layer_nextn;
-        hparams.n_layer_nextn = 0;
-    }
-
     // Mark recurrent layers (linear attention layers). MTP layers are dense
     // attention-only and must be flagged non-recurrent.
     if (!ml.get_key_or_arr(LLM_KV_ATTENTION_RECURRENT_LAYERS, hparams.is_recr_impl, hparams.n_layer_all, false)) {
@@ -47,8 +36,8 @@ void llama_model_qwen35moe::load_arch_hparams(llama_model_loader & ml) {
 void llama_model_qwen35moe::load_arch_tensors(llama_model_loader & ml) {
     LLAMA_LOAD_LOCALS;
 
-    const bool mtp_only = hparams.mtp_only || ((hparams.n_layer_nextn > 0) && (ml.get_weight("blk.0.attn_norm.weight") == nullptr));
-    const int trunk_flags = mtp_only ? TENSOR_SKIP : 0;
+    const bool mtp_only = (hparams.n_layer_nextn > 0) && (ml.get_weight("blk.0.attn_norm.weight") == nullptr);
+    const int trunk_flags = mtp_only ? TENSOR_NOT_REQUIRED : 0;
     int mtp_flags = !ml.load_mtp ? TENSOR_SKIP : 0;
 
     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), { n_embd, n_vocab }, 0);
@@ -237,14 +226,11 @@ llama_model_qwen35moe::graph::graph(const llama_model & model, const llm_graph_p
     }
     cur = inpL;
 
-    // Keep the pre-norm hidden state for MTP seeding.
-    ggml_tensor * h_nextn = cur;
+    // post-norm hidden state feeds both the LM head and the MTP seed below
     cur = build_norm(cur, model.output_norm, nullptr, LLM_NORM_RMS, -1);
 
-    cb(h_nextn, "h_pre_norm", -1);
-    res->t_h_pre_norm = h_nextn;
-    cb(h_nextn, "h_nextn", -1);
-    res->t_h_nextn = h_nextn;
+    cb(cur, "h_nextn", -1);
+    res->t_h_nextn = cur;
 
     if (!cparams.embeddings_nextn_masked && inp_out_ids) {
         cur = ggml_get_rows(ctx0, cur, inp_out_ids);
@@ -581,7 +567,7 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
     std::copy(std::begin(hparams.rope_sections), std::begin(hparams.rope_sections) + 4, sections);
 
     // TODO: extract in a common llm_graph_context::build_inp_embd_h()
-    auto inp = std::make_unique<llm_graph_input_embd>(hparams.n_embd);
+    auto inp = std::make_unique<llm_graph_input_embd_h>(hparams.n_embd);
 
     inp->tokens = ggml_new_tensor_1d(ctx0, GGML_TYPE_I32, n_tokens);
     ggml_set_input(inp->tokens);
@@ -601,11 +587,11 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
     }
     cb(tok_embd, "mtp_tok_embd", il);
 
-    inp->embd = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
-    ggml_set_input(inp->embd);
-    ggml_set_name(inp->embd, "mtp_h_input");
+    inp->h = ggml_new_tensor_2d(ctx0, GGML_TYPE_F32, hparams.n_embd, n_tokens);
+    ggml_set_input(inp->h);
+    ggml_set_name(inp->h, "mtp_h_input");
 
-    ggml_tensor * h_embd = inp->embd;
+    ggml_tensor * h_embd = inp->h;
 
     res->add_input(std::move(inp));
 
@@ -729,18 +715,14 @@ llama_model_qwen35moe::graph_mtp::graph_mtp(const llama_model & model, const llm
     cur = ggml_add(ctx0, cur, ffn_residual);
     cb(cur, "mtp_post_ffn", il);
 
-    ggml_tensor * h_nextn = cur;
-    cb(h_nextn, "h_pre_norm", -1);
-    res->t_h_pre_norm = h_nextn;
-    res->t_mtp_out    = h_nextn;
     ggml_tensor * head_norm_w = layer.nextn.shared_head_norm
             ? layer.nextn.shared_head_norm
             : model.output_norm;
     GGML_ASSERT(head_norm_w && "QWEN35MOE MTP: missing both nextn.shared_head_norm and output_norm");
     cur = build_norm(cur, head_norm_w, nullptr, LLM_NORM_RMS, -1);
 
-    cb(h_nextn, "h_nextn", -1);
-    res->t_h_nextn = h_nextn;
+    cb(cur, "h_nextn", -1);
+    res->t_h_nextn= cur;
 
     cur = ggml_get_rows(ctx0, cur, inp_out_ids);
     cb(cur, "mtp_shared_head_norm", -1);
