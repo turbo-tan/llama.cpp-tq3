@@ -7,6 +7,7 @@
 
 
 
+
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -61,6 +62,10 @@ llama_memory_hybrid_idx::llama_memory_hybrid_idx(
         // K-shift must not rotate them while the stream copies in the same update still apply
         hparams_idx.rope_type = LLAMA_ROPE_TYPE_NONE;
 
+
+        // the cached indexer keys are raw, rotation happens after pooling at read time, so a
+        // K-shift must not rotate them while the stream copies in the same update still apply
+        hparams_idx.rope_type = LLAMA_ROPE_TYPE_NONE;
 
         LLAMA_LOG_INFO("%s: creating indexer KV cache, size = %u cells\n", __func__, kv_size);
 
@@ -592,6 +597,7 @@ void llama_memory_hybrid_idx::set_input_qsa(
 }
 
 
+
 //
 // llama_memory_hybrid_idx_context
 //
@@ -630,6 +636,7 @@ llama_memory_hybrid_idx_context::llama_memory_hybrid_idx_context(
     // update() applies a pending cross-stream seq_cp, else the copy keeps stale indexer keys
     ctx_idx(mem->get_mem_idx() == nullptr ? nullptr :
         mem->get_mem_idx()->init_update(lctx, optimize)) {}
+
 
 
 llama_memory_hybrid_idx_context::llama_memory_hybrid_idx_context(
@@ -834,4 +841,5 @@ void llama_memory_hybrid_idx_context::set_input_kpool(
             }
         }
     }
+
 }

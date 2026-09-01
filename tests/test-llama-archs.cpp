@@ -292,7 +292,6 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
         ms.add_kv(LLM_KV_PLE_LAYER_MULTIPLIERS,       std::vector<uint64_t>({ 1, 3, 5 }));
         ms.add_kv(LLM_KV_PLE_HEAD_OFFSETS,            ple_head_offsets);
         ms.add_kv(LLM_KV_PLE_HEAD_VOCAB_SIZES,        ple_head_vocab_sizes);
-
     }
 
     // minimax-m3 keeps one indexer head per GQA head; the rest use a fixed 64 to match the fused

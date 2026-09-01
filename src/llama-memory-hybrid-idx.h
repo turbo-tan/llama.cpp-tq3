@@ -90,7 +90,6 @@ public:
                        ggml_tensor * bias, const llama_ubatch * ubatch, uint32_t ratio,
                        bool blk_bias) const;
 
-
 private:
     // forget seq_id (all of it if seq_id < 0) in every cache at once, so a failed restore cannot leave the caches out of step
     // seq_id < 0 drops the whole context, as the caches themselves do on a failed restore
@@ -140,12 +139,10 @@ public:
     //
 
     // nullptr with no indexer
-
     const llama_kv_cache_context * get_idx() const;
 
     // streams in the current slot info, the `ns` of get_k/get_v; 1 if unified
     uint32_t get_n_stream() const;
-
 
     void set_input_qsa(ggml_tensor * cell_blk, ggml_tensor * blk_cells, ggml_tensor * blk_pos,
                        ggml_tensor * bias, const llama_ubatch * ubatch, uint32_t ratio,
@@ -170,7 +167,6 @@ private:
     const std::vector<uint32_t> ns_ubatch;
 
     // null unless the model has an indexer
-
     const llama_memory_context_ptr ctx_idx;
 
     // mirrors the base class's ubatch cursor, which is private there

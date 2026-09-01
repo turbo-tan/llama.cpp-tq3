@@ -2629,7 +2629,6 @@ bool llama_kv_cache::state_read_meta(llama_io_read_i & io, uint32_t strm, uint32
                 ubatch.token[i] = ext.tok;
 
                 exts[i] = ext;
-
             }
 
             // read the sequence id, but directly discard it - we will use dest_seq_id instead
