@@ -346,6 +346,17 @@ Instructions for adding support for new models: [HOWTO-add-model.md](docs/develo
 | [MUSA](docs/build.md#musa) | Moore Threads GPU |
 | [CUDA](docs/build.md#cuda) | Nvidia GPU |
 | [HIP](docs/build.md#hip) | AMD GPU |
+| [Hexagon](docs/backend/snapdragon/README.md) | Snapdragon |
+| [IBM zDNN](docs/backend/zDNN.md) | IBM Z & LinuxONE |
+| [MUSA](docs/build.md#musa) | Moore Threads GPU |
+| [Metal](docs/build.md#metal-build) | Apple Silicon |
+| [OpenCL](docs/backend/OPENCL.md) | Adreno GPU |
+| [OpenVINO [In Progress]](docs/backend/OPENVINO.md) | Intel CPUs, GPUs, and NPUs |
+| [RPC](https://github.com/ggml-org/llama.cpp/tree/master/tools/rpc) | All |
+| [SYCL](docs/backend/SYCL.md) | Intel GPU |
+| [VirtGPU](docs/backend/VirtGPU.md) | VirtGPU APIR |
+| [Vulkan](docs/build.md#vulkan) | GPU |
+| [WebGPU](docs/build.md#webgpu) | All |
 | [ZenDNN](docs/build.md#zendnn) | AMD CPU |
 | [Vulkan](docs/build.md#vulkan) | GPU |
 | [CANN](docs/build.md#cann) | Ascend NPU |
