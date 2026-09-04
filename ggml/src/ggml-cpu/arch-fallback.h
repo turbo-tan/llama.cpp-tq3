@@ -9,6 +9,7 @@
 #define quantize_row_q8_0_generic quantize_row_q8_0
 #define quantize_row_q8_1_generic quantize_row_q8_1
 #define quantize_row_q8_K_generic quantize_row_q8_K
+#define ggml_vec_dot_tq3_4s_q8_0_generic ggml_vec_dot_tq3_4s_q8_0
 #define ggml_vec_dot_q4_0_q8_0_generic ggml_vec_dot_q4_0_q8_0
 #define ggml_vec_dot_q4_1_q8_1_generic ggml_vec_dot_q4_1_q8_1
 #define ggml_vec_dot_q5_0_q8_0_generic ggml_vec_dot_q5_0_q8_0

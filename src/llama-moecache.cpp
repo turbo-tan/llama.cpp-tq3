@@ -184,7 +184,7 @@ void llama_moe_cache_init(const llama_model & model, int32_t n_slots, int32_t ma
         }
 
         if (groups.empty()) {
-            LLAMA_LOG_INFO("%s: LLAMA_MOE_CACHE_SLOTS=%d but no host-resident expert layers found - disabled\n", __func__, n_slots);
+            LLAMA_LOG_WARN("%s: LLAMA_MOE_CACHE_SLOTS=%d but no host-resident expert layers found - disabled\n", __func__, n_slots);
             delete mc;
             return;
         }
@@ -314,7 +314,7 @@ void llama_moe_cache_init(const llama_model & model, int32_t n_slots, int32_t ma
         g_cache = mc;
         g_init_done = true;
 
-        LLAMA_LOG_INFO("%s: MoE expert cache enabled: %zu layers x %d slots, %d inserts/step, %.1f MiB device memory\n",
+        LLAMA_LOG_WARN("%s: MoE expert cache enabled: %zu layers x %d slots, %d inserts/step, %.1f MiB device memory\n",
                 __func__, mc->layers.size(), n_slots, mc->max_inserts, vram/1024.0/1024.0);
     }();
 }
@@ -398,10 +398,10 @@ void llama_moe_cache_step() {
     }
     mc->wcv.notify_one();
 
-    if (mc->n_steps % 512 == 0) {
+    if (mc->n_steps % 64 == 0) {
         uint64_t h = 0, m = 0;
         for (auto & ls : mc->layers) { h += ls.n_hit; m += ls.n_miss; }
-        LLAMA_LOG_DEBUG("moe-cache: steps=%" PRIu64 " hits=%" PRIu64 " misses=%" PRIu64 " hit-rate=%.1f%%\n",
+        LLAMA_LOG_WARN("moe-cache: steps=%" PRIu64 " hits=%" PRIu64 " misses=%" PRIu64 " hit-rate=%.1f%%\n",
                 mc->n_steps, h, m, h + m ? 100.0*h/(h + m) : 0.0);
     }
 }

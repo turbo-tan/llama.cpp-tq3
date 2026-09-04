@@ -2918,6 +2918,36 @@ void dequantize_row_tq3_4s(const block_tq3_4s * GGML_RESTRICT x, float * GGML_RE
     }
 }
 
+// ---- CPU-kernel helpers (RHT fold: dot(a, dequant(w)) = dot(RHT_fwd(a), codes)) ----
+
+void tq3_rht_forward_f32(const float * GGML_RESTRICT in, float * GGML_RESTRICT out) {
+    tq3_0_rht_forward(in, out);
+}
+
+void tq3_4s_build_scale_lut(float * lut256) {
+    for (int b = 0; b < 256; ++b) {
+        lut256[b] = tq3_4s_decode_scale((uint8_t) b);
+    }
+}
+
+const float * tq3_0_centroids_f32(void) {
+    return TQ3_0_CENTROIDS;
+}
+
+// q8_0 quantization with the TurboQuant RHT applied first. Paired with the rotated
+// TQ3_4S dot kernels: since the RHT is orthogonal and symmetric (RHT_inv^T == RHT_fwd),
+// dot(a, dequant(w)) == dot(RHT_fwd(a), rotated_codes). Rotating the activations once
+// here removes the inverse Hadamard transform from the per-weight-block hot path.
+void quantize_row_q8_0_rht(const float * GGML_RESTRICT x, block_q8_0 * GGML_RESTRICT y, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    const int64_t nb = k / QK_TQ3_0;
+    float tmp[QK_TQ3_0];
+    for (int64_t i = 0; i < nb; ++i) {
+        tq3_0_rht_forward(x + i * QK_TQ3_0, tmp);
+        quantize_row_q8_0_ref(tmp, y + i, QK_TQ3_0);
+    }
+}
+
 static void quantize_row_tq3_1s_shift_ref(const float * GGML_RESTRICT x, block_tq3_1s_shift * GGML_RESTRICT y, int64_t k) {
     assert(k % QK_TQ3_0 == 0);
     const int64_t nb = k / QK_TQ3_0;

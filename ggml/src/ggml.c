@@ -983,6 +983,14 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4s,
         .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4s_ref,
     },
+    [GGML_TYPE_Q8_0_RHT] = {
+        // internal activation type: q8_0 quantized AFTER the TurboQuant RHT.
+        // Only ever materialized in CPU mul_mat wdata; never stored.
+        .type_name                = "q8_0_rht",
+        .blck_size                = QK8_0,
+        .type_size                = sizeof(block_q8_0),
+        .is_quantized             = true,
+    },
     [GGML_TYPE_TQ3_0] = {
         .type_name                = "tq3_0",
         .blck_size                = QK_TQ3_0,
