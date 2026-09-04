@@ -81,6 +81,13 @@ GGML_API void dequantize_row_turbo4_0(const block_turbo4_0 * GGML_RESTRICT x, fl
 GGML_API void dequantize_row_tq3_1s(const block_tq3_1s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_tq3_4s(const block_tq3_4s * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_tq3_4se(const block_tq3_4se * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
+
+// CPU-kernel helpers: the RHT is symmetric-orthogonal, so the inverse transform on the
+// weight side can be folded into the activations (dot(a, dequant(w)) = dot(RHT_fwd(a), codes)).
+GGML_API void tq3_rht_forward_f32(const float * GGML_RESTRICT in, float * GGML_RESTRICT out); // one 32-elem block
+GGML_API void tq3_4s_build_scale_lut(float * lut256);                                         // E3M5 byte -> scale
+GGML_API const float * tq3_0_centroids_f32(void);                                             // 8 entries
+GGML_API void quantize_row_q8_0_rht(const float * GGML_RESTRICT x, block_q8_0 * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_tq3_1s_shift(const block_tq3_1s_shift * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_tq3_1s_ap1(const block_tq3_1s_ap1 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
 GGML_API void dequantize_row_q4_0_tq_v0(const block_q4_0_tq_v0 * GGML_RESTRICT x, float * GGML_RESTRICT y, int64_t k);
