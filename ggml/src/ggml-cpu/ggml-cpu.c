@@ -436,6 +436,12 @@ static const struct ggml_type_traits_cpu type_traits_cpu[GGML_TYPE_COUNT] = {
     [GGML_TYPE_TQ3_4S] = {
         .from_float               = NULL,
         .vec_dot                  = ggml_vec_dot_tq3_4s_q8_0,
+        .vec_dot_type             = GGML_TYPE_Q8_0_RHT,
+        .nrows                    = 1,
+    },
+    [GGML_TYPE_Q8_0_RHT] = {
+        // activations pre-rotated by the TurboQuant RHT; dot runs in rotated space
+        .from_float               = (ggml_from_float_t) quantize_row_q8_0_rht,
         .vec_dot_type             = GGML_TYPE_Q8_0,
         .nrows                    = 1,
     },
@@ -1890,7 +1896,11 @@ static void ggml_compute_forward_mul_mat_id(
                 moe_log_state = moe_log_file ? 1 : 0;
             }
             if (moe_log_state == 1 && strstr(src0->name, "ffn_gate_exps")) {
+#ifdef _WIN32
+                _lock_file(moe_log_file);
+#else
                 flockfile(moe_log_file);
+#endif
                 for (int64_t iid1 = 0; iid1 < ids->ne[1]; ++iid1) {
                     fprintf(moe_log_file, "%s", src0->name);
                     for (int id = 0; id < n_ids; ++id) {
@@ -1899,7 +1909,11 @@ static void ggml_compute_forward_mul_mat_id(
                     }
                     fputc('\n', moe_log_file);
                 }
+#ifdef _WIN32
+                _unlock_file(moe_log_file);
+#else
                 funlockfile(moe_log_file);
+#endif
             }
         }
     }
