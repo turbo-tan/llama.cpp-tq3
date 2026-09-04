@@ -50,8 +50,16 @@ jobs:
         uses: ggml-org/ccache-action@v1.2.24
         with:
           key: apple-arm64
-          evict-old-files: 1d
-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+          save: false
+
+      - name: ccache-buckets-restore
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CI }}
+        with:
+          key: apple-arm64
+          folder: llama.cpp
+          hf_bucket: ggml-org/cache
 
       - name: Build
         id: cmake_build
@@ -61,11 +69,23 @@ jobs:
             -DCMAKE_BUILD_RPATH="@loader_path" \
             -DLLAMA_FATAL_WARNINGS=ON \
             -DLLAMA_BUILD_BORINGSSL=ON \
-            -DGGML_METAL_USE_BF16=ON \
             -DGGML_METAL_EMBED_LIBRARY=OFF \
             -DGGML_METAL_SHADER_DEBUG=ON \
-            -DGGML_RPC=ON
+            -DGGML_RPC=ON \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
           time cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
+
+      - name: ccache-buckets-save
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CACHE_OUTPUT }}
+        with:
+          key: apple-arm64
+          folder: llama.cpp
+          evict-old-files: 1d
+          hf_bucket: ggml-org/cache
+          save: true
 
       - name: Check for leaks
         run: |
@@ -80,50 +100,6 @@ jobs:
           cd build
           ctest -L main -E "test-llama-archs" --verbose --timeout 900
 
-  macos-latest-arm64-no-metal:
-    runs-on: macos-latest
-
-    steps:
-      - name: Clone
-        id: checkout
-        uses: actions/checkout@v6
-
-      - name: ccache
-        uses: ggml-org/ccache-action@v1.2.21
-        with:
-          key: apple-arm64-no-metal
-          evict-old-files: 1d
-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
-
-      - name: Build
-        id: cmake_build
-        run: |
-          sysctl -a
-          cmake -B build \
-            -DCMAKE_BUILD_RPATH="@loader_path" \
-            -DLLAMA_FATAL_WARNINGS=ON \
-            -DLLAMA_BUILD_BORINGSSL=ON \
-            -DGGML_METAL=OFF \
-            -DGGML_RPC=ON
-          time cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
-
-      - name: Test
-        id: cmake_test
-        run: |
-          cd build
-          ctest -L main -E "test-llama-archs" --verbose --timeout 900
-
-      - name: ccache-clear
-        uses: ./.github/actions/ccache-clear
-        env:
-          GH_TOKEN: ${{ github.token }}
-        with:
-          key: apple-arm64
-          older: 5m
-          min: 1
-          dry-run: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
-
-
   macos-latest-x64:
     runs-on: macos-15-intel
 
@@ -136,8 +112,16 @@ jobs:
         uses: ggml-org/ccache-action@v1.2.24
         with:
           key: apple-x64
-          evict-old-files: 1d
-          save: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+          save: false
+
+      - name: ccache-buckets-restore
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CI }}
+        with:
+          key: apple-x64
+          folder: llama.cpp
+          hf_bucket: ggml-org/cache
 
       - name: Build
         id: cmake_build
@@ -154,21 +138,23 @@ jobs:
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3
           time cmake --build build --config Release -j $(sysctl -n hw.logicalcpu)
 
+      - name: ccache-buckets-save
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CACHE_OUTPUT }}
+        with:
+          key: apple-x64
+          folder: llama.cpp
+          evict-old-files: 1d
+          hf_bucket: ggml-org/cache
+          save: true
+
       - name: Test
         id: cmake_test
         run: |
           cd build
           ctest -L main --verbose --timeout 900
-
-      - name: ccache-clear
-        uses: ./.github/actions/ccache-clear
-        env:
-          GH_TOKEN: ${{ github.token }}
-        with:
-          key: apple-x64
-          older: 5m
-          min: 1
-          dry-run: ${{ github.event_name != 'push' || github.ref != 'refs/heads/master' }}
 
   macos-latest-ios-xcode:
     runs-on: macos-latest
@@ -187,7 +173,6 @@ jobs:
         run: |
           sysctl -a
           cmake -B build -G Xcode \
-            -DGGML_METAL_USE_BF16=ON \
             -DGGML_METAL_EMBED_LIBRARY=ON \
             -DLLAMA_OPENSSL=OFF \
             -DLLAMA_BUILD_APP=OFF \
@@ -230,7 +215,6 @@ jobs:
         run: |
           sysctl -a
           cmake -B build -G Xcode \
-            -DGGML_METAL_USE_BF16=ON \
             -DGGML_METAL_EMBED_LIBRARY=ON \
             -DLLAMA_BUILD_COMMON=OFF \
             -DLLAMA_BUILD_APP=OFF \
@@ -256,7 +240,6 @@ jobs:
         run: |
           sysctl -a
           cmake -B build -G Xcode \
-            -DGGML_METAL_USE_BF16=ON \
             -DGGML_METAL_EMBED_LIBRARY=ON \
             -DLLAMA_BUILD_COMMON=OFF \
             -DLLAMA_BUILD_APP=OFF \
@@ -293,7 +276,6 @@ jobs:
         run: |
           sysctl -a
           cmake -B build -G Xcode \
-            -DGGML_METAL_USE_BF16=ON \
             -DGGML_METAL_EMBED_LIBRARY=ON \
             -DLLAMA_OPENSSL=OFF \
             -DLLAMA_BUILD_APP=OFF \
