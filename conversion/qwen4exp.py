@@ -14,7 +14,6 @@ from .qwen3vl import Qwen3VLVisionModel
 
 
 @ModelBase.register("Qwen4ExpForConditionalGeneration", "Qwen4ExpForCausalLM")
-@ModelBase.example("Qwen/Qwen3.8-Flash-Next")
 class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
     """Qwen3.8-Flash-Next.
 
@@ -41,6 +40,9 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
 
     _MTP_MIXER_PREFIX = "mtp.hyper_connection_mixer."
 
+    # set in index_tensors(); the trailing-block index the MTP head is renamed onto
+    _original_block_count: int | None = None
+
     @classmethod
     def filter_tensors(cls, item):
         # the head carries its own copy of the trunk's hc_head_* output mixer,
@@ -57,6 +59,11 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
         return super().filter_tensors((name, gen))
 
     def index_tensors(self, remote_hf_model_id: str | None = None) -> dict[str, Callable[[], Tensor]]:
+        # the trailing-block index the MTP head is renamed onto (mirror of _Qwen35MtpMixin)
+        hparams = {**self.hparams, **self.hparams.get("text_config", {})}
+        key = next((k for k in ["n_layers", "num_hidden_layers", "n_layer", "num_layers"] if k in hparams), None)
+        type(self)._original_block_count = hparams.get(key)
+
         # qwen4exp splits the combiner the shared NextN code calls eh_proj into
         # fc_embedding and fc_hidden; W_e@e + W_h@h == [W_e|W_h] @ concat(e, h),
         # so the two fuse back into the single expected matmul
@@ -238,6 +245,5 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
 
 
 @ModelBase.register("Qwen4ExpForConditionalGeneration")
-@ModelBase.example("Qwen/Qwen3.8-Flash-Next")
 class Qwen4ExpVisionModel(Qwen3VLVisionModel):
     """The vision tower is an unmodified Qwen3-VL ViT."""
