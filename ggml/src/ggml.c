@@ -249,6 +249,21 @@ GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t cal
     return ret_val;
 }
 
+static ggml_moe_obs_cb_t g_moe_obs_cb = NULL;
+static void *             g_moe_obs_ud = NULL;
+
+void ggml_set_moe_obs_callback(ggml_moe_obs_cb_t cb, void * ud) {
+    g_moe_obs_cb = cb;
+    g_moe_obs_ud = ud;
+}
+
+ggml_moe_obs_cb_t ggml_get_moe_obs_callback(void ** ud) {
+    if (ud) {
+        *ud = g_moe_obs_ud;
+    }
+    return g_moe_obs_cb;
+}
+
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
     fflush(stdout);
 
@@ -967,6 +982,14 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .is_quantized             = true,
         .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4s,
         .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4s_ref,
+    },
+    [GGML_TYPE_Q8_0_RHT] = {
+        // internal activation type: q8_0 quantized AFTER the TurboQuant RHT.
+        // Only ever materialized in CPU mul_mat wdata; never stored.
+        .type_name                = "q8_0_rht",
+        .blck_size                = QK8_0,
+        .type_size                = sizeof(block_q8_0),
+        .is_quantized             = true,
     },
     [GGML_TYPE_TQ3_0] = {
         .type_name                = "tq3_0",

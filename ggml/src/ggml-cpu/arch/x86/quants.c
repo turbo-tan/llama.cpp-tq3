@@ -11,6 +11,7 @@
 #include <math.h>
 #include <string.h>
 #include <assert.h>
+#include <stdatomic.h>
 #include <stdlib.h> // for qsort
 #include <stdio.h>  // for GGML_ASSERT
 
@@ -4104,5 +4105,120 @@ void ggml_vec_dot_iq4_xs_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const v
     UNUSED(y);
     UNUSED(nb);
     ggml_vec_dot_iq4_xs_q8_K_generic(n, s, bs, vx, bx, vy, by, nrc);
+#endif
+}
+
+// TQ3_4S x Q8_0_RHT: rotated-domain dot product.
+//
+// The TQ3_4S weight blocks store RHT-rotated 3-bit centroid codes. Because the
+// RHT is orthogonal with inv^T == fwd, dot(a, dequant(w)) == dot(RHT_fwd(a), codes).
+// The activations arrive already rotated (quantize_row_q8_0_rht), so this kernel
+// only has to unpack codes, gather centroids and dot -- no Hadamard, no libm.
+static inline float tq3_4s_scale_from_bits(uint8_t b) {
+    // E3M5: scale = 2^((b>>5) - 9) * (1 + (b&31)/32), exact as float bit assembly
+    if (b == 0) {
+        return 0.0f;
+    }
+    uint32_t bits = ((uint32_t)((b >> 5) - 9 + 127) << 23) | ((uint32_t)(b & 31) << 18);
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+void ggml_vec_dot_tq3_4s_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(n % QK_TQ3_0 == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    const block_tq3_4s * GGML_RESTRICT x = vx;
+    const block_q8_0   * GGML_RESTRICT y = vy;
+    const int nb = n / QK_TQ3_0;
+
+#if defined(__AVX2__)
+    // Vectorized 3-bit unpack: the scalar bit-chain unpack was ~75% of kernel time.
+    // One vpsrlv+and per group of 8 codes replaces ~24 scalar ops.
+    // E3M5 scale decode via 256-entry LUT (branchless, no per-element bit assembly).
+    // LUT built ONCE process-wide: this kernel runs thousands of times per token,
+    // and per-call rebuild cost 48% CPU (ldexpf storm). Race-safe one-time init.
+    static float s_scale_lut[256];
+    static _Atomic bool s_scale_lut_ready = false;
+    if (!atomic_load_explicit(&s_scale_lut_ready, memory_order_acquire)) {
+        float tmp_lut[256];
+        tq3_4s_build_scale_lut(tmp_lut);
+        memcpy(s_scale_lut, tmp_lut, sizeof(tmp_lut));
+        atomic_store_explicit(&s_scale_lut_ready, true, memory_order_release);
+    }
+    const float * scale_lut = s_scale_lut;
+
+    const __m256 centroids = _mm256_loadu_ps(tq3_0_centroids_f32());
+    const __m256i shifts   = _mm256_set_epi32(21, 18, 15, 12, 9, 6, 3, 0);
+    const __m256i mask7    = _mm256_set1_epi32(7);
+
+    // 4 independent FMA chains hide the 4-cycle FMA latency.
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    __m256 acc2 = _mm256_setzero_ps();
+    __m256 acc3 = _mm256_setzero_ps();
+
+    int i = 0;
+    for (; i + 4 <= nb; i += 4) {
+        const float dys[4] = {
+            GGML_CPU_FP16_TO_FP32(y[i+0].d), GGML_CPU_FP16_TO_FP32(y[i+1].d),
+            GGML_CPU_FP16_TO_FP32(y[i+2].d), GGML_CPU_FP16_TO_FP32(y[i+3].d)
+        };
+        __m256 * accs[4] = { &acc0, &acc1, &acc2, &acc3 };
+
+        for (int b = 0; b < 4; ++b) {
+            const uint8_t * GGML_RESTRICT qs  = x[i+b].qs;
+            const uint8_t * GGML_RESTRICT dsc = x[i+b].d;
+
+            for (int g = 0; g < 4; ++g) {
+                // 3 bytes -> 8 x 3-bit codes. 4-byte load is safe: byte qs[12]
+                // is d[0] of the same 16-byte block (last group touches it).
+                uint32_t w;
+                memcpy(&w, qs + g*3, sizeof(w));
+
+                const __m256i idxv = _mm256_and_si256(
+                    _mm256_srlv_epi32(_mm256_set1_epi32((int) (w & 0xFFFFFFu)), shifts), mask7);
+                const __m256 vals  = _mm256_permutevar8x32_ps(centroids, idxv);
+                const __m256 q8f   = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(
+                    _mm_loadl_epi64((const __m128i *) (y[i+b].qs + g*8))));
+                const __m256 scl   = _mm256_set1_ps(scale_lut[dsc[g]] * dys[b]);
+
+                *accs[b] = _mm256_fmadd_ps(_mm256_mul_ps(vals, scl), q8f, *accs[b]);
+            }
+        }
+    }
+
+    // remainder
+    __m256 accR = _mm256_setzero_ps();
+    for (; i < nb; ++i) {
+        const float dy = GGML_CPU_FP16_TO_FP32(y[i].d);
+        const uint8_t * GGML_RESTRICT qs  = x[i].qs;
+        const uint8_t * GGML_RESTRICT dsc = x[i].d;
+
+        for (int g = 0; g < 4; ++g) {
+            uint32_t w;
+            memcpy(&w, qs + g*3, sizeof(w));
+
+            const __m256i idxv = _mm256_and_si256(
+                _mm256_srlv_epi32(_mm256_set1_epi32((int) (w & 0xFFFFFFu)), shifts), mask7);
+            const __m256 vals  = _mm256_permutevar8x32_ps(centroids, idxv);
+            const __m256 q8f   = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(
+                _mm_loadl_epi64((const __m128i *) (y[i].qs + g*8))));
+            const __m256 scl   = _mm256_set1_ps(scale_lut[dsc[g]] * dy);
+
+            accR = _mm256_fmadd_ps(_mm256_mul_ps(vals, scl), q8f, accR);
+        }
+    }
+
+    acc0 = _mm256_add_ps(acc0, acc1);
+    acc2 = _mm256_add_ps(acc2, acc3);
+    *s = hsum_float_8(_mm256_add_ps(_mm256_add_ps(acc0, acc2), accR));
+#else
+    ggml_vec_dot_tq3_4s_q8_0_generic(n, s, bs, vx, bx, vy, by, nrc);
 #endif
 }
