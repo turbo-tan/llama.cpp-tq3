@@ -401,15 +401,79 @@ static void ggml_cuda_flash_attn_ext_mma_turbo_switch_ncols2(ggml_backend_cuda_c
         }                                                                                                        \
     }                                                                                                            \
 
-#define FATTN_VEC_CASES_ALL_D(type_K, type_V) \
-    FATTN_VEC_CASE( 64, type_K, type_V)       \
-    FATTN_VEC_CASE(128, type_K, type_V)       \
-    FATTN_VEC_CASE(256, type_K, type_V)       \
+
+#define FATTN_VEC_CASES_ALL_D(type_K_case, type_V_case) \
+    FATTN_VEC_CASE( 64, type_K_case, type_V_case)       \
+    FATTN_VEC_CASE(128, type_K_case, type_V_case)       \
+    FATTN_VEC_CASE(256, type_K_case, type_V_case)       \
+
+typedef void (* fattn_vec_case_t)(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
+
+// Vector kernel for the given head size and K/V types, nullptr if its template instance was not compiled:
+static fattn_vec_case_t ggml_cuda_get_fattn_vec_case(const int64_t head_size, const ggml_type type_K, const ggml_type type_V) {
+    FATTN_VEC_CASES_ALL_D(F16,  F16)
+    FATTN_VEC_CASES_ALL_D(Q4_0, F16)
+    FATTN_VEC_CASES_ALL_D(Q4_1, F16)
+    FATTN_VEC_CASES_ALL_D(Q5_0, F16)
+    FATTN_VEC_CASES_ALL_D(Q5_1, F16)
+    FATTN_VEC_CASES_ALL_D(Q8_0, F16)
+    FATTN_VEC_CASES_ALL_D(BF16, F16)
+
+    FATTN_VEC_CASES_ALL_D(F16,  Q4_0)
+    FATTN_VEC_CASES_ALL_D(Q4_0, Q4_0)
+    FATTN_VEC_CASES_ALL_D(Q4_1, Q4_0)
+    FATTN_VEC_CASES_ALL_D(Q5_0, Q4_0)
+    FATTN_VEC_CASES_ALL_D(Q5_1, Q4_0)
+    FATTN_VEC_CASES_ALL_D(Q8_0, Q4_0)
+    FATTN_VEC_CASES_ALL_D(BF16, Q4_0)
+
+    FATTN_VEC_CASES_ALL_D(F16,  Q4_1)
+    FATTN_VEC_CASES_ALL_D(Q4_0, Q4_1)
+    FATTN_VEC_CASES_ALL_D(Q4_1, Q4_1)
+    FATTN_VEC_CASES_ALL_D(Q5_0, Q4_1)
+    FATTN_VEC_CASES_ALL_D(Q5_1, Q4_1)
+    FATTN_VEC_CASES_ALL_D(Q8_0, Q4_1)
+    FATTN_VEC_CASES_ALL_D(BF16, Q4_1)
+
+    FATTN_VEC_CASES_ALL_D(F16,  Q5_0)
+    FATTN_VEC_CASES_ALL_D(Q4_0, Q5_0)
+    FATTN_VEC_CASES_ALL_D(Q4_1, Q5_0)
+    FATTN_VEC_CASES_ALL_D(Q5_0, Q5_0)
+    FATTN_VEC_CASES_ALL_D(Q5_1, Q5_0)
+    FATTN_VEC_CASES_ALL_D(Q8_0, Q5_0)
+    FATTN_VEC_CASES_ALL_D(BF16, Q5_0)
+
+    FATTN_VEC_CASES_ALL_D(F16,  Q5_1)
+    FATTN_VEC_CASES_ALL_D(Q4_0, Q5_1)
+    FATTN_VEC_CASES_ALL_D(Q4_1, Q5_1)
+    FATTN_VEC_CASES_ALL_D(Q5_0, Q5_1)
+    FATTN_VEC_CASES_ALL_D(Q5_1, Q5_1)
+    FATTN_VEC_CASES_ALL_D(Q8_0, Q5_1)
+    FATTN_VEC_CASES_ALL_D(BF16, Q5_1)
+
+    FATTN_VEC_CASES_ALL_D(F16,  Q8_0)
+    FATTN_VEC_CASES_ALL_D(Q4_0, Q8_0)
+    FATTN_VEC_CASES_ALL_D(Q4_1, Q8_0)
+    FATTN_VEC_CASES_ALL_D(Q5_0, Q8_0)
+    FATTN_VEC_CASES_ALL_D(Q5_1, Q8_0)
+    FATTN_VEC_CASES_ALL_D(Q8_0, Q8_0)
+    FATTN_VEC_CASES_ALL_D(BF16, Q8_0)
+
+    FATTN_VEC_CASES_ALL_D(F16,  BF16)
+    FATTN_VEC_CASES_ALL_D(Q4_0, BF16)
+    FATTN_VEC_CASES_ALL_D(Q4_1, BF16)
+    FATTN_VEC_CASES_ALL_D(Q5_0, BF16)
+    FATTN_VEC_CASES_ALL_D(Q5_1, BF16)
+    FATTN_VEC_CASES_ALL_D(Q8_0, BF16)
+    FATTN_VEC_CASES_ALL_D(BF16, BF16)
+
+    return nullptr;
+}
 
 static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
-    ggml_tensor * Q = dst->src[0];
-    ggml_tensor * K = dst->src[1];
-    ggml_tensor * V = dst->src[2];
+    const ggml_tensor * Q = dst->src[0];
+    const ggml_tensor * K = dst->src[1];
+    const ggml_tensor * V = dst->src[2];
 
 #ifdef GGML_CUDA_FA_ALL_QUANTS
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_F16,  GGML_TYPE_F16)
@@ -496,6 +560,7 @@ static void ggml_cuda_flash_attn_ext_vec(ggml_backend_cuda_context & ctx, ggml_t
     FATTN_VEC_CASES_ALL_D(GGML_TYPE_Q8_0, GGML_TYPE_TURBO4_0)
 
     GGML_ABORT("fatal error");
+
 }
 
 // Best FlashAttention kernel for a specific GPU:
@@ -506,24 +571,23 @@ enum best_fattn_kernel {
     BEST_FATTN_KERNEL_MMA_F16 = 400,
 };
 
-static bool ggml_cuda_fattn_kv_type_supported(ggml_type type) {
+// K/V types for which there is a vector kernel template instance, other kernels convert these to f16:
+static bool ggml_cuda_fattn_kv_type_supported(const ggml_type type) {
     switch (type) {
         case GGML_TYPE_F32:
         case GGML_TYPE_F16:
-            return true;
+        case GGML_TYPE_BF16:
+        case GGML_TYPE_Q4_0:
         case GGML_TYPE_Q4_1:
         case GGML_TYPE_Q5_0:
         case GGML_TYPE_Q5_1:
-#ifndef GGML_CUDA_FA_ALL_QUANTS
-            return false;
-#endif // GGML_CUDA_FA_ALL_QUANTS
-        case GGML_TYPE_Q4_0:
         case GGML_TYPE_Q8_0:
         case GGML_TYPE_BF16:
         case GGML_TYPE_TQ3_0:
         case GGML_TYPE_TURBO2_0:
         case GGML_TYPE_TURBO3_0:
         case GGML_TYPE_TURBO4_0:
+
             return true;
         default:
             return false;
@@ -612,6 +676,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         }
     }
 #endif // GGML_CUDA_FA_ALL_QUANTS
+
 
     if (!ggml_cuda_fattn_kv_type_supported(K->type) || !ggml_cuda_fattn_kv_type_supported(V->type)) {
         return BEST_FATTN_KERNEL_NONE;
@@ -743,6 +808,7 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
 size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * dst) {
     GGML_ASSERT(dst->op == GGML_OP_FLASH_ATTN_EXT);
 
+    const ggml_tensor * Q = dst->src[0];
     const ggml_tensor * K = dst->src[1];
     const ggml_tensor * V = dst->src[2];
 
@@ -760,10 +826,11 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
             need_f16_K = true;
             need_f16_V = true;
             break;
-        case BEST_FATTN_KERNEL_VEC:
-            need_f16_K = K->type == GGML_TYPE_F32;
-            need_f16_V = V->type == GGML_TYPE_F32;
-            break;
+        case BEST_FATTN_KERNEL_VEC: {
+            const bool f16_fallback = ggml_cuda_get_fattn_vec_case(Q->ne[0], K->type, V->type) == nullptr;
+            need_f16_K = K->type == GGML_TYPE_F32 || f16_fallback;
+            need_f16_V = V->type == GGML_TYPE_F32 || f16_fallback;
+        } break;
         case BEST_FATTN_KERNEL_NONE:
             break;
     }
