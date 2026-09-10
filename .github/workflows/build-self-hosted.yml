@@ -58,8 +58,51 @@ env:
 
 jobs:
   gpu-cuda:
-    if: github.repository == 'ggml-org/llama.cpp'
-    runs-on: [self-hosted, Linux, NVIDIA]
+    runs-on: "hf-jobs-t4-small:cuda13"
+
+    steps:
+      - name: Clone
+        id: checkout
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y cmake libssl-dev time unzip wget python3 python3-venv python3-pip
+
+      - name: ccache
+        uses: ggml-org/ccache-action@v1.2.24
+        with:
+          restore: false
+          save: false
+
+      - name: ccache-buckets-restore
+        uses: ./.github/actions/ccache-buckets
+        with:
+          key: self-hosted-gpu-cuda
+          folder: llama.cpp
+          hf_bucket: ggml-org/cache
+
+      - name: Test
+        id: ggml-ci
+        run: |
+          nvidia-smi
+          GG_BUILD_CUDA=1 CUDACXX=/usr/local/cuda/bin/nvcc bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
+
+      - name: ccache-buckets-save
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+        uses: ./.github/actions/ccache-buckets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN_CACHE_OUTPUT }}
+        with:
+          key: self-hosted-gpu-cuda
+          folder: llama.cpp
+          evict-old-files: 1d
+          hf_bucket: ggml-org/cache
+          save: true
+
+  gpu-rocm:
+    runs-on: [self-hosted, Linux, AMD]
 
     steps:
       - name: Clone
@@ -68,12 +111,17 @@ jobs:
 
       - name: Test
         id: ggml-ci
+        # HIP_LAUNCH_BLOCKING=1: workaround for an async-execution correctness
+        # issue on integrated RDNA3.5 (gfx1151) where batched inference returns
+        # incorrect output (perplexity ~88 vs ~9.4). Serializing kernel launches
+        # restores correctness. Remove once the underlying ROCm/HIP issue is fixed.
+        env:
+          HIP_LAUNCH_BLOCKING: "1"
         run: |
-          nvidia-smi
-          GG_BUILD_CUDA=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
+          rocminfo
+          GG_BUILD_ROCM=1 GG_BUILD_AMDGPU_TARGETS=gfx1151 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-nvidia-cm:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, NVIDIA]
 
     steps:
@@ -88,7 +136,6 @@ jobs:
           GG_BUILD_VULKAN=1 GGML_VK_DISABLE_COOPMAT2=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-nvidia-cm2:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, NVIDIA, COOPMAT2]
 
     steps:
@@ -103,7 +150,6 @@ jobs:
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-webgpu-nvidia:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, NVIDIA, X64]
 
     steps:
@@ -177,7 +223,6 @@ jobs:
   #         GG_BUILD_ROCM=1 GG_BUILD_AMDGPU_TARGETS="gfx1101" bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-metal:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, macOS, ARM64]
 
     steps:
@@ -191,7 +236,6 @@ jobs:
           GG_BUILD_METAL=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-webgpu-apple:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, macOS, ARM64]
 
     steps:
@@ -219,7 +263,6 @@ jobs:
             bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-apple:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, macOS, ARM64]
 
     steps:
@@ -234,7 +277,6 @@ jobs:
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-intel-linux:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, Intel]
 
     steps:
@@ -251,7 +293,6 @@ jobs:
           GG_BUILD_VULKAN=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   gpu-vulkan-intel-windows:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Windows, X64, Intel]
 
     steps:
@@ -273,7 +314,6 @@ jobs:
           LLAMA_FATAL_WARNINGS=OFF GG_BUILD_NINJA=1 GG_BUILD_VULKAN=1 GG_BUILD_LOW_PERF=1 ./ci/run.sh ./results/llama.cpp ./mnt/llama.cpp
 
   gpu-openvino-low-perf:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, Intel, OpenVINO]
 
     env:
@@ -306,7 +346,6 @@ jobs:
           GG_BUILD_OPENVINO=1 GGML_OPENVINO_DEVICE=GPU GG_BUILD_LOW_PERF=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-x64-high-perf:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, X64]
 
     steps:
@@ -320,7 +359,6 @@ jobs:
           LLAMA_ARG_THREADS=$(nproc) GG_BUILD_HIGH_PERF=1 GG_BUILD_EXTRA_TESTS_0=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-high-perf-graviton4:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ah-ubuntu_22_04-c8g_8x
 
     steps:
@@ -360,7 +398,6 @@ jobs:
           LLAMA_ARG_THREADS=$(nproc) GG_BUILD_HIGH_PERF=1 GG_BUILD_NO_BF16=1 GG_BUILD_EXTRA_TESTS_0=1 bash ./ci/run.sh ~/results/llama.cpp ~/mnt/llama.cpp
 
   cpu-arm64-graviton4-kleidiai:
-    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: ah-ubuntu_22_04-c8g_8x
 
     steps:
