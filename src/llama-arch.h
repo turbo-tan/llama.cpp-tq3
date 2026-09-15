@@ -323,6 +323,7 @@ enum llm_kv {
     LLM_KV_SSM_DT_B_C_RMS,
 
     LLM_KV_KDA_HEAD_DIM,
+    LLM_KV_KDA_GATE_LOWER_BOUND,
 
     LLM_KV_WKV_HEAD_SIZE,
 
