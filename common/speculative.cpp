@@ -1350,7 +1350,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             }
         }
 
-        llama_set_mtp(ctx_tgt, ctx_dft);
+        if (std::getenv("LLAMA_MTP_PROCESS_ONLY") == nullptr) {
+            llama_set_mtp(ctx_tgt, ctx_dft);
+        }
         llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
 
