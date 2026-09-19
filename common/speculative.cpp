@@ -13,10 +13,14 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iomanip>
 #include <map>
 #include <cinttypes>
+#include <string>
 
 #define SPC_DBG(fmt, ...) LOG_DBG("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
 #define SPC_TRC(fmt, ...) LOG_TRC("spec %12.*s: " fmt, 12, __func__, __VA_ARGS__)
@@ -129,6 +133,228 @@ static bool common_speculative_are_compatible(
 
 using common_speculative_draft_params_vec = std::vector<common_speculative_draft_params>;
 
+// Opt-in per-position draft/accept dump, for building calibration datasets.
+//
+// `LLAMA_SPEC_DUMP=<path>` appends one JSON object per draft verification step.
+// Each draft position carries the drafted token id, the draft sampler's own
+// probability for it, its log, and - with `LLAMA_SPEC_DUMP_TOPK=N` (N > 1) - the
+// top-N candidate distribution at that position. The accept/reject label comes
+// from the accept count the target reports back: position `i` was accepted iff
+// `i < n_accepted`, which is exact for chain speculation.
+//
+// Token text is deliberately not recorded. Ids keep the record free of the
+// escaping a token piece would otherwise need.
+//
+// Not recorded: the target's probability for the same position. The target only
+// computes it during verification, in the server context, so joining the two
+// distributions needs a server-side hook.
+//
+// draft() records and common_speculative_accept() commits, on the same thread. A
+// step the drafter never receives an accept report for is dropped and counted in
+// n_lost rather than labelled: a checkpoint-restore step returns before accept(),
+// and an unverified draft must not be written as all-rejected.
+//
+// Only the implementation that produced the draft has a pending record, so in a
+// mixed setup the other implementations commit nothing.
+struct common_spec_dump {
+    struct cand {
+        llama_token id;
+        float       p;
+    };
+
+    std::string path;
+    int         topk = 1;
+
+    bool   opened = false;
+    FILE * fp     = nullptr;
+
+    size_t n_lines = 0;
+    size_t n_lost  = 0;
+
+    // per sequence
+    std::vector<size_t>                         step;
+    std::vector<uint16_t>                       n_step;
+    std::vector<uint16_t>                       n_drop;
+    std::vector<std::vector<llama_token>>       tok;
+    std::vector<std::vector<float>>             p;
+    std::vector<std::vector<std::vector<cand>>> top;
+
+    ~common_spec_dump() {
+        close();
+    }
+
+    void init(uint32_t n_seq) {
+        if (const char * env = std::getenv("LLAMA_SPEC_DUMP")) {
+            if (env[0] != '\0') {
+                path = env;
+            }
+        }
+
+        if (const char * env = std::getenv("LLAMA_SPEC_DUMP_TOPK")) {
+            topk = std::max(1, std::atoi(env));
+        }
+
+        step.assign(n_seq, 0);
+        n_step.assign(n_seq, 0);
+        n_drop.assign(n_seq, 0);
+        tok.assign(n_seq, {});
+        p.assign(n_seq, {});
+        top.assign(n_seq, {});
+    }
+
+    bool wanted() const {
+        return !path.empty();
+    }
+
+    void open() {
+        if (opened) {
+            return;
+        }
+
+        opened = true;
+
+        fp = std::fopen(path.c_str(), "a");
+        if (fp == nullptr) {
+            SPC_WRN("cannot open LLAMA_SPEC_DUMP file '%s'\n", path.c_str());
+            return;
+        }
+
+        SPC_INF("dumping per-position draft/accept records to '%s' (topk=%d)\n", path.c_str(), topk);
+    }
+
+    void close() {
+        if (fp == nullptr) {
+            return;
+        }
+
+        std::fclose(fp);
+        fp = nullptr;
+
+        SPC_INF("dumped %zu draft/accept records to '%s' (%zu dropped without a report)\n",
+                n_lines, path.c_str(), n_lost);
+    }
+
+    void clear(llama_seq_id seq_id) {
+        step[seq_id]   = 0;
+        n_drop[seq_id] = 0;
+        tok[seq_id].clear();
+        p[seq_id].clear();
+        top[seq_id].clear();
+    }
+
+    // a new generation started: anything still pending belongs to the previous one
+    void reset(llama_seq_id seq_id) {
+        if (!wanted() || (size_t) seq_id >= step.size()) {
+            return;
+        }
+
+        if (!tok[seq_id].empty()) {
+            n_lost++;
+        }
+
+        clear(seq_id);
+    }
+
+    // a drafted token was discarded by p_min and will never be verified
+    void drop(llama_seq_id seq_id) {
+        if (!wanted() || (size_t) seq_id >= step.size()) {
+            return;
+        }
+
+        n_drop[seq_id]++;
+    }
+
+    void note(llama_seq_id seq_id, llama_token id, float p_tok, const llama_token_data_array * cands) {
+        if (!wanted() || (size_t) seq_id >= step.size()) {
+            return;
+        }
+
+        if (tok[seq_id].empty()) {
+            step[seq_id]   = n_step[seq_id]++;
+            n_drop[seq_id] = 0;
+        }
+
+        std::vector<cand> row;
+
+        if (topk > 1 && cands != nullptr) {
+            const int n = std::min(topk, (int) cands->size);
+            row.reserve(n);
+
+            for (int k = 0; k < n; ++k) {
+                row.push_back({ cands->data[k].id, cands->data[k].p });
+            }
+        }
+
+        tok[seq_id].push_back(id);
+        p[seq_id].push_back(p_tok);
+        top[seq_id].push_back(std::move(row));
+    }
+
+    // the target reported how many of this draft's tokens it accepted
+    void commit(llama_seq_id seq_id, uint16_t n_accepted) {
+        if (!wanted() || (size_t) seq_id >= step.size() || tok[seq_id].empty()) {
+            return;
+        }
+
+        open();
+
+        if (fp == nullptr) {
+            clear(seq_id);
+            return;
+        }
+
+        const int n_draft = (int) tok[seq_id].size();
+        const int n_acc   = (int) n_accepted;
+
+        std::string line = string_format(
+                "{\"step\":%zu,\"seq\":%d,\"n_draft\":%d,\"n_accepted\":%d,\"pmin_drop\":%u,\"pos\":[",
+                step[seq_id], (int) seq_id, n_draft, n_acc, (unsigned) n_drop[seq_id]);
+
+        for (int i = 0; i < n_draft; ++i) {
+            const float pi = p[seq_id][i];
+
+            if (i > 0) {
+                line += ",";
+            }
+
+            line += string_format("{\"i\":%d,\"tok\":%d,\"p\":%.6f,\"logp\":%.6f,\"acc\":%s",
+                    i, (int) tok[seq_id][i], (double) pi, (double) std::log(std::max(pi, 1e-30f)),
+                    i < n_acc ? "true" : "false");
+
+            const auto & row = top[seq_id][i];
+
+            if (!row.empty()) {
+                line += ",\"top\":[";
+
+                for (size_t k = 0; k < row.size(); ++k) {
+                    if (k > 0) {
+                        line += ",";
+                    }
+
+                    line += string_format("{\"tok\":%d,\"p\":%.6f}", (int) row[k].id, (double) row[k].p);
+                }
+
+                line += "]";
+            }
+
+            line += "}";
+        }
+
+        line += "]}\n";
+
+        if (std::fwrite(line.data(), 1, line.size(), fp) != line.size()) {
+            SPC_WRN("short write to LLAMA_SPEC_DUMP file '%s'\n", path.c_str());
+        }
+
+        // flush per record: a dump killed mid-run must not end in a truncated line
+        std::fflush(fp);
+
+        n_lines++;
+
+        clear(seq_id);
+    }
+};
+
 // state of an implementation of speculative decoding
 //
 // each implementation has a unique type and a state that is implementation-specific
@@ -154,7 +380,12 @@ struct common_speculative_impl {
     int64_t t_draft_us  = 0; // total time spent in generating drafts in this implementation in microseconds.
     int64_t t_accept_us = 0; // total time spent in accumulation of this implementation in microseconds.
 
-    common_speculative_impl(common_speculative_type type, uint32_t n_seq) : type(type), n_seq(n_seq) {}
+    // opt-in per-position draft/accept dump, see common_spec_dump
+    common_spec_dump dump;
+
+    common_speculative_impl(common_speculative_type type, uint32_t n_seq) : type(type), n_seq(n_seq) {
+        dump.init(n_seq);
+    }
 
     virtual ~common_speculative_impl() = default;
 
@@ -1661,6 +1892,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     drafting[seq_id] = false;
                     n_drafting--;
 
+                    dump.drop(seq_id);
+
                     continue;
                 }
 
@@ -1670,6 +1903,11 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 auto & result = *dp.result;
 
                 result.push_back(id);
+
+                // this token will be verified: keep its id, the draft sampler's own
+                // probability and (optionally) the candidate distribution next to the
+                // accept label that commit() fills in once the target reports back
+                dump.note(seq_id, id, cur_p->data[0].p, cur_p);
 
                 if (params.n_max <= (int) result.size()) {
                     drafting[seq_id] = false;
@@ -1720,6 +1958,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
             if (dp.result->size() < (size_t) params.n_min) {
                 dp.result->clear();
+
+                // dropped before verification, so there is no accept label to record
+                dump.reset(seq_id);
             }
         }
     }
@@ -2610,6 +2851,9 @@ void common_speculative_begin(common_speculative * spec, llama_seq_id seq_id, co
         common_time_meas tm(impl->t_begin_us, !impl->gen_perf);
         impl->begin(seq_id, prompt);
         impl->n_call_begin++;
+
+        // a pending draft record here belongs to the generation that just ended
+        impl->dump.reset(seq_id);
     }
 }
 
@@ -2752,6 +2996,9 @@ void common_speculative_accept(common_speculative * spec, llama_seq_id seq_id, u
         impl->accept(seq_id, n_accepted, false);
         impl->n_call_accept++;
     }
+
+    // outside the timer: the dump does file I/O
+    impl->dump.commit(seq_id, n_accepted);
 
     // accept with the rest of the implementations, using is_other == true
     for (auto & impl_other : spec->impls) {
