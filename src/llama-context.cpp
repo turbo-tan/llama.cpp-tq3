@@ -21,6 +21,7 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -462,6 +463,17 @@ llama_context::llama_context(
             LLAMA_LOG_INFO("%s: pipeline parallelism enabled\n", __func__);
         }
 
+        if (cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+            const char * path = params.draft_vocab_map;
+            if (path == nullptr || path[0] == '\0') {
+                path = std::getenv("LLAMA_SPEC_DRAFT_VOCAB");
+            }
+            if (path != nullptr && path[0] != '\0') {
+                LLAMA_LOG_DEBUG("%s: loading draft vocabulary map '%s'\n", __func__, path);
+                init_draft_vocab(path);
+            }
+        }
+
         sched_reserve();
 
         if (!cparams.flash_attn) {
@@ -480,6 +492,45 @@ llama_context::llama_context(
             sampling.token_ids_full_vocab[i] = i;
         }
     }
+}
+
+void llama_context::init_draft_vocab(const char * path) {
+    std::ifstream file(path);
+    if (!file) {
+        throw std::runtime_error(format("cannot open draft vocabulary map '%s'", path));
+    }
+
+    llama_mtp_vocab_map map = llama_mtp_vocab_read(file);
+    if (map.n_vocab != model.vocab.n_tokens()) {
+        throw std::runtime_error(format("draft vocabulary map '%s' is for %lld tokens, model has %lld",
+                path, (long long) map.n_vocab, (long long) model.vocab.n_tokens()));
+    }
+
+    const ggml_tensor * head = model.output;
+    if (model.hparams.n_layer_nextn > 0 && model.hparams.n_layer() < model.layers.size()) {
+        const auto & nextn = model.layers[model.hparams.n_layer()].nextn;
+        if (nextn.shared_head_head) {
+            head = nextn.shared_head_head;
+        }
+    }
+    if (head == nullptr || head->buffer == nullptr) {
+        throw std::runtime_error("draft vocabulary map: model has no allocated output head");
+    }
+
+    ggml_init_params ip = { ggml_tensor_overhead(), nullptr, true };
+    draft_vocab.ctx.reset(ggml_init(ip));
+    draft_vocab.ids = ggml_new_tensor_1d(draft_vocab.ctx.get(), GGML_TYPE_I32, map.ids.size());
+    ggml_set_name(draft_vocab.ids, "draft_vocab_ids");
+
+    const auto buft = ggml_backend_buffer_get_type(head->buffer);
+    draft_vocab.buf.reset(ggml_backend_alloc_ctx_tensors_from_buft(draft_vocab.ctx.get(), buft));
+    if (!draft_vocab.buf) {
+        throw std::runtime_error("draft vocabulary map: failed to allocate the ID map");
+    }
+    ggml_backend_tensor_set(draft_vocab.ids, map.ids.data(), 0, map.ids.size() * sizeof(int32_t));
+
+    LLAMA_LOG_INFO("%s: draft vocabulary shortlist: %zu of %lld tokens from '%s' (%s head, %s map)\n",
+            __func__, map.ids.size(), (long long) map.n_vocab, path, ggml_type_name(head->type), ggml_backend_buft_name(buft));
 }
 
 llama_context::~llama_context() {
@@ -2233,7 +2284,8 @@ int llama_context::decode(const llama_batch & batch_inp) {
             if (n_outputs) {
                 GGML_ASSERT( n_outputs_prev + n_outputs <= n_outputs_all);
                 GGML_ASSERT((n_outputs_prev + n_outputs)*n_vocab <= (int64_t) logits.size);
-                ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, n_outputs*n_vocab*sizeof(float));
+                const size_t nbytes = std::min<size_t>(ggml_nbytes(t_logits), (size_t) n_outputs*n_vocab*sizeof(float));
+                ggml_backend_tensor_get_async(backend_res, t_logits, logits_out, 0, nbytes);
             }
         }
 
@@ -2681,6 +2733,13 @@ uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
     for (const auto & lora : model.loras) {
         res += lora->get_n_nodes();
     }
+
+    if (model.arch == LLM_ARCH_DFLASH && model.hparams.dflash_selector_rank > 0) {
+        const uint32_t selector_tokens = std::min<uint32_t>(
+                n_tokens, model.hparams.dflash_block_size * cparams.n_seq_max);
+        res += 32*selector_tokens;
+    }
+
     return res;
 }
 
@@ -2765,6 +2824,7 @@ llm_graph_params llama_context::graph_params(
         /*.mctx        =*/ mctx,
         /*.cross       =*/ &cross,
         /*.samplers    =*/ sampling.samplers,
+        /*.draft_vocab_ids =*/ draft_vocab.ids,
         /*.n_outputs   =*/ n_outputs,
         /*.cb          =*/ graph_get_cb(),
         /*.res         =*/ res,
@@ -3838,6 +3898,7 @@ llama_context_params llama_context_default_params() {
         /*.sampler                     =*/ nullptr,
         /*.n_sampler                   =*/ 0,
         /*.ctx_other                   =*/ nullptr,
+        /*.draft_vocab_map             =*/ nullptr,
     };
 
     return result;

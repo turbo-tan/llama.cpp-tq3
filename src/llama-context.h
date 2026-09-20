@@ -8,6 +8,7 @@
 #include "llama-impl.h"
 #include "llama-mtp.h"
 #include "llama-memory.h"
+#include "llama-mtp-vocab.h"
 
 #include "ggml-cpp.h"
 #include "ggml-opt.h"
@@ -239,6 +240,8 @@ private:
 
     void output_reorder();
 
+    void init_draft_vocab(const char * path);
+
     // map the output row index `i` to batch index
     int64_t output_resolve_row(int32_t i) const;
 
@@ -343,6 +346,12 @@ private:
     };
 
     sampling_info sampling;
+
+    struct draft_vocab_info {
+        ggml_context_ptr ctx;
+        ggml_backend_buffer_ptr buf;
+        ggml_tensor * ids = nullptr;
+    } draft_vocab;
 
     // sequence embeddings output (map of [n_embd] vectors)
     // populated only when pooling_type != LLAMA_POOLING_TYPE_NONE

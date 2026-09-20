@@ -330,6 +330,8 @@ struct common_params_speculative_draft {
 
     bool backend_sampling = true; // offload draft sampling to the backend (default: on)
 
+    std::string vocab_map; // draft-only MTP vocabulary shortlist map
+
     common_params_model mparams;
 
     llama_context * ctx_tgt = nullptr;

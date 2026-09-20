@@ -1302,6 +1302,7 @@ void llm_graph_result::reset() {
     t_inp_tokens  = nullptr;
     t_inp_embd    = nullptr;
     t_logits      = nullptr;
+    t_logits_ids  = nullptr;
     t_embd        = nullptr;
     t_embd_pooled = nullptr;
     t_h_pre_norm  = nullptr;
@@ -1477,6 +1478,7 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     mctx             (params.mctx),
     cross            (params.cross),
     samplers         (params.samplers),
+    draft_vocab_ids  (params.draft_vocab_ids),
     cb_func          (params.cb),
     res              (params.res),
     ctx0             (res->get_ctx()),
@@ -3759,6 +3761,86 @@ void llm_graph_context::build_pooling(
     ggml_build_forward_expand(gf, cur);
 }
 
+static bool draft_vocab_direct(const ggml_tensor * head) {
+    if (head == nullptr || head->buffer == nullptr || !ggml_is_contiguous(head)) {
+        return false;
+    }
+
+    auto * buft = ggml_backend_buffer_get_type(head->buffer);
+    auto * dev  = ggml_backend_buft_get_device(buft);
+    if (dev == nullptr || std::strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(dev)), "CUDA") != 0 ||
+            buft != ggml_backend_dev_buffer_type(dev)) {
+        return false;
+    }
+
+    switch (head->type) {
+        case GGML_TYPE_Q4_0: case GGML_TYPE_Q4_1: case GGML_TYPE_Q5_0: case GGML_TYPE_Q5_1:
+        case GGML_TYPE_Q8_0: case GGML_TYPE_TQ3_4S: case GGML_TYPE_Q2_K: case GGML_TYPE_Q3_K: case GGML_TYPE_Q4_K:
+        case GGML_TYPE_Q5_K: case GGML_TYPE_Q6_K: case GGML_TYPE_IQ2_XXS: case GGML_TYPE_IQ2_XS:
+        case GGML_TYPE_IQ2_S: case GGML_TYPE_IQ3_XXS: case GGML_TYPE_IQ3_S: case GGML_TYPE_IQ4_NL:
+        case GGML_TYPE_IQ4_XS: case GGML_TYPE_IQ1_S: case GGML_TYPE_IQ1_M:
+            return true;
+        default:
+            return false;
+    }
+}
+
+ggml_tensor * llm_graph_context::build_draft_vocab_logits(
+        ggml_tensor * head_w,
+        ggml_tensor * head_s,
+        ggml_tensor * cur) const {
+    if (draft_vocab_ids == nullptr || n_outputs == 0 || head_w == nullptr ||
+            !draft_vocab_direct(head_w) || draft_vocab_ids->ne[0] >= head_w->ne[1]) {
+        return nullptr;
+    }
+    if ((loras && !loras->empty()) || (head_s && ggml_nelements(head_s) != 1)) {
+        return nullptr;
+    }
+
+    // The compact draft logits are only valid when backend sampling consumes them.
+    for (uint32_t i = 0; i < ubatch.n_tokens; ++i) {
+        if (!ubatch.output[i]) {
+            continue;
+        }
+        for (int32_t j = 0; j < ubatch.n_seq_id[i]; ++j) {
+            if (samplers.find(ubatch.seq_id[i][j]) == samplers.end()) {
+                return nullptr;
+            }
+        }
+    }
+
+    GGML_ASSERT(cur->ne[1] == n_outputs);
+    const int64_t n_sel = draft_vocab_ids->ne[0];
+    ggml_tensor * rows = ggml_reshape_3d(ctx0, head_w, head_w->ne[0], 1, head_w->ne[1]);
+    ggml_tensor * logits = nullptr;
+
+    constexpr int64_t max_cuda_grid_y = 65535;
+
+    for (int64_t i = 0; i < n_outputs; ++i) {
+        ggml_tensor * h_i = n_outputs == 1 ? cur :
+            ggml_view_2d(ctx0, cur, cur->ne[0], 1, cur->nb[1], i*cur->nb[1]);
+
+        ggml_tensor * l_i = nullptr;
+        for (int64_t offset = 0; offset < n_sel; offset += max_cuda_grid_y) {
+            const int64_t count = std::min(max_cuda_grid_y, n_sel - offset);
+            ggml_tensor * ids = offset == 0 && count == n_sel
+                    ? draft_vocab_ids
+                    : ggml_view_1d(ctx0, draft_vocab_ids, count, offset * sizeof(int32_t));
+            ggml_tensor * part = ggml_mul_mat_id(ctx0, rows, h_i, ids);
+            part = ggml_reshape_2d(ctx0, part, count, 1);
+            l_i = l_i ? ggml_concat(ctx0, l_i, part, 0) : part;
+        }
+        logits = logits ? ggml_concat(ctx0, logits, l_i, 1) : l_i;
+    }
+    if (head_s) {
+        logits = ggml_mul(ctx0, logits, head_s);
+    }
+
+    cb(logits, "draft_vocab_logits", -1);
+    res->t_logits_ids = draft_vocab_ids;
+    return logits;
+}
+
 void llm_graph_context::build_sampling() const {
     if (samplers.empty() || !res->t_logits) {
         return;
@@ -3766,6 +3848,10 @@ void llm_graph_context::build_sampling() const {
 
     std::array<ggml_tensor *, 2> outs;
     outs[0] = res->t_logits;
+
+    // A draft shortlist changes the logits columns to compact row indices. The
+    // sampler must carry the corresponding real token IDs through its candidate path.
+    ggml_tensor * ids_map = res->t_logits_ids;
 
     auto inp_sampling = std::make_unique<llm_graph_input_sampling>(samplers);
     res->add_input(std::move(inp_sampling));
@@ -3803,7 +3889,7 @@ void llm_graph_context::build_sampling() const {
             /*.logits      =*/ logits_seq,
             /*.probs       =*/ nullptr,
             /*.sampled     =*/ nullptr,
-            /*.candidates  =*/ nullptr,
+            /*.candidates  =*/ ids_map,
         };
 
         assert(sampler->iface->backend_apply);

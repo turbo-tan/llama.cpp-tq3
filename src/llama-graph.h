@@ -764,6 +764,8 @@ struct llm_graph_params {
 
     std::map<llama_seq_id, llama_sampler *> samplers;
 
+    ggml_tensor * draft_vocab_ids = nullptr;
+
     static bool samplers_equal(
           const std::map<llama_seq_id, llama_sampler *> & lhs,
           const std::map<llama_seq_id, llama_sampler *> & rhs) {
@@ -910,6 +912,7 @@ public:
     ggml_tensor * t_inp_tokens  = nullptr;
     ggml_tensor * t_inp_embd    = nullptr; // [n_embd_inp, n_tokens]
     ggml_tensor * t_logits      = nullptr;
+    ggml_tensor * t_logits_ids  = nullptr;
     ggml_tensor * t_embd        = nullptr;
     ggml_tensor * t_embd_pooled = nullptr;
     ggml_tensor * t_h_pre_norm  = nullptr;
@@ -1008,6 +1011,8 @@ struct llm_graph_context {
 
     std::map<llama_seq_id, llama_sampler *> samplers;
 
+    ggml_tensor * draft_vocab_ids = nullptr;
+
     const llm_graph_cb & cb_func;
 
     llm_graph_result * res;
@@ -1040,6 +1045,11 @@ struct llm_graph_context {
               ggml_tensor * cur, // ggml_tensor * b
               ggml_tensor * ids,
               ggml_tensor * w_s = nullptr) const;
+
+    ggml_tensor * build_draft_vocab_logits(
+              ggml_tensor * head_w,
+              ggml_tensor * head_s,
+              ggml_tensor * cur) const;
 
     ggml_tensor * build_norm(
              ggml_tensor * cur,
@@ -1358,6 +1368,8 @@ struct llm_graph_context {
     //
 
     void build_sampling() const;
+
+    virtual void build_post_sampling() const {}
 
     //
     // dense (out)

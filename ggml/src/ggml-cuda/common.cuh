@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 
@@ -1286,6 +1287,37 @@ struct ggml_tensor_extra_gpu {
 #define USE_CUDA_GRAPH
 #endif
 
+static bool ggml_cuda_graph_shape_keys_enabled() {
+    static const bool enabled = [] {
+        const char * env = getenv("GGML_CUDA_GRAPH_SHAPE_KEYS");
+        return env != nullptr && strcmp(env, "1") == 0;
+    }();
+    return enabled;
+}
+
+struct ggml_cuda_graph_key {
+    const void * first_node = nullptr;
+    int n_nodes = 0;
+    std::array<int64_t, GGML_MAX_DIMS> ne = {};
+    uint64_t shape_hash = 0;
+
+    bool operator==(const ggml_cuda_graph_key & other) const {
+        return first_node == other.first_node && n_nodes == other.n_nodes && ne == other.ne && shape_hash == other.shape_hash;
+    }
+};
+
+struct ggml_cuda_graph_key_hash {
+    size_t operator()(const ggml_cuda_graph_key & key) const {
+        size_t h = std::hash<const void *>{}(key.first_node);
+        h ^= size_t(key.n_nodes) * 0x9e3779b9;
+        for (int64_t n : key.ne) {
+            h = (h ^ size_t(n)) * 0x100000001b3ull;
+        }
+        h = (h ^ size_t(key.shape_hash)) * 0x100000001b3ull;
+        return h;
+    }
+};
+
 struct ggml_cuda_graph {
 #ifdef USE_CUDA_GRAPH
     ~ggml_cuda_graph() {
@@ -1491,20 +1523,36 @@ struct ggml_backend_cuda_context {
     std::unordered_map<const void *, tq3_4s_nvfp4_cache_entry> tq3_4s_nvfp4_cache;
 
 #ifdef USE_CUDA_GRAPH
-    // Map from first_node_ptr to cuda_graph - allows multiple graphs per context
+    // Identity (and opt-in shape) to cuda_graph - allows multiple graphs per context
     // when the computation is split across CPU/GPU (e.g., with --n-cpu-moe)
-    std::unordered_map<const void *, std::unique_ptr<ggml_cuda_graph>> cuda_graphs;
+    std::unordered_map<ggml_cuda_graph_key, std::unique_ptr<ggml_cuda_graph>, ggml_cuda_graph_key_hash> cuda_graphs;
 
     int64_t last_graph_eviction_sweep = 0;
 
-    ggml_cuda_graph * cuda_graph(const void * first_node_ptr) {
+    ggml_cuda_graph * cuda_graph(const ggml_cuda_graph_key & key) {
         const int64_t time_now = ggml_time_us();
+        const bool shape_keys = ggml_cuda_graph_shape_keys_enabled();
+
+        // Only called before capture. Evicting a graph requires all streams to be idle.
+        bool synchronized = false;
+        const auto synchronize = [&] {
+            if (shape_keys && !synchronized) {
+                ggml_cuda_set_device(device);
+                for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
+                    if (streams[device][i] != nullptr) {
+                        CUDA_CHECK(cudaStreamSynchronize(streams[device][i]));
+                    }
+                }
+                synchronized = true;
+            }
+        };
 
         // sweep every 5s, evicting cuda graphs unused for >=10s
         if (time_now - last_graph_eviction_sweep >= 5'000'000) {
             last_graph_eviction_sweep = time_now;
             for (auto it = cuda_graphs.begin(); it != cuda_graphs.end(); ) {
                 if (time_now - it->second->last_used_time >= 10'000'000) {
+                    synchronize();
                     it = cuda_graphs.erase(it);
                 } else {
                     ++it;
@@ -1512,9 +1560,18 @@ struct ggml_backend_cuda_context {
             }
         }
 
-        auto it = cuda_graphs.find(first_node_ptr);
+        auto it = cuda_graphs.find(key);
         if (it == cuda_graphs.end()) {
-            it = cuda_graphs.emplace(first_node_ptr, std::make_unique<ggml_cuda_graph>()).first;
+            constexpr size_t shape_capacity = 8;
+            if (shape_keys && cuda_graphs.size() >= shape_capacity) {
+                auto oldest = std::min_element(cuda_graphs.begin(), cuda_graphs.end(),
+                    [](const auto & a, const auto & b) {
+                        return a.second->last_used_time < b.second->last_used_time;
+                    });
+                synchronize();
+                cuda_graphs.erase(oldest);
+            }
+            it = cuda_graphs.emplace(key, std::make_unique<ggml_cuda_graph>()).first;
         }
         it->second->last_used_time = time_now;
         return it->second.get();

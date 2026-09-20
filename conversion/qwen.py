@@ -630,7 +630,7 @@ class Qwen3_5MoeTextModel(_Qwen35MtpMixin, _Qwen35MRopeMixin, _LinearAttentionVR
     model_arch = gguf.MODEL_ARCH.QWEN35MOE
 
 
-@ModelBase.register("DFlashDraftModel")
+@ModelBase.register("DFlashDraftModel", "DFlash2DraftModel")
 class DFlashModel(Qwen3Model):
     model_arch = gguf.MODEL_ARCH.DFLASH
 
@@ -665,9 +665,18 @@ class DFlashModel(Qwen3Model):
     def set_gguf_parameters(self):
         super().set_gguf_parameters()
 
-        block_size = self.hparams.get("block_size", 16)
-        self.gguf_writer.add_block_size(block_size)
         dflash_config = self.hparams.get("dflash_config", {})
+        block_size = dflash_config.get("block_size", self.hparams.get("block_size", 16))
+        self.gguf_writer.add_block_size(block_size)
+
+        for name, add in (
+            ("conv_kernel_size", self.gguf_writer.add_conv_kernel_size),
+            ("conv_group_size", self.gguf_writer.add_conv_group_size),
+            ("selector_rank", self.gguf_writer.add_selector_rank),
+            ("selector_top_k", self.gguf_writer.add_selector_top_k),
+        ):
+            if name in dflash_config:
+                add(dflash_config[name])
 
         target_layer_ids = dflash_config.get("target_layer_ids", [])
         if target_layer_ids:

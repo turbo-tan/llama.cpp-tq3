@@ -415,6 +415,9 @@ extern "C" {
         // a source/target/parent context
         // can be utilized in various ways, for example by sharing results or llama_memory between 2 contexts
         struct llama_context * ctx_other;
+
+        // Optional draft-only MTP vocabulary shortlist map. The target context ignores this.
+        const char * draft_vocab_map;
     };
 
     struct llama_model_tensor_override {
