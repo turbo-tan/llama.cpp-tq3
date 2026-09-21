@@ -1408,7 +1408,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 throw std::runtime_error("LLAMA_MTP_PROCESS_ONLY=1 requires independent single-head GLM5NEXT MTP");
             }
             process_only = true;
-            SPC_WRN("%s", "experimental GLM MTP process-only cache ownership enabled; reused prefixes require a current boundary hidden row\n");
+            SPC_WRN("%s", "experimental GLM MTP process-only cache ownership enabled\n");
         }
 
         SPC_TRC("%s", "adding speculative implementation 'draft-mtp'\n");
@@ -1453,8 +1453,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             }
         }
 
-        // The ubatch hook has its own pending row, which accept() cannot rewind.
-        // Explicitly detach it in the experiment, including on context reuse.
+        // Process-only owns the target-side MTP boundary row.
         llama_set_mtp(ctx_tgt, process_only ? nullptr : ctx_dft);
         llama_set_embeddings_nextn(ctx_tgt, true, /*masked*/ false);
         llama_set_embeddings_nextn(ctx_dft, true, /*masked*/ true);
@@ -1560,6 +1559,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         auto * ctx_dft = this->params.ctx_dft;
 
         const size_t row_bytes = (size_t) n_embd * sizeof(float);
+        std::vector<int32_t> draft_beg(n_seq, -1);
 
         if (process_only) {
             if (n_tokens > (int32_t) llama_n_batch(ctx_dft)) {
@@ -1578,11 +1578,6 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                         SPC_ERR("%s", "process-only requires contiguous rows and positions per sequence\n");
                         return false;
                     }
-                }
-                if (batch_in.pos[beg] != 0 && pending_pos[seq_id] != batch_in.pos[beg] - 1) {
-                    SPC_ERR("process-only missing boundary hidden row (seq=%d, pending=%d, start=%d); replay the prompt from position 0\n",
-                            (int) seq_id, (int) pending_pos[seq_id], (int) batch_in.pos[beg]);
-                    return false;
                 }
             }
         }
@@ -1607,24 +1602,54 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         if (needs_kv_catchup) {
             common_batch_clear(batch);
 
-            for (int k = 0; k < n_tokens; ++k) {
-                common_batch_add(batch, batch_in.token[k], batch_in.pos[k], { batch_in.seq_id[k][0] }, 0);
-            }
-
-            if (n_tokens > 1) {
+            if (process_only) {
                 const float * h_tgt = llama_get_embeddings_nextn(ctx_tgt);
-                std::memcpy(batch.embd + (size_t) 1 * n_embd, h_tgt, row_bytes * (n_tokens - 1));
-            }
 
-            for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
-                if (i_batch_beg[seq_id] < 0) {
-                    continue;
+                for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                    const int beg = i_batch_beg[seq_id];
+                    const int end = i_batch_end[seq_id];
+                    if (beg < 0) {
+                        continue;
+                    }
+
+                    // If the saved boundary row no longer precedes this batch,
+                    // rebuild the boundary token with a reset hidden row so the
+                    // independent draft cache remains contiguous.
+                    const bool has_boundary = batch_in.pos[beg] == 0 ||
+                            pending_pos[seq_id] == batch_in.pos[beg] - 1;
+                    const int first = beg;
+                    draft_beg[seq_id] = first <= end ? batch.n_tokens : -1;
+
+                    for (int k = first; k <= end; ++k) {
+                        common_batch_add(batch, batch_in.token[k], batch_in.pos[k], { seq_id }, 0);
+                        float * dst = batch.embd + (size_t) (batch.n_tokens - 1) * n_embd;
+                        if (k == beg && batch_in.pos[beg] == 0) {
+                            std::fill(dst, dst + n_embd, 0.0f);
+                        } else if (k == beg && has_boundary) {
+                            std::memcpy(dst, pending_h[seq_id].data(), row_bytes);
+                        } else if (k == beg) {
+                            std::fill(dst, dst + n_embd, 0.0f);
+                        } else {
+                            std::memcpy(dst, h_tgt + (size_t) (k - 1) * n_embd, row_bytes);
+                        }
+                    }
+                }
+            } else {
+                for (int k = 0; k < n_tokens; ++k) {
+                    common_batch_add(batch, batch_in.token[k], batch_in.pos[k], { batch_in.seq_id[k][0] }, 0);
                 }
 
-                if (process_only && batch_in.pos[i_batch_beg[seq_id]] == 0) {
-                    std::fill(pending_h[seq_id].begin(), pending_h[seq_id].end(), 0.0f);
+                if (n_tokens > 1) {
+                    const float * h_tgt = llama_get_embeddings_nextn(ctx_tgt);
+                    std::memcpy(batch.embd + (size_t) 1 * n_embd, h_tgt, row_bytes * (n_tokens - 1));
                 }
-                std::memcpy(batch.embd + (size_t) i_batch_beg[seq_id] * n_embd, pending_h[seq_id].data(), row_bytes);
+
+                for (llama_seq_id seq_id = 0; seq_id < (llama_seq_id) n_seq; ++seq_id) {
+                    if (i_batch_beg[seq_id] < 0) {
+                        continue;
+                    }
+                    std::memcpy(batch.embd + (size_t) i_batch_beg[seq_id] * n_embd, pending_h[seq_id].data(), row_bytes);
+                }
             }
 
             auto * mem_dft = llama_get_memory(ctx_dft);
@@ -1647,8 +1672,12 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 if (i_batch_beg[seq_id] < 0) {
                     continue;
                 }
-                const bool removed = llama_memory_seq_rm(mem_dft, seq_id, batch_in.pos[i_batch_beg[seq_id]], -1);
-                if (process_only && !removed) {
+                const int32_t first = process_only ? draft_beg[seq_id] : i_batch_beg[seq_id];
+                if (first < 0) {
+                    continue;
+                }
+                const bool removed = llama_memory_seq_rm(mem_dft, seq_id, batch.pos[first], -1);
+                if (process_only && !removed && batch.n_tokens > 0) {
                     SPC_ERR("process-only draft rollback failed (seq=%d)\n", (int) seq_id);
                     return false;
                 }
@@ -1776,7 +1805,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             }
 
             if (process_only && pending_pos[seq_id] != dp.n_past - 1) {
-                SPC_WRN("process-only cannot draft without boundary hidden row (seq=%d, pending=%d, n_past=%d)\n",
+                SPC_WRN("process-only cannot draft without a target boundary hidden row (seq=%d, pending=%d, n_past=%d)\n",
                         (int) seq_id, (int) pending_pos[seq_id], (int) dp.n_past);
                 continue;
             }

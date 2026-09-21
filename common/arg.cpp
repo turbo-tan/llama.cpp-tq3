@@ -2205,9 +2205,10 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_sampling());
     add_opt(common_arg(
         {"-bs", "--backend-sampling"},
-        "enable backend sampling (experimental) (default: disabled)",
-        [](common_params & params) {
-            params.sampling.backend_sampling = true;
+        {"--no-backend-sampling"},
+        "enable backend sampling (default: enabled)",
+        [](common_params & params, bool value) {
+            params.sampling.backend_sampling = value;
         }
     ).set_sampling().set_env("LLAMA_ARG_BACKEND_SAMPLING"));
     add_opt(common_arg(

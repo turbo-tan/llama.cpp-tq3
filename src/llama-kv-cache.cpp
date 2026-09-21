@@ -446,6 +446,35 @@ bool llama_kv_cache::seq_rm(llama_seq_id seq_id, llama_pos p0, llama_pos p1) {
         auto & cells = v_cells[seq_to_stream[seq_id]];
         auto & head  = v_heads[seq_to_stream[seq_id]];
 
+        // Draft rollback normally removes a short suffix from a contiguous
+        // single-sequence cache. When the cache layout proves that cell index
+        // equals position and positions are unique, avoid scanning the ring buffer.
+        const llama_pos pos_max = cells.seq_pos_max(seq_id);
+        if (pos_max >= p0 && p0 >= 0 && (uint64_t) pos_max < cells.size()) {
+            const llama_pos pos_end = std::min(pos_max, p1 - 1);
+            bool direct = true;
+            for (llama_pos pos = p0; pos <= pos_end; ++pos) {
+                const uint32_t idx = (uint32_t) pos;
+                if (cells.is_empty(idx) || cells.pos_get(idx) != pos || !cells.seq_has(idx, seq_id) ||
+                        cells.seq_pos_count(seq_id, pos) != 1) {
+                    direct = false;
+                    break;
+                }
+            }
+            if (direct) {
+                uint32_t new_head = cells.size();
+                for (llama_pos pos = p0; pos <= pos_end; ++pos) {
+                    if (cells.seq_rm((uint32_t) pos, seq_id) && (uint32_t) pos < new_head) {
+                        new_head = (uint32_t) pos;
+                    }
+                }
+                if (new_head < head) {
+                    head = new_head;
+                }
+                return true;
+            }
+        }
+
         uint32_t new_head = cells.size();
 
         for (uint32_t i = 0; i < cells.size(); ++i) {

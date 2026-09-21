@@ -74,9 +74,39 @@ llama-server -m Qwen3-4B.gguf -md Qwen3-4B-DFlash.gguf \
 
 `--spec-draft-n-max` is clamped to the draft model's trained block size.
 
+For DFlash2 drafts, request at most `block_size - 1` tokens. On large unified-memory
+models, a single slot with separate KV buffers is generally required; the following
+options avoid the common multi-slot memory failure and keep both models on the GPU:
+
+```bash
+llama-server -m TARGET.gguf -md DFLASH2.gguf \
+    --spec-type draft-dflash --spec-draft-n-max 7 \
+    --spec-draft-ngl 99 -ngl 99 --no-kv-unified -np 1 --fit off \
+    -fa on -ctk q8_0 -ctv q8_0
+```
+
+The value `7` is specific to a DFlash2 checkpoint whose trained block size is 8;
+inspect the startup log and use the checkpoint's reported block size for other drafts.
+
 See:
 
 - #22105
+
+### Qwen MTP chain (experimental)
+
+Qwen3.5/3.8 single-head MTP can draft several positions in one graph when
+running one server slot. Enable it with `LLAMA_SPEC_CHAIN=1` together with
+`--spec-type draft-mtp`. The draft graph emits only the selected token and its
+probability; the target still verifies against the full vocabulary.
+
+```bash
+LLAMA_SPEC_CHAIN=1 llama-server -m Qwen3.8-27B.gguf -np 1 \
+    --spec-type draft-mtp --spec-draft-n-max 3 --spec-draft-p-min 0.4
+```
+
+`LLAMA_SPEC_CHAIN_SUB` controls the draft-only vocabulary prefix (default
+32768; set it to `0` to use the full draft head). This path is opt-in and is
+disabled for other architectures and multi-sequence requests.
 
 ### DSpark (`draft-dspark`)
 
