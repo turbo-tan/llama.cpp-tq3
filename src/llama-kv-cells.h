@@ -395,6 +395,12 @@ public:
         return seq_pos[seq_id].rbegin()->first;
     }
 
+    int seq_pos_count(llama_seq_id seq_id, llama_pos p) const {
+        assert(seq_id >= 0 && seq_id < LLAMA_MAX_SEQ);
+        const auto it = seq_pos[seq_id].find(p);
+        return it == seq_pos[seq_id].end() ? 0 : it->second;
+    }
+
     // note: call only if the cell is not empty
     llama_pos pos_get(uint32_t i) const {
         assert(i < pos.size());

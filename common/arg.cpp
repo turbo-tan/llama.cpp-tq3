@@ -2205,9 +2205,10 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
     ).set_sampling());
     add_opt(common_arg(
         {"-bs", "--backend-sampling"},
-        "enable backend sampling (experimental) (default: disabled)",
-        [](common_params & params) {
-            params.sampling.backend_sampling = true;
+        {"--no-backend-sampling"},
+        "enable backend sampling (default: enabled)",
+        [](common_params & params, bool value) {
+            params.sampling.backend_sampling = value;
         }
     ).set_sampling().set_env("LLAMA_ARG_BACKEND_SAMPLING"));
     add_opt(common_arg(
@@ -4025,6 +4026,13 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
             params.speculative.draft.backend_sampling = value;
         }
     ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_BACKEND_SAMPLING"));
+    add_opt(common_arg(
+        {"--spec-draft-vocab-map"}, "PATH",
+        "draft-only MTP vocabulary shortlist map (empty = full vocabulary)",
+        [](common_params & params, const std::string & value) {
+            params.speculative.draft.vocab_map = value;
+        }
+    ).set_spec().set_examples({LLAMA_EXAMPLE_SPECULATIVE, LLAMA_EXAMPLE_SERVER, LLAMA_EXAMPLE_CLI}).set_env("LLAMA_ARG_SPEC_DRAFT_VOCAB_MAP"));
     add_opt(common_arg(
         {"--spec-draft-device", "-devd", "--device-draft"}, "<dev1,dev2,..>",
         "comma-separated list of devices to use for offloading the draft model (none = don't offload)\n"

@@ -292,7 +292,7 @@ struct common_params_sampling {
     std::string               reasoning_budget_message;        // message injected before end tag when budget exhausted
     bool                      reasoning_control = false;       // create the budget sampler on demand so reasoning can be ended at runtime
 
-    bool backend_sampling = false;
+    bool backend_sampling = true;
 
     // print the parameters into a string
     std::string print() const;
@@ -329,6 +329,8 @@ struct common_params_speculative_draft {
     float p_min   = 0.0f; // minimum speculative decoding probability (greedy)
 
     bool backend_sampling = true; // offload draft sampling to the backend (default: on)
+
+    std::string vocab_map; // draft-only MTP vocabulary shortlist map
 
     common_params_model mparams;
 
