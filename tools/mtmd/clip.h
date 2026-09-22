@@ -37,6 +37,7 @@ struct clip_image_f32_batch;
 enum clip_modality {
     CLIP_MODALITY_VISION,
     CLIP_MODALITY_AUDIO,
+    CLIP_MODALITY_GEN_AUDIO,
 };
 
 enum clip_flash_attn_type {
@@ -61,6 +62,7 @@ struct clip_context_params {
 struct clip_init_result {
     struct clip_ctx * ctx_v; // vision context
     struct clip_ctx * ctx_a; // audio context
+    struct clip_ctx * ctx_gen_a; // audio generation context
 };
 
 struct clip_init_result clip_init(const char * fname, struct clip_context_params ctx_params);

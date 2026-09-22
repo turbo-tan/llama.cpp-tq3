@@ -4227,6 +4227,7 @@ std::unique_ptr<server_res_generator> server_routes::handle_completions_impl(
             task.params = server_schema::eval_llama_cmpl_schema(
                     ctx_server.vocab,
                     params,
+                    meta->slot_n_ctx,
                     meta->logit_bias_eog,
                     data);
 

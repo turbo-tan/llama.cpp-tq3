@@ -329,6 +329,14 @@ struct clip_layer {
     ggml_tensor * cross_attn_norm_w = nullptr;
     ggml_tensor * cross_attn_norm_b = nullptr;
 
+    // qwen3tts speaker encoder: SE-Res2Net block, tdnn1/tdnn2 reuse conv_pw1_w/b and conv_pw2_w/b above
+    ggml_tensor * se_conv1_w = nullptr;
+    ggml_tensor * se_conv1_b = nullptr;
+    ggml_tensor * se_conv2_w = nullptr;
+    ggml_tensor * se_conv2_b = nullptr;
+    std::vector<ggml_tensor *> res2_conv_w; // Res2Net hierarchical branches
+    std::vector<ggml_tensor *> res2_conv_b;
+
     bool has_deepstack() const {
         return deepstack_fc1_w != nullptr;
     }
