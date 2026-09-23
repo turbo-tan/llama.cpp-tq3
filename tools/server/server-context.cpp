@@ -1995,7 +1995,10 @@ private:
             res->is_begin = true;
         } else {
             res->content = tkn.text_to_send;
-            res->tokens  = { tkn.tok };
+            // assign(1, x) instead of brace-assign: GCC 12.4 false-positive
+            // -Werror=stringop-overread on the 4-byte initializer_list (same
+            // pattern as common/speculative.cpp dflash ctor above).
+            res->tokens.assign(1, tkn.tok);
         }
 
         res->n_decoded             = slot.stats.n_gen;
