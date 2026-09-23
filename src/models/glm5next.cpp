@@ -1203,7 +1203,7 @@ llama_model_glm5next::graph_mtp::graph_mtp(const llama_model & model, const llm_
             ggml_tensor * mask_b = ggml_view_2d(ctx0, inp_attn->get_kq_mask(), n_kv, 1,
                     inp_attn->get_kq_mask()->nb[1], (size_t) row0*inp_attn->get_kq_mask()->nb[1]);
 
-            cur_b = build_attn_mha(Qcur, k, v, nullptr, mask_b, nullptr, layer.wv_b, kq_scale, il);
+            cur_b = build_attn_mha(Qcur, k, v, nullptr, mask_b, nullptr, layer.wv_b, n_kv, kq_scale, il);
             cur_b = build_lora_mm(layer.wo, cur_b, layer.wo_s);
 
             cur_b = ggml_add(ctx0, cur_b, inpSA_b);
