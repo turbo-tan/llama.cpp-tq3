@@ -1395,7 +1395,8 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         char arch[32] = {};
         llama_model_meta_val_str(llama_get_model(ctx_dft), "general.architecture", arch, sizeof(arch));
         chain_graph = std::getenv("LLAMA_SPEC_CHAIN") != nullptr &&
-                std::strcmp(arch, "qwen35") == 0 && !is_mem_shared && !chain_heads;
+                (std::strcmp(arch, "qwen35") == 0 || std::strcmp(arch, "glm5next") == 0) &&
+                !is_mem_shared && !chain_heads;
 
         const char * process_only_env = std::getenv("LLAMA_MTP_PROCESS_ONLY");
         if (process_only_env && std::strcmp(process_only_env, "0") != 0) {
