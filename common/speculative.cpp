@@ -1836,8 +1836,6 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             return std::chrono::duration<double, std::milli>(b - a).count(); };
         static double t_dec = 0, t_smp = 0, t_cpy = 0;
         static long   t_rounds = 0;
-        auto t_start = std::chrono::steady_clock::now();
-        bool timing_done = false;
 
         while (n_drafting > 0) {
             // each step decodes under a different head, i.e. a different decoder layer, and
