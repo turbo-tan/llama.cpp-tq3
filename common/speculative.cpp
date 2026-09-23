@@ -1830,6 +1830,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
         int i = 0;
 
+        // [MTP-TIMING] temporary instrumentation: draft-side per-round costs
+        auto tp_ms = [](std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) {
+            return std::chrono::duration<double, std::milli>(b - a).count(); };
+        static double t_dec = 0, t_smp = 0, t_cpy = 0;
+        static long   t_rounds = 0;
+        auto t_start = std::chrono::steady_clock::now();
+        bool timing_done = false;
+
         while (n_drafting > 0) {
             // each step decodes under a different head, i.e. a different decoder layer, and
             // KV is per layer. process() filled this layer's KV only for positions < n_past
@@ -1847,7 +1855,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 llama_set_nextn_layer_offset(ctx_dft, i);
             }
 
+            auto t_a = std::chrono::steady_clock::now();
             int ret = llama_decode(ctx_dft, batch);
+            auto t_b = std::chrono::steady_clock::now();
             if (ret != 0) {
                 SPC_ERR("llama_decode[%d] returned %d\n", i, ret);
                 break;
@@ -1865,8 +1875,13 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
 
                 auto * smpl = smpls[seq_id].get();
 
+                auto t_s = std::chrono::steady_clock::now();
                 common_sampler_sample(smpl, ctx_dft, i_last[seq_id], true);
                 const float * h_row = llama_get_embeddings_nextn_ith_no_sync(ctx_dft, i_last[seq_id]);
+                auto t_e = std::chrono::steady_clock::now();
+                t_smp += tp_ms(t_s, t_e);
+                t_dec += tp_ms(t_a, t_b);
+                t_rounds++;
 
                 const auto * cur_p = common_sampler_get_candidates(smpl, true);
 
@@ -1917,8 +1932,10 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                     common_batch_add(batch, id, dp.n_past, { seq_id }, true);
                     std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, h_row, row_bytes);
                 } else {
+                    auto t_c0 = std::chrono::steady_clock::now();
                     common_batch_add(batch, id, dp.n_past + i + 1, { seq_id }, true);
                     std::memcpy(batch.embd + (size_t) (batch.n_tokens - 1) * n_embd, h_row, row_bytes);
+                    t_cpy += tp_ms(t_c0, std::chrono::steady_clock::now());
                 }
 
                 i_last[seq_id] = batch.n_tokens - 1;
@@ -1929,6 +1946,14 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             }
 
             ++i;
+        }
+
+        if (t_rounds > 0) {
+            static long printed = 0;
+            if ((++printed % 64) == 0) {
+                SPC_WRN("[MTP-TIMING] draft_calls=%ld rounds=%ld decode=%.2f ms/round sample=%.2f cpy=%.2f\n",
+                        printed, t_rounds, t_dec / t_rounds, t_smp / t_rounds, t_cpy / t_rounds);
+            }
         }
 
         if (chain_heads) {
