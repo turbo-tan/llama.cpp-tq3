@@ -396,9 +396,9 @@ void ggml_cuda_mul_mat_q(
         const mmq_args args = {
             src0_d, type_x, (const int *) src1_q8_1.ptr, nullptr, nullptr, dst_d,
             type_x == GGML_TYPE_NVFP4 && use_native_fp4 ? src1_scale.ptr : nullptr,
-            ne00, ne01, ne1, s01, ne11, s1,
-            ne02, ne12, s02, s12, s2,
-            ne03, ne13, s03, s13, s3,
+            ne00, ne01, ne1, stride_row_x, ne11, s1,
+            ne02, ne12, stride_channel_x, s12, s2,
+            ne03, ne13, stride_sample_x, s13, s3,
             ne1, ne1};
         ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
         if (used_tq3_4s_native_fp4_transient) {
@@ -494,9 +494,9 @@ void ggml_cuda_mul_mat_q(
     const mmq_args args = {
         src0_d, type_x, (const int *) src1_q8_1.get(), ids_dst.get(), expert_bounds.get(), dst_d,
         src1_scale.ptr,
-        ne00, ne01, ne_get_rows, s01, ne_get_rows, s1,
-        ne02, ne02, s02, s12, s2,
-        ne03, ne13, s03, s13, s3,
+        ne00, ne01, ne_get_rows, stride_row_x, ne_get_rows, s1,
+        ne02, ne02, stride_channel_x, s12, s2,
+        ne03, ne13, stride_sample_x, s13, s3,
         ne12, ncols_opt};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
