@@ -89,8 +89,6 @@
 
 #define N_R0_TQ2_0 4
 #define N_SG_TQ2_0 2
-#define N_R0_TQ3_4S 4
-#define N_SG_TQ3_4S 4
 
 // function constants offsets
 #define FC_FLASH_ATTN_EXT_PAD          100
@@ -116,6 +114,13 @@
 
 #define OP_FLASH_ATTN_EXT_VEC_NQPSG 1
 #define OP_FLASH_ATTN_EXT_VEC_NCPSG 32
+
+#define OP_LIGHTNING_INDEXER_DK    128
+#define OP_LIGHTNING_INDEXER_NH     64
+#define OP_LIGHTNING_INDEXER_NHPTG   8
+#define OP_LIGHTNING_INDEXER_NKPSG   8
+#define OP_LIGHTNING_INDEXER_NSG     8
+#define OP_LIGHTNING_INDEXER_NBPTG   8
 
 #define OP_UNARY_NUM_SCALE      10
 #define OP_UNARY_NUM_FILL       11
@@ -983,18 +988,6 @@ typedef struct {
     uint64_t nb3;
 } ggml_metal_kargs_get_rows;
 
-// forward randomized Hadamard transform of activations (TQ3_4S mat-mul pre-pass)
-typedef struct {
-    int32_t  nb;    // number of 32-element blocks along K
-    int32_t  ne12;  // src1 dim2 (to unflatten the batch grid index)
-    uint64_t nb11;  // src1 strides (input activation)
-    uint64_t nb12;
-    uint64_t nb13;
-    uint64_t ob11;  // dst strides (contiguous transformed activation)
-    uint64_t ob12;
-    uint64_t ob13;
-} ggml_metal_kargs_tq3_rht;
-
 typedef struct {
     int32_t  nk0;
     int32_t  ne01;
@@ -1190,6 +1183,66 @@ typedef struct {
 } ggml_metal_kargs_memset;
 
 typedef struct {
+    int32_t  n_kv;
+    int32_t  n_batch;
+    int32_t  mask_ne3;
+    uint64_t nb1;
+    uint64_t nb3;
+    uint64_t nbq1;
+    uint64_t nbq2;
+    uint64_t nbq3;
+    uint64_t nbk2;
+    uint64_t nbk3;
+    uint64_t nbw1;
+    uint64_t nbw3;
+    uint64_t nbm1;
+    uint64_t nbm3;
+} ggml_metal_kargs_lightning_indexer;
+
+typedef struct {
+    int32_t  n_tokens;
+    int32_t  n_iter;
+    uint64_t nb_m0;
+    uint64_t nb_m1;
+    uint64_t nb_s0;
+    uint64_t nb_b0;
+    uint64_t nb_d0;
+    uint64_t nb_d1;
+    uint64_t nb_d2;
+    float    eps;
+} ggml_metal_kargs_dsv4_hc_comb;
+
+typedef struct {
+    int32_t  n_embd;
+    int32_t  n_tokens;
+    uint64_t nb_x0;
+    uint64_t nb_x1;
+    uint64_t nb_x2;
+    uint64_t nb_w0;
+    uint64_t nb_w1;
+    uint64_t nb_d0;
+    uint64_t nb_d1;
+} ggml_metal_kargs_dsv4_hc_pre;
+
+typedef struct {
+    int32_t  n_embd;
+    int32_t  n_tokens;
+    uint64_t nb_x0;
+    uint64_t nb_x1;
+    uint64_t nb_r0;
+    uint64_t nb_r1;
+    uint64_t nb_r2;
+    uint64_t nb_p0;
+    uint64_t nb_p1;
+    uint64_t nb_c0;
+    uint64_t nb_c1;
+    uint64_t nb_c2;
+    uint64_t nb_d0;
+    uint64_t nb_d1;
+    uint64_t nb_d2;
+} ggml_metal_kargs_dsv4_hc_post;
+
+typedef struct {
     int32_t  ne00;
     int32_t  ne01;
     int32_t  ne02;
@@ -1239,5 +1292,9 @@ typedef struct {
 typedef struct {
     int64_t  np;
 } ggml_metal_kargs_opt_step_sgd;
+
+typedef struct {
+    int64_t ne;
+} ggml_metal_kargs_silu_back;
 
 #endif // GGML_METAL_IMPL
