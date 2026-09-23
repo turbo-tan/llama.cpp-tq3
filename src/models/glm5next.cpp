@@ -1146,9 +1146,11 @@ llama_model_glm5next::graph_mtp::graph_mtp(const llama_model & model, const llm_
 
     // chained drafting (port of qwen35's chain_graph): one decode drafts n_chain
     // tokens, sampling greedily in-graph via argmax so the host never runs the
-    // draft sampler. GLM5NEXT's MTP block is position-free (no rope), so no
-    // position views are needed. Ref: src/models/qwen35.cpp build_graph_mtp.
-    if ((std::getenv("LLAMA_SPEC_CHAIN") != nullptr) && n_tokens > 1 && n_tokens <= 8 &&
+    // draft sampler. Handles n_tokens == 1 as well, because the speculative driver
+    // reads packed [id, prob] pairs whenever chain_graph is active in the backend.
+    // GLM5NEXT's MTP block is position-free (no rope), so no position views are
+    // needed. Ref: src/models/qwen35.cpp build_graph_mtp.
+    if ((std::getenv("LLAMA_SPEC_CHAIN") != nullptr) && n_tokens >= 1 && n_tokens <= 8 &&
             ubatch.n_seqs_unq == 1 && ubatch.token && ubatch.output && ubatch.output[0]) {
 
         // this v1 requires every batch row to be a chain row (the speculative
