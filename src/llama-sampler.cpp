@@ -2853,7 +2853,8 @@ struct llama_sampler * llama_sampler_init_grammar_lazy_patterns(
 
 // penalties
 
-struct llama_sampler_penalties {
+struct llama_sampler_penalties : public llama_sampler_backend {
+    const int32_t n_vocab;
     const int32_t penalty_last_n;
     const float   penalty_repeat;
     const float   penalty_freq;
@@ -2910,8 +2911,9 @@ struct llama_sampler_penalties {
     }
 };
 
-static const char * llama_sampler_penalties_name(const struct llama_sampler * /*smpl*/) {
-    return "penalties";
+static const char * llama_sampler_penalties_name(const struct llama_sampler * smpl) {
+    auto * ctx = (llama_sampler_penalties *) smpl->ctx;
+    return ctx->get_name();
 }
 
 static void llama_sampler_penalties_accept(struct llama_sampler * smpl, llama_token token) {
@@ -2948,8 +2950,7 @@ static void llama_sampler_penalties_accept(struct llama_sampler * smpl, llama_to
 static void llama_sampler_penalties_apply(struct llama_sampler * smpl, llama_token_data_array * cur_p) {
     auto * ctx = (llama_sampler_penalties *) smpl->ctx;
 
-    if ((ctx->penalty_last_n == 0) ||
-        (ctx->penalty_repeat == 1.0f && ctx->penalty_freq == 0.0f && ctx->penalty_present == 0.0f)) {
+    if (ctx->is_disabled()) {
         return;
     }
 
@@ -2987,6 +2988,7 @@ static void llama_sampler_penalties_reset(struct llama_sampler * smpl) {
 static struct llama_sampler * llama_sampler_penalties_clone(const struct llama_sampler * smpl) {
     const auto * ctx = (const llama_sampler_penalties *) smpl->ctx;
     auto * result = llama_sampler_init_penalties(
+            ctx->n_vocab,
             ctx->penalty_last_n,
             ctx->penalty_repeat,
             ctx->penalty_freq,
@@ -2996,7 +2998,8 @@ static struct llama_sampler * llama_sampler_penalties_clone(const struct llama_s
     {
         auto * result_ctx = (llama_sampler_penalties *) result->ctx;
 
-        result_ctx->prev = ctx->prev;
+        result_ctx->prev        = ctx->prev;
+        result_ctx->token_count = ctx->token_count;
     }
 
     return result;
@@ -3189,10 +3192,8 @@ static struct llama_sampler_i llama_sampler_penalties_i = {
     /* .reset             = */ llama_sampler_penalties_reset,
     /* .clone             = */ llama_sampler_penalties_clone,
     /* .free              = */ llama_sampler_penalties_free,
-    /* .backend_init      = */ nullptr,
+    /* .backend_init      = */ llama_sampler_penalties_backend_init,
     /* .backend_accept    = */ nullptr,
-    /* .backend_apply     = */ nullptr,
-    /* .backend_set_input = */ nullptr,
     /* .backend_apply     = */ llama_sampler_penalties_backend_apply,
     /* .backend_set_input = */ llama_sampler_penalties_backend_set_input,
     /* .backend_reset     = */ llama_sampler_penalties_backend_reset,
@@ -3200,28 +3201,26 @@ static struct llama_sampler_i llama_sampler_penalties_i = {
 };
 
 struct llama_sampler * llama_sampler_init_penalties(
+        int32_t n_vocab,
         int32_t penalty_last_n,
         float penalty_repeat,
         float penalty_freq,
         float penalty_present) {
     penalty_last_n = std::max(penalty_last_n, 0);
 
-    const bool is_empty = (penalty_last_n == 0 || (penalty_repeat == 1.0f && penalty_freq == 0.0f && penalty_present == 0.0f));
-
-    if (is_empty) {
+    if (llama_sampler_penalties::is_disabled(
+                penalty_last_n, penalty_repeat, penalty_freq, penalty_present)) {
         return llama_sampler_init_empty("?penalties");
     }
 
     return llama_sampler_init(
         /* .iface = */ &llama_sampler_penalties_i,
-        /* .ctx   = */ new llama_sampler_penalties {
-            /* .penalty_last_n  = */ penalty_last_n,
-            /* .penalty_repeat  = */ penalty_repeat,
-            /* .penalty_freq    = */ penalty_freq,
-            /* .penalty_present = */ penalty_present,
-            /* .prev            = */ ring_buffer<llama_token>(penalty_last_n),
-            /* .token_count     = */ {},
-        }
+        /* .ctx   = */ new llama_sampler_penalties(
+            n_vocab,
+            penalty_last_n,
+            penalty_repeat,
+            penalty_freq,
+            penalty_present)
     );
 }
 

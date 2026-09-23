@@ -1595,7 +1595,7 @@ bool llama_context::set_sampler(llama_seq_id seq_id, llama_sampler * sampler) {
     if (sampler && can_offload) {
         auto * buft = ggml_backend_dev_buffer_type(model.dev_output());
 
-        if (!sampler->iface->backend_init(sampler, buft)) {
+        if (!sampler->iface->backend_init(sampler, buft, cparams.n_outputs_max_per_seq)) {
             LLAMA_LOG_WARN("%s: sampler '%s' for seq_id = %d, cannot be offloaded to the backend\n", __func__, llama_sampler_name(sampler), seq_id);
 
             if (sampling.samplers.count(seq_id) > 0) {
@@ -2331,7 +2331,6 @@ int llama_context::decode(const llama_batch & batch_inp) {
 
         // Copy backend sampling output if this ubatch produced any sampling tensors.
         if (has_samplers && (!res->t_sampled.empty() || !res->t_sampled_probs.empty() || !res->t_sampled_logits.empty())) {
-            const auto seq_to_output_row = build_seq_to_output_row(ubatch, n_outputs_prev);
             const auto stride = n_vocab;
 
             // async copy the sampling data from the backend to the host

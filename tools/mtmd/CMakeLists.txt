@@ -18,6 +18,8 @@ add_library(mtmd
             mtmd-image.cpp
             mtmd.h
             mtmd-helper.cpp
+            mtmd-helper-gen.cpp
+            mtmd-helper-common.h
             mtmd-helper.h
             clip.cpp
             clip.h
