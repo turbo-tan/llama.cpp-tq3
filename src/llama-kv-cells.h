@@ -388,8 +388,10 @@ public:
 
     int seq_pos_count(llama_seq_id seq_id, llama_pos p) const {
         assert(seq_id >= 0 && seq_id < LLAMA_MAX_SEQ);
-        const auto it = seq_pos[seq_id].find(p);
-        return it == seq_pos[seq_id].end() ? 0 : it->second;
+        const auto & sp = seq_pos[seq_id];
+        auto lo = sp.lower_bound({ p, 0 });
+        auto hi = sp.upper_bound({ p, std::numeric_limits<uint32_t>::max() });
+        return (int) std::distance(lo, hi);
     }
 
     // note: call only if the cell is not empty
