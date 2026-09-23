@@ -1952,7 +1952,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
         if (t_rounds > 0) {
             static long printed = 0;
             if ((++printed % 64) == 0) {
-                SPC_WRN("[MTP-TIMING] draft_calls=%ld rounds=%ld decode=%.2f ms/round sample=%.2f cpy=%.2f\n",
+                SPC_TRC("[MTP-TIMING] draft_calls=%ld rounds=%ld decode=%.2f ms/round sample=%.2f cpy=%.2f\n",
                         printed, t_rounds, t_dec / t_rounds, t_smp / t_rounds, t_cpy / t_rounds);
             }
         }

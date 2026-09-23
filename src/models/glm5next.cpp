@@ -1247,11 +1247,13 @@ llama_model_glm5next::graph_mtp::graph_mtp(const llama_model & model, const llm_
             return build_lora_mm(layer.nextn.eh_proj, ggml_concat(ctx0, e_norm_b, h_norm_b, 0), layer.nextn.eh_proj_s);
         };
 
-        // draft-time LM head, optionally narrowed to a sub-head (see qwen35):
-        // greedy drafting rarely picks tokens outside the leading vocabulary range
+        // draft-time LM head, optionally narrowed to a sub-head (see qwen35).
+        // NOTE: default is FULL head for GLM5NEXT - measured sub-head 32768 drops
+        // acceptance 0.709->0.620 (draft picks outside the frequent-token prefix
+        // matter here); opt in via LLAMA_SPEC_CHAIN_SUB=N if profiling says otherwise.
         static const int64_t n_sub_env = [] {
             const char * env = getenv("LLAMA_SPEC_CHAIN_SUB");
-            return env != nullptr ? atoll(env) : 32768;
+            return env != nullptr ? atoll(env) : 0;
         }();
 
         ggml_tensor * head_w = layer.nextn.shared_head_head ? layer.nextn.shared_head_head : model.output;
