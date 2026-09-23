@@ -602,6 +602,8 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
 
     const float kq_scale = hparams.f_attention_scale != 0.0f ? hparams.f_attention_scale : 1.0f/sqrtf(float(n_embd_head));
 
+    const int64_t n_embd_inp = hparams.n_embd_inp_enc();
+
     // drafts for M-RoPE targets use degenerate sections (temporal dim only)
     int sections[4];
     std::copy(std::begin(hparams.rope_sections), std::begin(hparams.rope_sections) + 4, sections);

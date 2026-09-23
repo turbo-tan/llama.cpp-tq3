@@ -16,12 +16,6 @@ void llama_model_qwen3vl::load_arch_hparams(llama_model_loader & ml) {
 void llama_model_qwen3vl::load_arch_tensors(llama_model_loader &) {
     LLAMA_LOAD_LOCALS;
 
-    int64_t n_vocab_out = n_vocab;
-    if (arch == LLM_ARCH_QWEN3TTS) {
-        // [TAG_LLAMA_N_VOCAB_OUT]
-        n_vocab_out = 3072;
-    }
-
     tok_embd = create_tensor(tn(LLM_TENSOR_TOKEN_EMBD, "weight"), {n_embd, n_vocab}, 0);
 
     // output

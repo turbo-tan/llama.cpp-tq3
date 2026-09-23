@@ -1097,11 +1097,11 @@ float * llama_context::get_embeddings_nextn_ith(int32_t i) {
 }
 
 ggml_tensor * llama_context::get_t_h_pre_norm() const {
-    return gf_res_prev ? gf_res_prev->t_h_pre_norm : nullptr;
+    return gf_res_prev_active ? gf_res_prev_active->t_h_pre_norm : nullptr;
 }
 
 ggml_tensor * llama_context::get_t_mtp_out() const {
-    return gf_res_prev ? gf_res_prev->t_mtp_out : nullptr;
+    return gf_res_prev_active ? gf_res_prev_active->t_mtp_out : nullptr;
 }
 
 float * llama_context::get_embeddings_layer_inp(uint32_t lid) {
