@@ -2658,9 +2658,6 @@ common_params_context common_params_parser_init(common_params & params, llama_ex
         }
     ).set_examples(mmproj_examples).set_env("LLAMA_ARG_VIDEO_FFMPEG_DIR"));
     if (params.is_gen_docs || llama_supports_rpc()) {
-
-    if (llama_supports_rpc()) {
-
         add_opt(common_arg(
             {"--rpc"}, "SERVERS",
             "comma-separated list of RPC servers (host:port)",

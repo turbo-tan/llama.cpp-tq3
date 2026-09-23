@@ -527,6 +527,40 @@ bool llm_graph_input_attn_k::can_reuse_impl(const llm_graph_params & params) {
     return res;
 }
 
+llm_graph_input_attn_kv_msa::llm_graph_input_attn_kv_msa(
+        const llama_hparams & hparams,
+        const llama_cparams & cparams,
+        const llama_kv_cache_msa_context * mctx) :
+    llm_graph_input_attn_kv(hparams, cparams, mctx->get_base()),
+    mctx_msa(mctx) {
+}
+
+void llm_graph_input_attn_kv_msa::set_input(const llama_ubatch * ubatch) {
+    llm_graph_input_attn_kv::set_input(ubatch);
+
+    if (self_k_idxs_idx) {
+        mctx_msa->get_idx()->set_input_k_idxs(self_k_idxs_idx, ubatch);
+    }
+}
+
+bool llm_graph_input_attn_kv_msa::can_reuse(const llm_graph_params & params) {
+    mctx_msa = static_cast<const llama_kv_cache_msa_context *>(params.mctx);
+
+    // the parent class operates on the base cache context
+    this->mctx = mctx_msa->get_base();
+
+    bool res = true;
+
+    res &= self_k_idxs->ne[0] == params.ubatch.n_tokens;
+    if (self_k_idxs_idx) {
+        res &= self_k_idxs_idx->ne[0] == params.ubatch.n_tokens;
+    }
+
+    res &= can_reuse_kq_mask(self_kq_mask, this->mctx, params.ubatch, params.cparams);
+
+    return res;
+}
+
 void llm_graph_input_attn_k_dsa::set_input(const llama_ubatch * ubatch) {
     mctx->get_mla()->set_input_k_idxs(self_k_idxs_mla, ubatch);
 
