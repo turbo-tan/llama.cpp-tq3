@@ -70,10 +70,8 @@ static constexpr __host__ __device__ bool mmvq_should_prefetch(ggml_type type) {
             return false;
     }
 }
-
-static __device__ __forceinline__ void mmvq_prefetch_l2(const void * p) {
-    asm volatile("prefetch.global.L2 [%0];" :: "l"(p));
-}
+// NOTE: mmvq_prefetch_l2() is defined once above (fork block); upstream's second copy from the
+// 73ab7599b MIX_UNION collided on DGX Spark builds (mmvq.cu(74): already defined).
 #endif
 
 typedef float (*vec_dot_q_cuda_t)(const void * __restrict__ vbq, const block_q8_1 * __restrict__ bq8_1, const int & kbx, const int & iqs);
