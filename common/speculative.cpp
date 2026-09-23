@@ -1007,7 +1007,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
             common_params_sampling sparams;
             sparams.no_perf  = false;
             sparams.top_k    = is_dflash2 ? selector_top_k : 10;
-            sparams.samplers = { COMMON_SAMPLER_TYPE_TOP_K };
+            sparams.samplers.push_back(COMMON_SAMPLER_TYPE_TOP_K); // avoid brace-assign: GCC12 -Werror=stringop-overread false positive
             s.reset(common_sampler_init(model_dft, sparams));
         }
 
