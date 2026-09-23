@@ -617,7 +617,6 @@ static __device__ __forceinline__ void dequantize_V_q8_0(const void * __restrict
     }
 }
 
-template <ggml_type type_K, int D, int nthreads>
 // TQ3_0 KQ dot product for FA: direct centroid * d, no WHT (V-only KV cache).
 template <int D, int nthreads>
 static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_tq3_0(
