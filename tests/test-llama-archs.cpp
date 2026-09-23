@@ -333,7 +333,7 @@ static gguf_context_ptr get_gguf_ctx(const llm_arch arch, const bool moe) {
     }
 
     // minimax-m3 keeps one indexer head per GQA head; the rest use a fixed 64 to match the fused
-    ms.add_kv(LLM_KV_ATTENTION_INDEXER_HEAD_COUNT,   arch == LLM_ARCH_MINIMAX_M3 ? n_head : uint32_t(64));
+    ms.add_kv(LLM_KV_ATTENTION_INDEXER_HEAD_COUNT,   arch == LLM_ARCH_MINIMAX_M3 || arch == LLM_ARCH_DEEPSEEK4 ? n_head : uint32_t(64));
     // qwen4exp ropes indexer keys with the main rotary width, so its head can't be < n_rot
     ms.add_kv(LLM_KV_ATTENTION_INDEXER_KEY_LENGTH,
               arch == LLM_ARCH_QWEN4EXP ? n_embd_head : uint32_t(128));
