@@ -56,6 +56,9 @@ const char * llama_ftype_name(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_Q5_K_S:    name = LLAMA_FTYPE_PREFIX "Q5_K - Small"; break;
         case LLAMA_FTYPE_MOSTLY_Q5_K_M:    name = LLAMA_FTYPE_PREFIX "Q5_K - Medium"; break;
         case LLAMA_FTYPE_MOSTLY_Q6_K:      name = LLAMA_FTYPE_PREFIX "Q6_K"; break;
+        case LLAMA_FTYPE_MOSTLY_TQ3_0:    return "TQ3_0 - 3.50 bpw turbo";
+        case LLAMA_FTYPE_MOSTLY_TQ3_1S:   return "TQ3_1S - 4.00 bpw turbo two-scale";
+        case LLAMA_FTYPE_MOSTLY_TQ3_4S:   return "TQ3_4S - 4.00 bpw turbo four-scale";
         case LLAMA_FTYPE_MOSTLY_TQ1_0:     name = LLAMA_FTYPE_PREFIX "TQ1_0 - 1.69 bpw ternary"; break;
         case LLAMA_FTYPE_MOSTLY_TQ2_0:     name = LLAMA_FTYPE_PREFIX "TQ2_0 - 2.06 bpw ternary"; break;
         case LLAMA_FTYPE_MOSTLY_IQ2_XXS:   name = LLAMA_FTYPE_PREFIX "IQ2_XXS - 2.0625 bpw"; break;
