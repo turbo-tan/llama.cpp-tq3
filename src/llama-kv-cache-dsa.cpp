@@ -50,7 +50,7 @@ llama_kv_cache_dsa::llama_kv_cache_dsa(
     kv_lid = std::make_unique<llama_kv_cache>(
             model, hparams_lid, type_k, type_v,
             v_trans, offload, unified, kv_size, n_seq_max, n_pad,
-            n_swa, swa_type, nullptr, filter, reuse, nullptr);
+            n_swa, swa_type, nullptr, filter_lid, reuse, nullptr);
 }
 
 void llama_kv_cache_dsa::clear(bool data) {
