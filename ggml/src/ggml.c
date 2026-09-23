@@ -945,24 +945,10 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) ggml_bf16_to_fp32_row,
         .from_float_ref           = (ggml_from_float_t) ggml_fp32_to_bf16_row_ref,
     },
-    [31] = { // GGML_TYPE_Q4_0_4_4
-        .type_name                = "TYPE_Q4_0_4_4 REMOVED, use Q4_0 with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
-    [32] = { // GGML_TYPE_Q4_0_4_8
-        .type_name                = "TYPE_Q4_0_4_8 REMOVED, use Q4_0 with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
-    [33] = { // GGML_TYPE_Q4_0_8_8
-        .type_name                = "TYPE_Q4_0_8_8 REMOVED, use Q4_0 with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
+    // sync-p1: upstream's tombstone entries for removed Q4_0_*_*/8_8 types
+    // dropped — slots 31/32/33 are the fork's TQ3_1S_AP1/Q4_0_TQ/Q4_1_TQ
+    // (defined at [GGML_TYPE_*] above). Upstream enum values 31-33 are unused
+    // here; keep in mind if ever re-adding those type IDs (they are gone upstream).
     [GGML_TYPE_TQ1_0] = {
         .type_name                = "tq1_0",
         .blck_size                = QK_K,
