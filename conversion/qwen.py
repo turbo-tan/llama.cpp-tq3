@@ -366,9 +366,6 @@ class _QwenMtpMixin:
             self.metadata.version, size_label=None, output_type=output_type, model_type=None)    # pyright: ignore[reportAttributeAccessIssue] # ty: ignore[unresolved-attribute]
         self.fname_out = self.fname_out.parent / f"mtp-{fname_default}.gguf"
 
-
-
-
 @ModelBase.register("Qwen3NextForCausalLM")
 @ModelBase.example("Qwen/Qwen3-Next-80B-A3B-Instruct")
 class Qwen3NextModel(_QwenMtpMixin, Qwen2MoeModel):
