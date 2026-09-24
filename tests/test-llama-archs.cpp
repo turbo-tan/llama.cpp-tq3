@@ -625,6 +625,9 @@ static bool arch_supported(const llm_arch arch) {
     if (arch == LLM_ARCH_GLM5NEXT) {
         return false; // FIXME: hybrid KDA+MLA+DSA-indexer arch needs ~26 extra fixture KV params
     }
+    if (arch == LLM_ARCH_MINIMAX_M3) {
+        return false; // FIXME: recurrent-state fixture crashes while reserving the synthetic graph
+    }
     if (arch == LLM_ARCH_GRANITE_SWITCH) {
         return false; // FIXME adapter fixture
     }

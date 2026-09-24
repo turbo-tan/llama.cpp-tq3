@@ -11017,11 +11017,9 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
 
     const bool kda = (neg0 == S_v);
 
-    // Snapshot slot count is stored in the op params. The input state only
-    // carries the base state [S_v, S_v, H, n_seqs].
+    // K (snapshot slot count) is an op param; state holds s0 only [S_v, S_v, H, n_seqs].
     const int64_t K = ggml_get_op_params_i32(dst, 0);
     GGML_ASSERT(K >= 1);
-    const int64_t state_head_stride = src_state->nb[2] / sizeof(float);
     const int64_t state_seq_stride  = src_state->nb[3] / sizeof(float);
 
     const int64_t per_thread = S_v + (K > 1 ? S_v * S_v : 0);
@@ -11038,9 +11036,8 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
     float * attn_out_base  = (float *)dst->data;
     float * state_out_base = (float *)dst->data + attn_score_elems;
 
-    // snapshot slot mapping: target_slot = t - shift. When n_tokens < K only the last
-    // n_tokens slots are written; earlier slots are left untouched (caller-owned).
-    const int64_t shift = n_tokens - K;
+    // snapshot slot mapping: slot 0 = most recent state, slot s = s tokens back.
+    // When n_tokens < K only slots 0..n_tokens-1 are written; older slots are caller-owned.
 
     const float * state_in_base = (const float *)src_state->data;
 
@@ -11068,7 +11065,8 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
             : state_out_base + (iv3 * H + iv1) * S_v * S_v;
 
         // copy input state into the working buffer and operate in-place
-        const float * s_in = state_in_base + iv3 * state_seq_stride + iv1 * state_head_stride;
+        // state layout [S_v, S_v, H, n_seqs]: seq iv3 starts at iv3 * state_seq_stride.
+        const float * s_in = state_in_base + iv3 * state_seq_stride + iv1 * S_v * S_v;
         memcpy(s_out, s_in, S_v * S_v * sizeof(float));
 
         // attn output pointer for first token of this (head, seq)
@@ -11120,7 +11118,7 @@ static void ggml_compute_forward_gated_delta_net_one_chunk(
             attn_data += S_v * H; // advance to next token
 
             if (K > 1) {
-                const int64_t target_slot = t - shift;
+                const int64_t target_slot = n_tokens - 1 - t;
                 if (target_slot >= 0 && target_slot < K) {
                     float * curr_state_o = state_out_base + target_slot * state_size_per_snap +
                                      (iv3 * H + iv1) * S_v * S_v;
