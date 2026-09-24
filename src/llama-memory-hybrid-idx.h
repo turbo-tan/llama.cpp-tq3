@@ -30,6 +30,7 @@ public:
                  uint32_t   rs_size,
                             /* indexer */
                  uint32_t   idx_row_size,   // floats cached per token; 0 means indexer_head_size
+
                             /* common */
                  uint32_t   n_seq_max,
                  uint32_t   n_rs_seq,
@@ -156,6 +157,7 @@ public:
     //     incomplete trailing pool, which has no pool key and so is expanded directly
     void set_input_kpool(ggml_tensor * pool_cells, ggml_tensor * pool_bias, ggml_tensor * tail_cells,
                          const llama_ubatch * ubatch, uint32_t ratio) const;
+
 
 private:
     const llama_memory_hybrid_idx * mem = nullptr;

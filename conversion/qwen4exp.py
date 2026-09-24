@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Iterable, cast
 
+
 import torch
 from torch import Tensor
 
@@ -23,6 +24,7 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
 
     The checkpoint also carries a NextN/MTP draft head under `mtp.*`, exported as a
     trailing block; pass --no-nextn to leave it out.
+
     """
 
     model_arch = gguf.MODEL_ARCH.QWEN4EXP
@@ -126,6 +128,7 @@ class Qwen4ExpTextModel(_Qwen35MRopeMixin, _LinearAttentionVReorderBase):
         # to describe either
         ple_layers = [i - 1 for i in hp["ple_layer_ids"]]
         if not ple_layers or self.mtp_only:
+
             return
         self.gguf_writer.add_ple_layers(ple_layers)
         self.gguf_writer.add_ple_ngram_size(hp["ngram_size"])
