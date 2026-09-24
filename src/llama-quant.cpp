@@ -394,7 +394,8 @@ static ggml_type tensor_type_fallback(quantize_state_impl & qs, const ggml_tenso
             case GGML_TYPE_Q2_K:
             case GGML_TYPE_Q3_K:
             case GGML_TYPE_TQ1_0:
-            case GGML_TYPE_TQ2_0:   return_type = GGML_TYPE_Q4_0;   break;
+            case GGML_TYPE_TQ2_0:
+            case GGML_TYPE_TQ3_4S:  return_type = GGML_TYPE_Q4_0;   break;
             case GGML_TYPE_Q4_K:    return_type = GGML_TYPE_Q5_0;   break;
             case GGML_TYPE_Q5_K:    return_type = GGML_TYPE_Q5_1;   break;
             case GGML_TYPE_Q6_K:    return_type = GGML_TYPE_Q8_0;   break;
@@ -451,6 +452,21 @@ static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type 
         return std::make_pair(i_layer, n_layer);
     };
 
+    // Hybrid SSM (e.g. DeltaNet / qwen3next): keep the recurrent state-update gates in f32 by default.
+    // These tensors participate multiplicatively in the carried recurrent state, so quantization error
+    // compounds along the sequence instead of staying local to one matmul. Measured on Qwen3.8-27B
+    // (48 DeltaNet + 17 attention layers): quantizing ssm_alpha/ssm_beta to tq3_4s collapses long
+    // reasoning (17k-64k reasoning chars, structural codegen bugs); forcing f32 restores full depth
+    // (33k-120k) and eliminates the structural failure mode. Cost is small: ~12 MiB per family on the
+    // 27B model. Rule: tensors that participate multiplicatively in recurrent state updates stay f32;
+    // readouts and projections may be quantized. Override with --tensor-type or --pure.
+    // NOTE: can't use LLM_TN here because the layer number is not known
+    if (name.find("ssm_alpha") != std::string::npos ||
+        name.find("ssm_beta")  != std::string::npos ||
+        name.find("ssm_ba")    != std::string::npos) {
+        return GGML_TYPE_F32;
+    }
+
     // for arches that share the same tensor between the token embeddings and the output, we quantize the token embeddings
     // with the quantization of the output tensor
     if (category == tensor_category::OUTPUT || (qs.has_tied_embeddings && category == tensor_category::TOKEN_EMBD)) {
@@ -502,7 +518,7 @@ static ggml_type llama_tensor_get_type_impl(quantize_state_impl & qs, ggml_type 
             else if (ftype == LLAMA_FTYPE_MOSTLY_IQ3_XXS) {
                 new_type = GGML_TYPE_IQ3_S;
             }
-            else if (ftype == LLAMA_FTYPE_MOSTLY_TQ1_0 || ftype == LLAMA_FTYPE_MOSTLY_TQ2_0 || ftype == LLAMA_FTYPE_MOSTLY_Q2_0) {
+            else if (ftype == LLAMA_FTYPE_MOSTLY_TQ1_0 || ftype == LLAMA_FTYPE_MOSTLY_TQ2_0 || ftype == LLAMA_FTYPE_MOSTLY_TQ3_4S) {
                 new_type = GGML_TYPE_Q4_K;
             }
         }
@@ -873,6 +889,7 @@ ggml_type llama_ftype_get_default_type(llama_ftype ftype) {
         case LLAMA_FTYPE_MOSTLY_Q6_K:    return GGML_TYPE_Q6_K;
         case LLAMA_FTYPE_MOSTLY_TQ1_0:   return GGML_TYPE_TQ1_0;
         case LLAMA_FTYPE_MOSTLY_TQ2_0:   return GGML_TYPE_TQ2_0;
+        case LLAMA_FTYPE_MOSTLY_TQ3_4S:  return GGML_TYPE_TQ3_4S;
         case LLAMA_FTYPE_MOSTLY_IQ2_XXS: return GGML_TYPE_IQ2_XXS;
         case LLAMA_FTYPE_MOSTLY_IQ2_XS:  return GGML_TYPE_IQ2_XS;
         case LLAMA_FTYPE_MOSTLY_IQ2_S:   return GGML_TYPE_IQ2_XS;

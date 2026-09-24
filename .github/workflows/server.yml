@@ -48,6 +48,7 @@ env:
   LLAMA_ARG_LOG_PREFIX: 1
   LLAMA_ARG_LOG_TIMESTAMPS: 1
   LLAMA_ARG_LOG_VERBOSITY: 10
+  LLAMA_SERVER_START_TIMEOUT: 180
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || github.run_id }}

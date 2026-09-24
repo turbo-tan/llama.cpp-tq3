@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <memory>
 #include <mutex>
 
@@ -58,6 +59,9 @@
 // While BW spans CC 1000, 1100 & 1200, we are integrating Tensor Core instructions available to 1200 family, see
 // https://docs.nvidia.com/cutlass/media/docs/cpp/blackwell_functionality.html#blackwell-sm120-gemms
 #define GGML_CUDA_CC_BLACKWELL       1200
+#if !defined(GGML_USE_HIP) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= GGML_CUDA_CC_BLACKWELL
+#define BLACKWELL_MMA_AVAILABLE
+#endif
 #define GGML_CUDA_CC_DGX_SPARK       1210
 #define GGML_CUDA_CC_RUBIN           1300
 #define GGML_CUDA_CC_OFFSET_AMD      0x1000000
@@ -643,8 +647,7 @@ template <typename T> struct block_reduce_policy<block_reduce_method::MAX, T> {
 };
 
 template <block_reduce_method reduce_method_t, const unsigned int block_size_template = 0, typename T>
-static __device__ T block_reduce(T val, [[maybe_unused]] T * shared_vals) {
-    // for multi-warp reductions, callers must not reuse shared_vals until all reads from this invocation have completed
+static __device__ T block_reduce(T val, T * shared_vals) {
     val                           = block_reduce_policy<reduce_method_t, T>::reduce(val);
     const unsigned int block_size = block_size_template == 0 ? blockDim.x : block_size_template;
     if (block_size > WARP_SIZE) {
@@ -1172,6 +1175,62 @@ struct ggml_cuda_type_traits<GGML_TYPE_IQ3_S> {
     static constexpr int bs = sizeof(block_iq3_s);
 };
 
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_0> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;  // 2 values per dequant call (like q4_0)
+    static constexpr int qi = 16;  // qi/vdr=4: 4 threads per block
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_1S> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4S> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4SE> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_4SV> {
+    static constexpr int qk = QK_TQ3_0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_TQ3_1S_AP1> {
+    static constexpr int qk = QK_TQ3_1S_AP1;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_Q4_0_TQ> {
+    static constexpr int qk = QK_Q4_0_TQ_V0;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
+template<>
+struct ggml_cuda_type_traits<GGML_TYPE_Q4_1_TQ> {
+    static constexpr int qk = QK_Q4_0_TQ_V1;
+    static constexpr int qr = 2;
+    static constexpr int qi = 16;
+};
+
 //////////////////////
 
 struct ggml_cuda_device_info {
@@ -1267,6 +1326,37 @@ struct ggml_tensor_extra_gpu {
 #if (defined(GGML_CUDA_USE_GRAPHS) || defined(GGML_HIP_GRAPHS)) || defined(GGML_MUSA_GRAPHS)
 #define USE_CUDA_GRAPH
 #endif
+
+static bool ggml_cuda_graph_shape_keys_enabled() {
+    static const bool enabled = [] {
+        const char * env = getenv("GGML_CUDA_GRAPH_SHAPE_KEYS");
+        return env != nullptr && strcmp(env, "1") == 0;
+    }();
+    return enabled;
+}
+
+struct ggml_cuda_graph_key {
+    const void * first_node = nullptr;
+    int n_nodes = 0;
+    std::array<int64_t, GGML_MAX_DIMS> ne = {};
+    uint64_t shape_hash = 0;
+
+    bool operator==(const ggml_cuda_graph_key & other) const {
+        return first_node == other.first_node && n_nodes == other.n_nodes && ne == other.ne && shape_hash == other.shape_hash;
+    }
+};
+
+struct ggml_cuda_graph_key_hash {
+    size_t operator()(const ggml_cuda_graph_key & key) const {
+        size_t h = std::hash<const void *>{}(key.first_node);
+        h ^= size_t(key.n_nodes) * 0x9e3779b9;
+        for (int64_t n : key.ne) {
+            h = (h ^ size_t(n)) * 0x100000001b3ull;
+        }
+        h = (h ^ size_t(key.shape_hash)) * 0x100000001b3ull;
+        return h;
+    }
+};
 
 struct ggml_cuda_graph {
 #ifdef USE_CUDA_GRAPH
@@ -1464,21 +1554,47 @@ struct ggml_backend_cuda_context {
 
     int curr_stream_no = 0;
 
+    struct tq3_4s_nvfp4_cache_entry {
+        void * data = nullptr;
+        size_t size = 0;
+        size_t src_size = 0;
+        const void * src_data = nullptr;
+    };
+
+    std::mutex tq3_4s_nvfp4_cache_mutex;
+    std::unordered_map<const void *, tq3_4s_nvfp4_cache_entry> tq3_4s_nvfp4_cache;
+
 #ifdef USE_CUDA_GRAPH
-    // Map from first_node_ptr to cuda_graph - allows multiple graphs per context
+    // Identity (and opt-in shape) to cuda_graph - allows multiple graphs per context
     // when the computation is split across CPU/GPU (e.g., with --n-cpu-moe)
-    std::unordered_map<const void *, std::unique_ptr<ggml_cuda_graph>> cuda_graphs;
+    std::unordered_map<ggml_cuda_graph_key, std::unique_ptr<ggml_cuda_graph>, ggml_cuda_graph_key_hash> cuda_graphs;
 
     int64_t last_graph_eviction_sweep = 0;
 
-    ggml_cuda_graph * cuda_graph(const void * first_node_ptr) {
+    ggml_cuda_graph * cuda_graph(const ggml_cuda_graph_key & key) {
         const int64_t time_now = ggml_time_us();
+        const bool shape_keys = ggml_cuda_graph_shape_keys_enabled();
+
+        // Only called before capture. Evicting a graph requires all streams to be idle.
+        bool synchronized = false;
+        const auto synchronize = [&] {
+            if (shape_keys && !synchronized) {
+                ggml_cuda_set_device(device);
+                for (int i = 0; i < GGML_CUDA_MAX_STREAMS; ++i) {
+                    if (streams[device][i] != nullptr) {
+                        CUDA_CHECK(cudaStreamSynchronize(streams[device][i]));
+                    }
+                }
+                synchronized = true;
+            }
+        };
 
         // sweep every 5s, evicting cuda graphs unused for >=10s
         if (time_now - last_graph_eviction_sweep >= 5'000'000) {
             last_graph_eviction_sweep = time_now;
             for (auto it = cuda_graphs.begin(); it != cuda_graphs.end(); ) {
                 if (time_now - it->second->last_used_time >= 10'000'000) {
+                    synchronize();
                     it = cuda_graphs.erase(it);
                 } else {
                     ++it;
@@ -1486,9 +1602,18 @@ struct ggml_backend_cuda_context {
             }
         }
 
-        auto it = cuda_graphs.find(first_node_ptr);
+        auto it = cuda_graphs.find(key);
         if (it == cuda_graphs.end()) {
-            it = cuda_graphs.emplace(first_node_ptr, std::make_unique<ggml_cuda_graph>()).first;
+            constexpr size_t shape_capacity = 8;
+            if (shape_keys && cuda_graphs.size() >= shape_capacity) {
+                auto oldest = std::min_element(cuda_graphs.begin(), cuda_graphs.end(),
+                    [](const auto & a, const auto & b) {
+                        return a.second->last_used_time < b.second->last_used_time;
+                    });
+                synchronize();
+                cuda_graphs.erase(oldest);
+            }
+            it = cuda_graphs.emplace(key, std::make_unique<ggml_cuda_graph>()).first;
         }
         it->second->last_used_time = time_now;
         return it->second.get();
@@ -1676,7 +1801,11 @@ static bool ggml_cuda_kernel_can_use_pdl(const void * kernel) {
     }
 
     cudaFuncAttributes attr = {};
-    CUDA_CHECK(cudaFuncGetAttributes(&attr, kernel));
+    cudaError_t err = cudaFuncGetAttributes(&attr, kernel);
+    if (err != cudaSuccess) {
+        // Cannot determine PDL support (e.g. Blackwell + CUDA 13.0). Fall back to standard launch.
+        return false;
+    }
 
     // PDL device-side primitives are emitted only for PTX versions >= 90.
     // We have to guard on a loaded kernel's PTX version so a kernel forward-JIT'ed

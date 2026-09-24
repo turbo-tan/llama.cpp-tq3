@@ -543,22 +543,6 @@ export { default as ChatMessageStatisticsBadge } from './ChatMessages/ChatMessag
 export { default as ChatMessageMcpPrompt } from './ChatMessages/ChatMessage/ChatMessageMcpPrompt/ChatMessageMcpPrompt.svelte';
 
 /**
- * Synthetic working-directory-change message. Rendered in place of a user
- * bubble when the message content parses as a cwd message (see
- * parseCwdMessage); shows the new cwd with the same folder-row treatment
- * the tool-call UI used.
- */
-export { default as ChatMessageCwdChange } from './ChatMessages/ChatMessage/ChatMessageCwdChange.svelte';
-
-/**
- * Generic wrapper for UI-generated (synthetic) messages. Routes the
- * working-directory change to ChatMessageCwdChange and renders a muted
- * fallback for any other synthetic text, so no synthetic message ever
- * surfaces as a user bubble.
- */
-export { default as ChatMessageSynthetic } from './ChatMessages/ChatMessage/ChatMessageSynthetic.svelte';
-
-/**
  * Formatted content display for MCP prompt messages. Renders the full prompt
  * content with arguments in a readable format. Used within ChatMessageMcpPrompt
  * for the expanded view.

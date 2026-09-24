@@ -22,7 +22,6 @@ if __name__ == "__main__":
     sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from gguf.constants import (
-    GGML_MAX_DIMS,
     GGML_QUANT_SIZES,
     GGUF_DEFAULT_ALIGNMENT,
     GGUF_MAGIC,
@@ -281,8 +280,6 @@ class GGUFReader:
         # Get Tensor Dimensions Count
         n_dims = self._get(offs, np.uint32)
         offs += int(n_dims.nbytes)
-        if n_dims[0] > GGML_MAX_DIMS:
-            raise ValueError(f'Tensor dimensions count {n_dims[0]} exceeds GGML_MAX_DIMS ({GGML_MAX_DIMS})')
 
         # Get Tensor Dimension Array
         dims = self._get(offs, np.uint64, n_dims[0])
@@ -343,10 +340,7 @@ class GGUFReader:
                 raise ValueError(f'Found duplicated tensor with name {tensor_name}')
             tensor_names.add(tensor_name)
             ggml_type = GGMLQuantizationType(raw_dtype[0])
-            # use Python ints: np.prod on uint64 wraps silently on overflow
-            n_elems = 1
-            for dim in dims.tolist():
-                n_elems *= int(dim)
+            n_elems = int(np.prod(dims))
             np_dims = tuple(reversed(dims.tolist()))
             block_size, type_size = GGML_QUANT_SIZES[ggml_type]
             n_bytes = n_elems * type_size // block_size

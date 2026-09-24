@@ -250,6 +250,21 @@ GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t cal
     return ret_val;
 }
 
+static ggml_moe_obs_cb_t g_moe_obs_cb = NULL;
+static void *             g_moe_obs_ud = NULL;
+
+void ggml_set_moe_obs_callback(ggml_moe_obs_cb_t cb, void * ud) {
+    g_moe_obs_cb = cb;
+    g_moe_obs_ud = ud;
+}
+
+ggml_moe_obs_cb_t ggml_get_moe_obs_callback(void ** ud) {
+    if (ud) {
+        *ud = g_moe_obs_ud;
+    }
+    return g_moe_obs_cb;
+}
+
 void ggml_abort(const char * file, int line, const char * fmt, ...) {
     fflush(stdout);
 
@@ -690,6 +705,46 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_q2_0,
         .from_float_ref           = (ggml_from_float_t) quantize_row_q2_0_ref,
     },
+    [GGML_TYPE_TQ3_1S_AP1] = {
+        .type_name                = "tq3_1s_ap1",
+        .blck_size                = QK_TQ3_1S_AP1,
+        .type_size                = sizeof(block_tq3_1s_ap1),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_1s_ap1,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_1s_ap1_ref,
+    },
+    [GGML_TYPE_Q4_0_TQ] = {
+        .type_name                = "q4_0_tq",
+        .blck_size                = QK_Q4_0_TQ_V0,
+        .type_size                = sizeof(block_q4_0_tq_v0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_q4_0_tq_v0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q4_0_tq_v0_ref,
+    },
+    [GGML_TYPE_Q4_1_TQ] = {
+        .type_name                = "q4_1_tq",
+        .blck_size                = QK_Q4_0_TQ_V1,
+        .type_size                = sizeof(block_q4_0_tq_v1),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_q4_0_tq_v1,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_q4_0_tq_v1_ref,
+    },
+    [GGML_TYPE_TQ3_4SE] = {
+        .type_name                = "tq3_4se",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_4se),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4se,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4se_ref,
+    },
+    [GGML_TYPE_TQ3_4SV] = {
+        .type_name                = "tq3_4sv",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_4sv),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4sv,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4sv_ref,
+    },
     [GGML_TYPE_Q4_0] = {
         .type_name                = "q4_0",
         .blck_size                = QK4_0,
@@ -891,24 +946,10 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) ggml_bf16_to_fp32_row,
         .from_float_ref           = (ggml_from_float_t) ggml_fp32_to_bf16_row_ref,
     },
-    [31] = { // GGML_TYPE_Q4_0_4_4
-        .type_name                = "TYPE_Q4_0_4_4 REMOVED, use Q4_0 with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
-    [32] = { // GGML_TYPE_Q4_0_4_8
-        .type_name                = "TYPE_Q4_0_4_8 REMOVED, use Q4_0 with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
-    [33] = { // GGML_TYPE_Q4_0_8_8
-        .type_name                = "TYPE_Q4_0_8_8 REMOVED, use Q4_0 with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
+    // sync-p1: upstream's tombstone entries for removed Q4_0_*_*/8_8 types
+    // dropped — slots 31/32/33 are the fork's TQ3_1S_AP1/Q4_0_TQ/Q4_1_TQ
+    // (defined at [GGML_TYPE_*] above). Upstream enum values 31-33 are unused
+    // here; keep in mind if ever re-adding those type IDs (they are gone upstream).
     [GGML_TYPE_TQ1_0] = {
         .type_name                = "tq1_0",
         .blck_size                = QK_K,
@@ -925,23 +966,67 @@ static const struct ggml_type_traits type_traits[GGML_TYPE_COUNT] = {
         .to_float                 = (ggml_to_float_t) dequantize_row_tq2_0,
         .from_float_ref           = (ggml_from_float_t) quantize_row_tq2_0_ref,
     },
-    [36] = { // GGML_TYPE_IQ4_NL_4_4
-        .type_name                = "TYPE_IQ4_NL_4_4 REMOVED, use IQ4_NL with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
-    [37] = { // GGML_TYPE_IQ4_NL_4_8
-        .type_name                = "TYPE_IQ4_NL_4_8 REMOVED, use IQ4_NL with runtime repacking",
-        .blck_size                = 0,
-        .type_size                = 0,
-        .is_quantized             = false,
-    },
     [38] = { // GGML_TYPE_IQ4_NL_8_8
         .type_name                = "TYPE_IQ4_NL_8_8 REMOVED, use IQ4_NL with runtime repacking",
         .blck_size                = 0,
         .type_size                = 0,
         .is_quantized             = false,
+    },
+    [GGML_TYPE_TQ3_1S] = {
+        .type_name                = "tq3_1s",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_1s),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_1s,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_1s_ref,
+    },
+    [GGML_TYPE_TQ3_4S] = {
+        .type_name                = "tq3_4s",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_4s),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_4s,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_4s_ref,
+    },
+    [GGML_TYPE_Q8_0_RHT] = {
+        // internal activation type: q8_0 quantized AFTER the TurboQuant RHT.
+        // Only ever materialized in CPU mul_mat wdata; never stored.
+        .type_name                = "q8_0_rht",
+        .blck_size                = QK8_0,
+        .type_size                = sizeof(block_q8_0),
+        .is_quantized             = true,
+    },
+    [GGML_TYPE_TQ3_0] = {
+        .type_name                = "tq3_0",
+        .blck_size                = QK_TQ3_0,
+        .type_size                = sizeof(block_tq3_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_tq3_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_tq3_0_ref,
+    },
+    [GGML_TYPE_TURBO3_0] = {
+        .type_name                = "turbo3",
+        .blck_size                = QK_TURBO3,
+        .type_size                = sizeof(block_turbo3_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_turbo3_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo3_0_ref,
+    },
+    [GGML_TYPE_TURBO4_0] = {
+        .type_name                = "turbo4",
+        .blck_size                = QK_TURBO4,
+        .type_size                = sizeof(block_turbo4_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_turbo4_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo4_0_ref,
+    },
+    [GGML_TYPE_TURBO2_0] = {
+        .type_name                = "turbo2",
+        .blck_size                = QK_TURBO2,
+        .type_size                = sizeof(block_turbo2_0),
+        .is_quantized             = true,
+        .to_float                 = (ggml_to_float_t) dequantize_row_turbo2_0,
+        .from_float_ref           = (ggml_from_float_t) quantize_row_turbo2_0_ref,
     },
 };
 
@@ -1099,9 +1184,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_SGD",
 
     "GLU",
+    "TURBO_WHT",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1214,9 +1300,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "sgd(x)",
 
     "glu(x)",
+    "turbo_wht(x)",
 };
 
-static_assert(GGML_OP_COUNT == 101, "GGML_OP_COUNT != 101");
+static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -6276,6 +6363,15 @@ struct ggml_tensor * ggml_cross_entropy_loss_back(
     return result;
 }
 
+// turbo_wht
+
+struct ggml_tensor * ggml_turbo_wht(struct ggml_context * ctx, struct ggml_tensor * a) {
+    struct ggml_tensor * result = ggml_dup_tensor(ctx, a);
+    result->op     = GGML_OP_TURBO_WHT;
+    result->src[0] = a;
+    return result;
+}
+
 // opt_step_adamw
 
 struct ggml_tensor * ggml_opt_step_adamw(
@@ -8081,6 +8177,12 @@ size_t ggml_quantize_chunk(
     switch (type) {
         case GGML_TYPE_Q1_0:    result = quantize_q1_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_Q2_0:    result = quantize_q2_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_0:   result = quantize_tq3_0(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TURBO2_0: result = quantize_turbo2_0(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TURBO3_0: result = quantize_turbo3_0(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TURBO4_0: result = quantize_turbo4_0(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_1S:  result = quantize_tq3_1s(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
+        case GGML_TYPE_TQ3_4S:  result = quantize_tq3_4s(src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_Q4_0:    result = quantize_q4_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_Q4_1:    result = quantize_q4_1   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;
         case GGML_TYPE_Q5_0:    result = quantize_q5_0   (src + start, (char *) dst + start_row * row_size, nrows, n_per_row, imatrix); break;

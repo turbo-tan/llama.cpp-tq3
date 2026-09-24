@@ -33,13 +33,12 @@
 //
 
 struct common_sampler;
+struct common_speculative_token_dist;
 
 // llama_sampler API overloads
 
 // note: can mutate params in some cases
-struct common_sampler * common_sampler_init(
-        const struct llama_model * model,
-        struct common_params_sampling & params);
+struct common_sampler * common_sampler_init(const struct llama_model * model, struct common_params_sampling & params);
 
 void common_sampler_free(struct common_sampler * gsmpl);
 
@@ -84,6 +83,23 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
 // returns at least 1 token, up to idxs.size()
 //
 std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft, bool grammar_first = false);
+
+// maximal-coupling verification for stochastic speculative decoding
+std::vector<llama_token> common_sampler_sample_and_accept_n(
+        struct common_sampler * gsmpl,
+        struct llama_context * ctx,
+        const std::vector<int> & idxs,
+        const llama_tokens & draft,
+        const std::vector<common_speculative_token_dist> & dists,
+        bool grammar_first = false);
+
+// assume idxs == [ 0, 1, 2, ..., draft.size() ]
+std::vector<llama_token> common_sampler_sample_and_accept_n(
+        struct common_sampler * gsmpl,
+        struct llama_context * ctx,
+        const llama_tokens & draft,
+        const std::vector<common_speculative_token_dist> & dists,
+        bool grammar_first = false);
 
 // assume idxs == [ 0, 1, 2, ..., draft.size() ]
 std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const llama_tokens & draft, bool grammar_first = false);

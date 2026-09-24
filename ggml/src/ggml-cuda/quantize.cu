@@ -1,4 +1,5 @@
 #include "quantize.cuh"
+#include "tq3-native.cuh"
 #include <cstdint>
 
 #if defined(BLACKWELL_MMA_AVAILABLE)
@@ -8,9 +9,12 @@ struct __builtin_align__(32) float8 {
     float x; float y; float z; float w;
     float p; float q; float r; float s;
 };
+#endif
 
 #if CUDART_VERSION >= 12080
-static __device__ __forceinline__ float nvfp4_native_scale_error(
+// [[maybe_unused]]: callers live in BLACKWELL_MMA_AVAILABLE blocks, so on non-Blackwell
+// device passes (e.g. sm_89 CI) this is unreferenced under -Werror all-warnings.
+[[maybe_unused]] static __device__ __forceinline__ float nvfp4_native_scale_error(
         const float vals[QK_NVFP4_SUB], const float inv_col_scale, const float inv_scale, const float scale) {
     const float scale_dequant = 2.0f * scale;
     float err = 0.0f;
@@ -48,8 +52,8 @@ static __device__ __forceinline__ float nvfp4_native_scale_error(
     return err;
 }
 #endif // CUDART_VERSION >= 12080
-#endif // defined(BLACKWELL_MMA_AVAILABLE)
 
+template <bool tq3_rotate>
 __launch_bounds__(CUDA_QUANTIZE_BLOCK_SIZE, 1)
 static __global__ void quantize_q8_1(
         const float * x_ptr, void * vy_ptr,
@@ -81,7 +85,21 @@ static __global__ void quantize_q8_1(
     const int64_t iqs = i_cont % QK8_1; // quant index
 
     ggml_cuda_pdl_sync();
-    const float xi = i0 < ne00 ? x[i03*s03 + i02*s02 + i01*s01 + i00] : 0.0f;
+    float xi = i0 < ne00 ? x[i03*s03 + i02*s02 + i01*s01 + i00] : 0.0f;
+
+    if constexpr (tq3_rotate) {
+        // Fused TQ3 activation rotation: each q8_1 block is exactly one 32-point
+        // Walsh-Hadamard group (ne0 % QK8_1 == 0), so the butterfly runs on the
+        // same warp lanes that reduce the block. Matches ggml_cuda_tq3_rotate_act.
+        float val = xi * ggml_cuda_tq3_sign(iqs);
+#pragma unroll
+        for (int step = 1; step < QK8_1; step <<= 1) {
+            const float other = __shfl_xor_sync(0xFFFFFFFF, val, step, 32);
+            val = (iqs & step) ? (other - val) : (other + val);
+        }
+        xi = val / sqrtf((float) QK8_1);
+    }
+
     float amax = fabsf(xi);
     float sum = xi;
 
@@ -123,6 +141,57 @@ __device__ __forceinline__ uint8_t compute_e8m0_scale(float amax) {
     return static_cast<uint8_t>(biased);
 }
 
+// Number of ue4m3 scale candidates tested per NVFP4 sub-block when quantizing
+// activations: 1 = use ue4m3(amax/6) directly, 3 = also test the {-1,+1}
+// neighboring codes, 5 = also test {-2,+2}. More candidates reduce activation
+// quantization error at the cost of extra ALU per thread; on bandwidth-lean
+// parts (GB10) the search dominates the quantizer's runtime.
+#ifndef GGML_CUDA_NVFP4_ACT_CANDIDATES
+#define GGML_CUDA_NVFP4_ACT_CANDIDATES 1
+#endif
+
+// Pick the ue4m3 sub-block scale for NVFP4 activation quantization.
+// [[maybe_unused]]: the only callers live in BLACKWELL_MMA_AVAILABLE blocks, so on
+// non-Blackwell device passes (e.g. sm_89 CI) this is unreferenced under -Werror all-warnings.
+[[maybe_unused]] static __device__ __forceinline__ void ggml_cuda_nvfp4_act_scale(
+        const float * vals, const float amax, uint8_t & fp8_code, float & subblock_scale) {
+    const int first_fp8_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
+#if GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
+    GGML_UNUSED(vals);
+    fp8_code       = (uint8_t) min(first_fp8_code, 0x7e);
+    subblock_scale = ggml_cuda_ue4m3_to_fp32(fp8_code);
+#else
+    static constexpr int test_offsets[5] = { 0, -1, 1, -2, 2 };
+
+    float best_err = FLT_MAX;
+    fp8_code       = 0;
+    subblock_scale = 0.0f;
+
+#pragma unroll // Check neighboring codes to find the one with the lowest NVFP4 activation loss.
+    for (int i = 0; i < GGML_CUDA_NVFP4_ACT_CANDIDATES; i++) {
+        const int test_code = first_fp8_code + test_offsets[i];
+        if (test_code < 0 || test_code > 0x7e) {
+            continue;
+        }
+        const float test_scale = ggml_cuda_ue4m3_to_fp32((uint8_t) test_code);
+        const float test_inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
+        float cur_err = 0.0f;
+#pragma unroll
+        for (int k = 0; k < QK_NVFP4_SUB; ++k) {
+            const float v = vals[k];
+            const uint8_t q = ggml_cuda_float_to_fp4_e2m1(v, test_inv_scale);
+            const float err_diff = fabsf(v) - fabsf(kvalues_mxfp4[q & 0x7]) * test_scale;
+            cur_err = fmaf(err_diff, err_diff, cur_err);
+        }
+
+        if (cur_err < best_err) {
+            best_err       = cur_err;
+            fp8_code       = (uint8_t) test_code;
+            subblock_scale = test_scale;
+        }
+    }
+#endif // GGML_CUDA_NVFP4_ACT_CANDIDATES <= 1
+}
 // scatter: grid over tokens, quantize once, write to all the token's compact rows
 template <bool scatter, bool use_aligned_float8>
 static __global__ void quantize_mmq_nvfp4(
@@ -329,6 +398,191 @@ static __global__ void quantize_mmq_nvfp4(
     NO_DEVICE_CODE; // This is for Blackwell NVFP4 activations only.
 #endif // defined(BLACKWELL_MMA_AVAILABLE)
 
+}
+
+// Fused TQ3_4S rotate (Walsh-Hadamard per 32-group) + NVFP4 activation quantize.
+// Each thread owns one 32-value rotation group == 2 NVFP4 sub-blocks, reads the
+// RAW (unrotated) activations, rotates in-register, then quantizes. Replaces the
+// separate cudaMemcpy + tq3_rotate_act kernel + buffer with a single pass.
+// Assumes ne00 (== n_embd) is a multiple of QK_TQ3_0 (matches tq3_rotate_act).
+[[maybe_unused]] static __global__ void quantize_mmq_nvfp4_rot(
+        const float * __restrict__ x, const int32_t * __restrict__ ids, void * __restrict__ vy,
+        const int64_t ne00, const int64_t s01, const int64_t s02, const int64_t s03,
+        const int64_t ne0, const int64_t ne1, const int64_t ne2) {
+#if defined(BLACKWELL_MMA_AVAILABLE)
+    const int64_t g_base = ((int64_t) blockDim.x * blockIdx.y + threadIdx.x) * QK_TQ3_0;
+    if (g_base >= ne0) {
+        return;
+    }
+
+    const int64_t i1  = blockIdx.x;
+    const int64_t i2  = blockIdx.z % ne2;
+    const int64_t i3  = blockIdx.z / ne2;
+    const int64_t i01 = ids ? ids[i1] : i1;
+    const int64_t base_idx = i3 * s03 + i2 * s02 + i01 * s01;
+
+    // Load the 32-value rotation group (zero-padded past ne00), apply sign, then
+    // the in-register Walsh-Hadamard butterfly (new_i = a+b, new_j = a-b).
+    float v[QK_TQ3_0];
+#pragma unroll
+    for (int k = 0; k < QK_TQ3_0; k++) {
+        const int64_t i00 = g_base + k;
+        const float xk = (i00 < ne00) ? x[base_idx + i00] : 0.0f;
+        v[k] = xk * ggml_cuda_tq3_sign(k);
+    }
+#pragma unroll
+    for (int step = 1; step < QK_TQ3_0; step <<= 1) {
+#pragma unroll
+        for (int i = 0; i < QK_TQ3_0; i++) {
+            if ((i & step) == 0) {
+                const int jj = i | step;
+                const float a = v[i], b = v[jj];
+                v[i]  = a + b;
+                v[jj] = a - b;
+            }
+        }
+    }
+    const float rnorm = rsqrtf((float) QK_TQ3_0);
+#pragma unroll
+    for (int k = 0; k < QK_TQ3_0; k++) {
+        v[k] *= rnorm;
+    }
+
+    const int64_t blocks_per_col = (ne0 + QK_K - 1) / QK_K;
+
+    // Quantize the two 16-value NVFP4 sub-blocks. Both share one block_fp4_mmq
+    // (QK_TQ3_0 divides QK_K, so a 32-group never straddles a 256-superblock).
+#pragma unroll
+    for (int sb = 0; sb < 2; sb++) {
+        const int64_t i0_base = g_base + sb * QK_NVFP4_SUB;
+        const int64_t k_block = i0_base / QK_K;
+        if (k_block >= blocks_per_col) {
+            continue;
+        }
+        const int64_t ib = blockIdx.z * ((int64_t) blocks_per_col * ne1) + k_block * ne1 + blockIdx.x;
+        block_fp4_mmq * yb = (block_fp4_mmq *) vy + ib;
+        const int sub = (int) ((i0_base % QK_K) / QK_NVFP4_SUB);
+
+        const float * vals_raw = v + sb * QK_NVFP4_SUB;
+        float amax_raw = 0.0f;
+#pragma unroll
+        for (int k = 0; k < QK_NVFP4_SUB; k++) {
+            amax_raw = fmaxf(amax_raw, fabsf(vals_raw[k]));
+        }
+        uint8_t fp8_code = 0;
+        float subblock_scale = 0.0f;
+        ggml_cuda_nvfp4_act_scale(vals_raw, amax_raw, fp8_code, subblock_scale);
+        const float inv_scale = subblock_scale > 0.0f ? 0.5f / subblock_scale : 0.0f;
+        uint32_t q0 = 0, q1 = 0;
+#pragma unroll
+        for (int k = 0; k < QK_NVFP4_SUB / 4; ++k) {
+            q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k +  0], inv_scale) << (8 * k);
+            q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k +  8], inv_scale) << (8 * k + 4);
+            q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k +  4], inv_scale) << (8 * k);
+            q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals_raw[k + 12], inv_scale) << (8 * k + 4);
+        }
+        uint32_t * yqs = reinterpret_cast<uint32_t *>(yb->qs);
+        yqs[2 * sub + 0] = q0;
+        yqs[2 * sub + 1] = q1;
+        reinterpret_cast<uint8_t *>(yb->d4)[sub] = fp8_code;
+    }
+#else
+    NO_DEVICE_CODE;
+#endif // defined(BLACKWELL_MMA_AVAILABLE)
+}
+
+static __global__ void quantize_tq3_4s_to_nvfp4(
+        const block_tq3_4s * __restrict__ x, block_nvfp4 * __restrict__ y,
+        const int64_t blocks_per_row, const int64_t nv_blocks_per_row,
+        const int64_t nv_blocks_per_row_padded, const int64_t nrows) {
+#if defined(BLACKWELL_MMA_AVAILABLE)
+    constexpr float tq3_centroids[8] = { -1.996684f, -1.291398f, -0.740341f, -0.247508f,
+                                          0.230106f,  0.725222f,  1.277503f,  1.988943f };
+
+    const auto decode_tq3_scale = [] __device__ (const uint8_t sb) {
+        if (sb == 0) {
+            return 0.0f;
+        }
+        const uint32_t bits = (((uint32_t) (sb >> 5) + 118u) << 23) | ((uint32_t) (sb & 31u) << 18);
+        return __uint_as_float(bits);
+    };
+
+    const int64_t idx = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    const int64_t nblocks = nv_blocks_per_row * nrows;
+    if (idx >= nblocks) {
+        return;
+    }
+
+    const int64_t row = idx / nv_blocks_per_row;
+    const int64_t col = idx - row * nv_blocks_per_row;
+    const block_tq3_4s * src = x + row * blocks_per_row + 2 * col;
+    // Write into a row-padded layout so K-padding blocks (read by the FP4 MMA up
+    // to the 512-aligned K) stay in bounds; they were zeroed by the caller.
+    block_nvfp4 * dst = y + row * nv_blocks_per_row_padded + col;
+
+#pragma unroll
+    for (int sub = 0; sub < QK_NVFP4 / QK_NVFP4_SUB; ++sub) {
+        const block_tq3_4s * block = src + sub / 2;
+        const int group_base = (sub % 2) * 2;
+        float vals[QK_NVFP4_SUB];
+        float amax = 0.0f;
+
+#pragma unroll
+        for (int group = 0; group < 2; ++group) {
+            const int g = group_base + group;
+            const uint8_t * qp = block->qs + 3 * g;
+            const uint32_t packed = (uint32_t) qp[0] | ((uint32_t) qp[1] << 8) | ((uint32_t) qp[2] << 16);
+            const float d = decode_tq3_scale(block->d[g]);
+#pragma unroll
+            for (int j = 0; j < 8; ++j) {
+                const float value = tq3_centroids[(packed >> (3 * j)) & 7] * d;
+                vals[8 * group + j] = value;
+                amax = fmaxf(amax, fabsf(value));
+            }
+        }
+
+        const int first_scale_code = (int) ggml_cuda_fp32_to_ue4m3(amax / 6.0f);
+        uint8_t scale_code = 0;
+        uint32_t q0 = 0;
+        uint32_t q1 = 0;
+
+        if (first_scale_code >= 0 && first_scale_code <= 0x7e) {
+            scale_code = (uint8_t) first_scale_code;
+            const float test_scale = ggml_cuda_ue4m3_to_fp32(scale_code);
+            const float inv_scale = test_scale > 0.0f ? 0.5f / test_scale : 0.0f;
+#if CUDART_VERSION >= 12080
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 2; j += 2) {
+                const __nv_fp4x4_e2m1 packed(make_float4(
+                    vals[j + 0] * inv_scale, vals[j + 8] * inv_scale,
+                    vals[j + 1] * inv_scale, vals[j + 9] * inv_scale));
+                const char2 q = *reinterpret_cast<const char2 *>(&packed);
+                const uint32_t pair = (uint8_t) q.x | ((uint32_t) (uint8_t) q.y << 8);
+                if (j < 4) {
+                    q0 |= pair << (8 * j);
+                } else {
+                    q1 |= pair << (8 * (j - 4));
+                }
+            }
+#else
+#pragma unroll
+            for (int j = 0; j < QK_NVFP4_SUB / 4; ++j) {
+                q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 0],  inv_scale) << (8 * j);
+                q0 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 8],  inv_scale) << (8 * j + 4);
+                q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 4],  inv_scale) << (8 * j);
+                q1 |= (uint32_t) ggml_cuda_float_to_fp4_e2m1(vals[j + 12], inv_scale) << (8 * j + 4);
+            }
+#endif // CUDART_VERSION >= 12080
+        }
+
+        uint32_t * dst_qs = reinterpret_cast<uint32_t *>(dst->qs);
+        dst_qs[2 * sub + 0] = q0;
+        dst_qs[2 * sub + 1] = q1;
+        dst->d[sub] = scale_code;
+    }
+#else
+    NO_DEVICE_CODE;
+#endif // defined(BLACKWELL_MMA_AVAILABLE)
 }
 
 // quantize values in the format mxfp4 is stored which is interleaved nibbles
@@ -568,8 +822,12 @@ void quantize_row_q8_1_cuda(
     const dim3 num_blocks(block_num_x, ne1, ne2*ne3);
     const dim3 block_size(CUDA_QUANTIZE_BLOCK_SIZE, 1, 1);
     const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(num_blocks, block_size, 0, stream);
-    ggml_cuda_kernel_launch(quantize_q8_1, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
-    GGML_UNUSED(type_src0);
+    if (type_src0 == GGML_TYPE_TQ3_4S) {
+        // TQ3_4S activations get the Walsh-Hadamard rotation fused into quantization.
+        ggml_cuda_kernel_launch(quantize_q8_1<true>, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
+    } else {
+        ggml_cuda_kernel_launch(quantize_q8_1<false>, launch_params, x, vy, ne00, s01, s02, s03, ne0, ne1, ne2_fastdiv);
+    }
 }
 
 void quantize_mmq_q8_1_cuda(
@@ -694,4 +952,26 @@ void quantize_mmq_fp4_cuda(
 
         quantize_mmq_mxfp4<false><<<num_blocks, block_size, 0, stream>>>(x, ids, vy, ne00, s01, s02, s03, ne0, ne1, ne2, /*n_expert_used=*/0);
     }
+}
+
+void quantize_tq3_4s_to_nvfp4_cuda(const void * x, void * y, const int64_t ne00, const int64_t nrows, cudaStream_t stream) {
+    GGML_ASSERT(ne00 % QK_NVFP4 == 0);
+    GGML_ASSERT(nrows > 0);
+
+    const int64_t blocks_per_row = ne00 / QK_TQ3_0;
+    const int64_t nv_blocks_per_row = ne00 / QK_NVFP4;
+    // K is padded to MATRIX_ROW_PADDING for the FP4 MMA; the converted weight must
+    // be wide enough or the kernel reads past each row (crash on non-512-aligned
+    // ne00, e.g. Gemma K=2816). For 512-aligned ne00 (Qwen) this is a no-op.
+    const int64_t nv_blocks_per_row_padded = GGML_PAD(ne00, MATRIX_ROW_PADDING) / QK_NVFP4;
+    const int64_t nblocks = nv_blocks_per_row * nrows;
+
+    if (nv_blocks_per_row_padded != nv_blocks_per_row) {
+        CUDA_CHECK(cudaMemsetAsync(y, 0, (size_t) nrows * nv_blocks_per_row_padded * sizeof(block_nvfp4), stream));
+    }
+
+    constexpr int block_size = 256;
+    const dim3 num_blocks((nblocks + block_size - 1) / block_size, 1, 1);
+    quantize_tq3_4s_to_nvfp4<<<num_blocks, block_size, 0, stream>>>(
+        (const block_tq3_4s *) x, (block_nvfp4 *) y, blocks_per_row, nv_blocks_per_row, nv_blocks_per_row_padded, nrows);
 }

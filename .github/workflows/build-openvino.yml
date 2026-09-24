@@ -37,6 +37,7 @@ env:
 
 jobs:
   ubuntu-24-openvino:
+    if: github.repository == 'ggml-org/llama.cpp'
     runs-on: [self-hosted, Linux, Intel, OpenVINO]
 
     env:

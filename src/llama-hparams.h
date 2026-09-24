@@ -59,6 +59,8 @@ struct llama_hparams {
     bool use_par_res;
     bool swin_norm;
     bool norm_before_residual = false;
+    bool trunk_only_nomtp = false;
+    bool mtp_only = false;
     bool norm_before_fc       = false;
 
     uint32_t n_ctx_train; // context size the model was trained on
@@ -197,12 +199,12 @@ struct llama_hparams {
 
     // for Kimi Linear KDA
     uint32_t n_embd_head_kda = 0;
+    float    kda_gate_lower_bound = -INFINITY;
     bool     kda_safe_gate = false;
 
     // kimi-k3
     uint32_t n_expert_latent      = 0;      // routed_expert_hidden_size (0 = experts run at n_embd)
     uint32_t attn_res_block_size  = 0;      // 0 = no cross-layer attention residuals
-    float    kda_gate_lower_bound = -INFINITY;
     float    situ_beta            = 1.0f;
     float    situ_linear_beta     = 0.0f;   // 0 = no linear-beta transform on the up branch
 
@@ -285,6 +287,8 @@ struct llama_hparams {
     // MSA
     uint32_t indexer_block_size  = 0;
     uint32_t indexer_local_blocks = 0;
+    // MSA stores its indexer keys in the main KV cache (k_idx tensors);
+    bool indexer_kv = false;
 
     // Indexer is "full" (1) or "shared" (0)
     // Shared indexers reuse top-k from previous full layer
@@ -442,6 +446,9 @@ struct llama_hparams {
     // return the maximum n_embd_k_gqa/n_embd_v_gqa across all layers
     uint32_t n_embd_k_gqa_max() const;
     uint32_t n_embd_v_gqa_max() const;
+
+    // dimension of the single-head MSA indexer key stream
+    uint32_t n_embd_k_idx(uint32_t il = 0) const;
 
     // dimension of the rolling state embeddings
     // corresponds to Mamba's conv_states size or RWKV's token_shift states size

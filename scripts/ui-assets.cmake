@@ -371,15 +371,15 @@ function(npm_build out_var)
     endif()
 
     if(need_install)
-        message(STATUS "UI: running npm ci")
+        message(STATUS "UI: running npm install")
         execute_process(
-            COMMAND ${NPM_EXECUTABLE} ci
+            COMMAND ${NPM_EXECUTABLE} install
             WORKING_DIRECTORY "${WORK_DIR}"
             RESULT_VARIABLE rc
             ERROR_VARIABLE  err
         )
         if(NOT rc EQUAL 0)
-            message(STATUS "UI: npm ci failed (${rc})")
+            message(STATUS "UI: npm install failed (${rc})")
             message(STATUS "  stderr: ${err}")
             return()
         endif()

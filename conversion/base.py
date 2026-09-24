@@ -669,6 +669,8 @@ class ModelBase:
 
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         new_name = self.map_tensor_name(name)
+        if self.model_arch == gguf.MODEL_ARCH.DFLASH and new_name in ("selector_predecessor", "selector_successor"):
+            new_name += ".weight"
 
         # Handle gate/up expert tensor fusion if enabled
         if self.fuse_gate_up_exps and bid is not None:

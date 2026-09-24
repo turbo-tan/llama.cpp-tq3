@@ -116,11 +116,6 @@ static __global__ void soft_max_f32(
         vals[col] = val;
     }
 
-    if (block_size > WARP_SIZE) {
-        // sync is needed as we reuse buf_iw across block_reduce invocations, see #26385
-        // for block_size <= WARP_SIZE, block_reduce does not access buf_iw
-        __syncthreads();
-    }
     // find the sum of exps in the block
     tmp = block_reduce<block_reduce_method::SUM, block_size_template>(tmp, buf_iw);
 
@@ -147,8 +142,6 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
                                                                 float * __restrict__ dst,
                                                                 float * __restrict__ tmp_maxs,
                                                                 float * __restrict__ tmp_sums,
-                                                                float * shared_vals_max,
-                                                                float * shared_vals_sum,
                                                                 const soft_max_params p) {
     namespace cg = cooperative_groups;
 
@@ -161,6 +154,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     float     local_vals[n_elem_per_thread] = { -INFINITY, -INFINITY, -INFINITY, -INFINITY };
     float     local_max                     = -INFINITY;
     const int step_size                     = gridDim.x * blockDim.x;
+    __shared__ float shared_vals[32];
 
     // Compute thread-local max
     for (int col = col_start; col < p.ncols;) {
@@ -177,7 +171,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     }
 
     // Compute CTA-level max
-    local_max = block_reduce<block_reduce_method::MAX>(local_max, shared_vals_max);
+    local_max = block_reduce<block_reduce_method::MAX>(local_max, shared_vals);
 
     // Store CTA-level max to GMEM
     if (tid == 0) {
@@ -192,7 +186,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     } else {
         local_max = -INFINITY;
     }
-    local_max = block_reduce<block_reduce_method::MAX>(local_max, shared_vals_max);
+    local_max = block_reduce<block_reduce_method::MAX>(local_max, shared_vals);
 
     // Compute softmax dividends, accumulate divisor
     float tmp_expf = 0.0f;
@@ -215,7 +209,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     }
 
     // Reduce divisor within CTA
-    tmp_expf = block_reduce<block_reduce_method::SUM>(tmp_expf, shared_vals_sum);
+    tmp_expf = block_reduce<block_reduce_method::SUM>(tmp_expf, shared_vals);
 
     // Store CTA-level sum to GMEM
     if (tid == 0) {
@@ -229,7 +223,7 @@ static __device__ void soft_max_f32_parallelize_cols_single_row(const float * __
     } else {
         tmp_expf = 0.0f;
     }
-    tmp_expf = block_reduce<block_reduce_method::SUM>(tmp_expf, shared_vals_sum);
+    tmp_expf = block_reduce<block_reduce_method::SUM>(tmp_expf, shared_vals);
 
     // Divide dividend by global sum + store data
     for (int col = col_start; col < p.ncols;) {
@@ -316,11 +310,9 @@ __launch_bounds__(8*WARP_SIZE, 1) static __global__ void soft_max_f32_paralleliz
 // https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/device-callable-apis.html#grid-synchronization
 // https://docs.nvidia.com/cuda/cuda-programming-guide/05-appendices/device-callable-apis.html#class-cluster-group
 {
-    __shared__ float shared_vals[2][32];
-
     for (int rowx = 0; rowx < p.ne01 * p.ne02 * p.ne03; rowx++) {
         soft_max_f32_parallelize_cols_single_row(x + int64_t(rowx) * p.ncols, dst + int64_t(rowx) * p.ncols, tmp_maxs,
-                                                 tmp_sums, shared_vals[0], shared_vals[1], p);
+                                                 tmp_sums, p);
     }
 }
 

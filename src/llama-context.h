@@ -6,7 +6,9 @@
 #include "llama-graph.h"
 #include "llama-adapter.h"
 #include "llama-impl.h"
+#include "llama-mtp.h"
 #include "llama-memory.h"
+#include "llama-mtp-vocab.h"
 
 #include "ggml-cpp.h"
 #include "ggml-opt.h"
@@ -88,20 +90,31 @@ struct llama_context {
 
     float * get_embeddings_nextn();
     float * get_embeddings_nextn_ith(int32_t i);
+    ggml_tensor * get_t_h_pre_norm() const;
+    ggml_tensor * get_t_mtp_out() const;
+    void set_mtp(llama_context * ctx_mtp_in);
+    llama_context * get_mtp() const { return mtp.ctx_mtp; }
 
     float * get_embeddings_layer_inp(uint32_t lid);
 
     llama_token * get_sampled_tokens() const;
     llama_token   get_sampled_token_ith(int32_t idx);
+    llama_token   get_sampled_token_ith_no_sync(int32_t idx);
 
     float * get_sampled_logits_ith(int32_t idx);
     size_t  get_sampled_logits_count(int32_t idx);
+    float * get_sampled_logits_ith_no_sync(int32_t idx);
+    size_t  get_sampled_logits_count_no_sync(int32_t idx);
 
     float * get_sampled_probs_ith(int32_t idx);
     size_t  get_sampled_probs_count(int32_t idx);
+    float * get_sampled_probs_ith_no_sync(int32_t idx);
+    size_t  get_sampled_probs_count_no_sync(int32_t idx);
 
     const llama_token * get_sampled_candidates_ith(int32_t idx);
     size_t get_sampled_candidates_count(int32_t idx);
+    const llama_token * get_sampled_candidates_ith_no_sync(int32_t idx);
+    size_t get_sampled_candidates_count_no_sync(int32_t idx);
 
     void attach_threadpool(
             ggml_threadpool_t threadpool,
@@ -232,6 +245,8 @@ private:
 
     void output_reorder();
 
+    void init_draft_vocab(const char * path);
+
     // map the output row index `i` to batch index
     int64_t output_resolve_row(int32_t i) const;
 
@@ -273,6 +288,14 @@ private:
     // that differs from the layer it belongs to (usually due to missing backend support)
     void resolve_fused_ops(const llama_memory_context_i * mctx, uint32_t n_seqs);
 
+    // note: takes the whole ubatch because the MTP carryover state is per
+    //       sequence -- tokens/positions alone cannot say which sequence a row
+    //       belongs to, which is what broke under -np > 1 (issue #78).
+    void handle_mtp_for_ubatch(
+            const llama_ubatch & ubatch,
+            struct ggml_tensor * t_h_pre_norm,
+            bool                 decode_mtp);
+
     // TODO: read/write lora adapters and cvec
     size_t state_write_data(llama_io_write_i & io);
     size_t state_read_data (llama_io_read_i  & io);
@@ -292,6 +315,7 @@ private:
     llama_adapter_loras_ptr loras;
 
     llama_cross cross; // TODO: tmp for handling cross-attention - need something better probably
+    llama_mtp mtp;
 
     llama_memory_ptr memory;
 
@@ -329,6 +353,12 @@ private:
     };
 
     sampling_info sampling;
+
+    struct draft_vocab_info {
+        ggml_context_ptr ctx;
+        ggml_backend_buffer_ptr buf;
+        ggml_tensor * ids = nullptr;
+    } draft_vocab;
 
     // sequence embeddings output (map of [n_embd] vectors)
     // populated only when pooling_type != LLAMA_POOLING_TYPE_NONE

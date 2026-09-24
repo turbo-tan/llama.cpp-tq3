@@ -1381,6 +1381,16 @@ common_init_result::common_init_result(common_params & params, bool model_only) 
                 params.sampling.logit_bias_eog.begin(), params.sampling.logit_bias_eog.end());
     }
 
+    //if (params.sampling.penalty_last_n == -1) {
+    //    LOG_TRC("%s: setting penalty_last_n to ctx_size = %d\n", __func__, llama_n_ctx(lctx));
+    //    params.sampling.penalty_last_n = llama_n_ctx(lctx);
+    //}
+
+    //if (params.sampling.dry_penalty_last_n == -1) {
+    //    LOG_TRC("%s: setting dry_penalty_last_n to ctx_size = %d\n", __func__, llama_n_ctx(lctx));
+    //    params.sampling.dry_penalty_last_n = llama_n_ctx(lctx);
+    //}
+
     // init the backend samplers as part of the context creation
     pimpl->samplers.resize(cparams.n_seq_max);
     pimpl->samplers_seq_config.resize(cparams.n_seq_max);
@@ -1552,18 +1562,18 @@ common_init_result_ptr common_init_from_params(common_params & params, bool mode
 common_init_result::~common_init_result() = default;
 
 std::string common_get_model_endpoint() {
-    std::string endpoint = common_get_env("MODEL_ENDPOINT");
-    if (endpoint.empty()) {
-        // the HF_ENDPOINT variable is respected for backward compatibility
-        endpoint = common_get_env("HF_ENDPOINT");
+    const char * model_endpoint_env = getenv("MODEL_ENDPOINT");
+    // We still respect the use of environment-variable "HF_ENDPOINT" for backward-compatibility.
+    const char * hf_endpoint_env = getenv("HF_ENDPOINT");
+    const char * endpoint_env = model_endpoint_env ? model_endpoint_env : hf_endpoint_env;
+    std::string model_endpoint = "https://huggingface.co/";
+    if (endpoint_env) {
+        model_endpoint = endpoint_env;
+        if (model_endpoint.back() != '/') {
+            model_endpoint += '/';
+        }
     }
-    if (endpoint.empty()) {
-        return "https://huggingface.co/";
-    }
-    if (endpoint.back() != '/') {
-        endpoint += '/';
-    }
-    return endpoint;
+    return model_endpoint;
 }
 
 char * common_get_model_or_exit(int argc, char * argv[]) {
@@ -1725,6 +1735,8 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.n_outputs_max_per_seq = std::max(params.n_outputs_max_per_seq, 0);
     cparams.n_batch           = params.n_batch;
     cparams.n_ubatch          = params.n_ubatch;
+    cparams.n_moe_cache_slots   = params.n_moe_cache_slots;
+    cparams.n_moe_cache_inserts = params.n_moe_cache_inserts;
     cparams.n_threads         = params.cpuparams.n_threads;
     cparams.n_threads_batch   = params.cpuparams_batch.n_threads == -1 ?
                                 params.cpuparams.n_threads : params.cpuparams_batch.n_threads;
@@ -1747,6 +1759,9 @@ struct llama_context_params common_context_params_to_llama(const common_params &
     cparams.op_offload        = !params.no_op_offload;
     cparams.swa_full          = params.swa_full;
     cparams.kv_unified        = params.kv_unified;
+
+    cparams.draft_vocab_map = params.speculative.draft.vocab_map.empty()
+            ? nullptr : params.speculative.draft.vocab_map.c_str();
 
     cparams.type_k = params.cache_type_k;
     cparams.type_v = params.cache_type_v;

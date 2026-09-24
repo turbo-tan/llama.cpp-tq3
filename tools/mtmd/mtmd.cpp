@@ -1250,7 +1250,41 @@ struct mtmd_tokenizer {
             GGML_ASSERT(n_merge_frames <= 2 && "we only support merging maximum 2 images for now; open an issue if this model supports merging more");
         }
 
-        auto merged_bitmaps = mtmd_group_mergeable_bitmaps(parts, n_merge_frames);
+        // Build merged_bitmaps: each entry is a group of 1 or 2 bitmaps.
+        // For consecutive mergeable bitmap parts, merge them and collapse the second part out of this->parts.
+        std::vector<std::vector<const mtmd_bitmap *>> merged_bitmaps;
+        if (n_merge_frames > 1) {
+            for (size_t i = 0; i < parts.size(); ++i) {
+                if (parts[i].bitmap == nullptr) {
+                    continue;
+                }
+                if (i + 1 < parts.size() && parts[i + 1].bitmap != nullptr) {
+                    const mtmd_bitmap * bm_a = parts[i].bitmap;
+                    const mtmd_bitmap * bm_b = parts[i + 1].bitmap;
+                    // Temporal merge is only valid for frames of the SAME video stream.
+                    // Video frames (produced by the lazy video reader) carry no id, while
+                    // standalone images loaded via mtmd_helper always get a non-empty id
+                    // (FNV hash of the file). Merging two independent same-size images
+                    // collapses the second into the first at identical decoder positions,
+                    // making the second image invisible to the model (FAULT-005).
+                    if (bm_a->can_merge_with(*bm_b) && bm_a->id.empty() && bm_b->id.empty()) {
+                        LOG_DBG("%s: merging 2 frames at part index %zu and %zu\n", __func__, i, i + 1);
+                        merged_bitmaps.push_back({bm_a, bm_b});
+                        parts.erase(parts.begin() + i + 1); // collapse the second bitmap part
+                        continue;
+                    }
+                }
+                LOG_DBG("%s: no merging for part index %zu\n", __func__, i);
+                merged_bitmaps.push_back({parts[i].bitmap});
+            }
+        } else {
+            for (const auto & p : parts) {
+                if (p.bitmap != nullptr) {
+                    merged_bitmaps.push_back({p.bitmap});
+                }
+            }
+        }
+
 
         size_t i_bm = 0;
         for (const auto & p : parts) {

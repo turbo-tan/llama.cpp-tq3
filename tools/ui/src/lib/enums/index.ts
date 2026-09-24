@@ -86,12 +86,6 @@ export {
 
 export { KeyboardKey } from './keyboard.enums';
 
-export {
-	BuiltInTool,
-	GlobSearchType,
-	ToolSource,
-	ToolPermissionDecision,
-	ToolResponseField
-} from './tools.enums';
+export { BuiltInTool, ToolSource, ToolPermissionDecision, ToolResponseField } from './tools.enums';
 
 export { SplashOrientation } from './splash.enums';

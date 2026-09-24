@@ -26,11 +26,13 @@ class llama_kv_cache_context;
 class llama_kv_cache_dsa_context;
 class llama_kv_cache_dsa_iswa_context;
 class llama_kv_cache_msa_context;
+
 class llama_kv_cache_dsv4_raw_context;
 class llama_kv_cache_dsv4_context;
 class llama_kv_cache_iswa_context;
 class llama_memory_recurrent_context;
 class llama_memory_hybrid_context;
+class llama_memory_hybrid_idx_context;
 class llama_memory_hybrid_iswa_context;
 
 // certain models (typically multi-modal) can produce different types of graphs
@@ -481,6 +483,7 @@ public:
     const llama_kv_cache_msa_context * mctx_msa;
 };
 
+
 class llm_graph_input_attn_kv_iswa : public llm_graph_input_i {
 public:
     llm_graph_input_attn_kv_iswa(
@@ -714,6 +717,36 @@ public:
     const llama_memory_hybrid_context * mctx;
 };
 
+// same as llm_graph_input_mem_hybrid_k, for the memory container that also carries an
+// indexer cache. The indexer's own inputs are arch-specific and live in the model file.
+class llm_graph_input_mem_hybrid_idx : public llm_graph_input_i {
+public:
+    llm_graph_input_mem_hybrid_idx(
+            const llama_cparams & cparams,
+            std::unique_ptr<llm_graph_input_attn_k> inp_attn,
+            std::unique_ptr<llm_graph_input_rs>     inp_rs,
+            const llama_memory_hybrid_idx_context * mctx) :
+        inp_attn(std::move(inp_attn)),
+        inp_rs(std::move(inp_rs)),
+        cparams(cparams),
+        mctx(mctx) { }
+    virtual ~llm_graph_input_mem_hybrid_idx() = default;
+
+    void set_input(const llama_ubatch * ubatch) override;
+
+    bool can_reuse(const llm_graph_params & params) override;
+
+    std::unique_ptr<llm_graph_input_attn_k> inp_attn;
+    std::unique_ptr<llm_graph_input_rs>     inp_rs;
+
+    llm_graph_input_attn_k * get_attn() const { return inp_attn.get(); }
+    llm_graph_input_rs     * get_recr() const { return inp_rs.get(); }
+
+    const llama_cparams cparams;
+
+    const llama_memory_hybrid_idx_context * mctx;
+};
+
 class llm_graph_input_mem_hybrid_iswa : public llm_graph_input_i {
 public:
     llm_graph_input_mem_hybrid_iswa(
@@ -788,6 +821,8 @@ struct llm_graph_params {
     const llama_cross            * cross;
 
     std::map<llama_seq_id, llama_sampler *> samplers;
+
+    ggml_tensor * draft_vocab_ids = nullptr;
 
     static bool samplers_equal(
           const std::map<llama_seq_id, llama_sampler *> & lhs,
@@ -900,7 +935,9 @@ public:
     ggml_tensor * get_logits()      const { return t_logits; }
     ggml_tensor * get_embd()        const { return t_embd; }
     ggml_tensor * get_embd_pooled() const { return t_embd_pooled; }
+    ggml_tensor * get_h_pre_norm()  const { return t_h_pre_norm; }
     ggml_tensor * get_h_nextn()     const { return t_h_nextn; }
+    ggml_tensor * get_mtp_out()     const { return t_mtp_out; }
 
     ggml_tensor * get_layer_inp(int il) const { return t_layer_inp[il]; }
 
@@ -933,9 +970,12 @@ public:
     ggml_tensor * t_inp_tokens  = nullptr;
     ggml_tensor * t_inp_embd    = nullptr; // [n_embd_inp, n_tokens]
     ggml_tensor * t_logits      = nullptr;
+    ggml_tensor * t_logits_ids  = nullptr;
     ggml_tensor * t_embd        = nullptr;
     ggml_tensor * t_embd_pooled = nullptr;
+    ggml_tensor * t_h_pre_norm  = nullptr;
     ggml_tensor * t_h_nextn     = nullptr; // [n_embd, n_outputs] hidden state before final output norm
+    ggml_tensor * t_mtp_out     = nullptr;
 
     std::vector<ggml_tensor *> t_layer_inp;
 
@@ -1029,6 +1069,8 @@ struct llm_graph_context {
 
     std::map<llama_seq_id, llama_sampler *> samplers;
 
+    ggml_tensor * draft_vocab_ids = nullptr;
+
     const llm_graph_cb & cb_func;
 
     llm_graph_result * res;
@@ -1061,6 +1103,11 @@ struct llm_graph_context {
               ggml_tensor * cur, // ggml_tensor * b
               ggml_tensor * ids,
               ggml_tensor * w_s = nullptr) const;
+
+    ggml_tensor * build_draft_vocab_logits(
+              ggml_tensor * head_w,
+              ggml_tensor * head_s,
+              ggml_tensor * cur) const;
 
     ggml_tensor * build_norm(
              ggml_tensor * cur,
@@ -1237,11 +1284,33 @@ struct llm_graph_context {
                   float   kq_scale,
                     int   il) const;
 
+    // unmask only the selected cells of the KQ mask (sparse attention)
+    //   top_k: I32 [n_top_k, n_batch/n_stream, 1, n_stream], indices into the cache cells
+    ggml_tensor * build_attn_mask_top_k(
+            ggml_tensor * kq_mask,
+            ggml_tensor * top_k) const;
+
+    ggml_tensor * build_attn(
+            llm_graph_input_attn_k * inp,
+            ggml_tensor * wo,
+            ggml_tensor * wo_b,
+            ggml_tensor * wo_s,
+            ggml_tensor * q_cur, // [n_embd_head_q, n_head_q, n_tokens]
+            ggml_tensor * k_cur, // [n_embd_head_k, n_head_k, n_tokens]
+            ggml_tensor * v_cur, // [n_embd_head_v, n_head_v, n_tokens]
+            ggml_tensor * kq_b,
+            ggml_tensor * sinks, // [n_head_q]
+            ggml_tensor * v_mla, // [n_embd_head_v_mla, n_embd_head_v, n_head_v]
+            ggml_tensor * top_k, // [n_top_k, n_batch/n_stream, 1, n_stream], null = dense
+                  float   kq_scale,
+                    int   il) const;
+
     llm_graph_input_attn_k_dsa * build_attn_inp_k_dsa() const;
 
     llm_graph_input_attn_k_dsa_iswa * build_attn_inp_k_dsa_iswa() const;
 
     llm_graph_input_attn_kv_msa * build_attn_inp_kv_msa(bool msa_enabled) const;
+
 
     ggml_tensor * build_attn(
             llm_graph_input_attn_k_dsa * inp,
@@ -1356,6 +1425,7 @@ struct llm_graph_context {
 
     llm_graph_input_mem_hybrid * build_inp_mem_hybrid() const;
     llm_graph_input_mem_hybrid_k * build_inp_mem_hybrid_k() const;
+    llm_graph_input_mem_hybrid_idx * build_inp_mem_hybrid_idx() const;
 
     llm_graph_input_mem_hybrid_iswa * build_inp_mem_hybrid_iswa() const;
 
@@ -1375,6 +1445,8 @@ struct llm_graph_context {
     //
 
     void build_sampling() const;
+
+    virtual void build_post_sampling() const {}
 
     //
     // dense (out)

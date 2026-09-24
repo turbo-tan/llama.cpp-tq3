@@ -116,6 +116,24 @@ void quantize_row_tq2_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, 
     quantize_row_tq2_0_ref(x, y, k);
 }
 
+void quantize_row_tq3_0(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    block_tq3_0 * GGML_RESTRICT y = vy;
+    quantize_row_tq3_0_ref(x, y, k);
+}
+
+void quantize_row_tq3_1s(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    block_tq3_1s * GGML_RESTRICT y = vy;
+    quantize_row_tq3_1s_ref(x, y, k);
+}
+
+void quantize_row_tq3_4s(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t k) {
+    assert(k % QK_TQ3_0 == 0);
+    block_tq3_4s * GGML_RESTRICT y = vy;
+    quantize_row_tq3_4s_ref(x, y, k);
+}
+
 //===================================== Q8_K ==============================================
 
 void quantize_row_q8_K_generic(const float * GGML_RESTRICT x, void * GGML_RESTRICT y, int64_t k) {
@@ -557,6 +575,111 @@ void ggml_vec_dot_tq2_0_q8_K_generic(int n, float * GGML_RESTRICT s, size_t bs, 
         const float d = y[i].d * GGML_CPU_FP16_TO_FP32(x[i].d);
 
         sumf += (float) sumi * d;
+    }
+
+    *s = sumf;
+}
+
+void ggml_vec_dot_tq3_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(n % QK_TQ3_0 == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    const block_tq3_0 * GGML_RESTRICT x = vx;
+    const block_q8_0  * GGML_RESTRICT y = vy;
+
+    float sumf = 0.0f;
+    float tmp[QK_TQ3_0];
+    const int nb = n / QK_TQ3_0;
+
+    for (int i = 0; i < nb; ++i) {
+        dequantize_row_tq3_0(x + i, tmp, QK_TQ3_0);
+        const float dy = GGML_CPU_FP16_TO_FP32(y[i].d);
+        for (int j = 0; j < QK_TQ3_0; ++j) {
+            sumf += tmp[j] * (float) y[i].qs[j] * dy;
+        }
+    }
+
+    *s = sumf;
+}
+
+void ggml_vec_dot_tq3_1s_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(n % QK_TQ3_0 == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    const block_tq3_1s * GGML_RESTRICT x = vx;
+    const block_q8_0   * GGML_RESTRICT y = vy;
+
+    float sumf = 0.0f;
+    float tmp[QK_TQ3_0];
+    const int nb = n / QK_TQ3_0;
+
+    for (int i = 0; i < nb; ++i) {
+        dequantize_row_tq3_1s(x + i, tmp, QK_TQ3_0);
+        const float dy = GGML_CPU_FP16_TO_FP32(y[i].d);
+        for (int j = 0; j < QK_TQ3_0; ++j) {
+            sumf += tmp[j] * (float) y[i].qs[j] * dy;
+        }
+    }
+
+    *s = sumf;
+}
+
+void ggml_vec_dot_tq3_4s_q8_0_generic(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+    assert(n % QK_TQ3_0 == 0);
+    assert(nrc == 1);
+    UNUSED(nrc);
+    UNUSED(bx);
+    UNUSED(by);
+    UNUSED(bs);
+
+    // Rotated-domain dot: y arrives already RHT-rotated (Q8_0_RHT), so the weights'
+    // stored rotated codes can be dotted directly -- no inverse Hadamard needed.
+    const block_tq3_4s * GGML_RESTRICT x = vx;
+    const block_q8_0   * GGML_RESTRICT y = vy;
+    const float * centroids = tq3_0_centroids_f32();
+
+    float sumf = 0.0f;
+    const int nb = n / QK_TQ3_0;
+
+    for (int i = 0; i < nb; ++i) {
+        const float dy = GGML_CPU_FP16_TO_FP32(y[i].d);
+        for (int g = 0; g < 4; ++g) {
+            // E3M5 scale decode, exact via float bit assembly (no libm):
+            // scale = 2^((b>>5) - 9) * (1 + (b&31)/32)
+            float d;
+            const uint8_t b = x[i].d[g];
+            if (b == 0) {
+                d = 0.0f;
+            } else {
+                uint32_t bits = ((uint32_t)((b >> 5) - 9 + 127) << 23) | ((uint32_t)(b & 31) << 18);
+                memcpy(&d, &bits, sizeof(d));
+            }
+            d *= dy;
+            const uint8_t * qp = x[i].qs + g * 3;
+            const int8_t * q8 = y[i].qs + g * 8;
+            uint8_t idx[8];
+            idx[0] =  qp[0]       & 7;
+            idx[1] = (qp[0] >> 3) & 7;
+            idx[2] = ((qp[0] >> 6) | (qp[1] << 2)) & 7;
+            idx[3] = (qp[1] >> 1) & 7;
+            idx[4] = (qp[1] >> 4) & 7;
+            idx[5] = ((qp[1] >> 7) | (qp[2] << 1)) & 7;
+            idx[6] = (qp[2] >> 2) & 7;
+            idx[7] = (qp[2] >> 5) & 7;
+            float sum_g = 0.0f;
+            for (int j = 0; j < 8; ++j) {
+                sum_g += (float) q8[j] * centroids[idx[j]];
+            }
+            sumf += d * sum_g;
+        }
     }
 
     *s = sumf;

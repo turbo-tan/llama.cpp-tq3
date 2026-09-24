@@ -39,6 +39,7 @@ uint32_t llama_sampler_backend_n_nodes(const llama_sampler * sampler);
 void llama_sampler_backend_begin(llama_sampler * sampler);
 
 struct llama_sampler * llama_sampler_init_dry_testing(
+        int32_t context_size,
         float   dry_multiplier,
         float   dry_base,
         int32_t dry_allowed_length,

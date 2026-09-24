@@ -47,7 +47,6 @@ struct split_params {
     std::string output;
     bool no_tensor_first_split = false;
     bool dry_run = false;
-    bool delete_splits = false;
 };
 
 static void split_print_usage(const char * executable) {
@@ -66,7 +65,6 @@ static void split_print_usage(const char * executable) {
     printf("  --split-max-size N(M|G) max size per split\n");
     printf("  --no-tensor-first-split do not add tensors to the first split (disabled by default)\n");
     printf("  --dry-run               only print out a split plan and exit, without writing any new files\n");
-    printf("  --delete-splits         delete the split files during merge to free up disk space WARNING: this option is unsafe and will leave you in an unrecoverable state if something fails during the merge\n");
     printf("\n");
 }
 
@@ -149,9 +147,6 @@ static void split_params_parse_ex(int argc, const char ** argv, split_params & p
             }
             params.mode = MODE_SIZE;
             params.n_bytes_split = split_str_to_n_bytes(argv[arg_idx]);
-        } else if (arg == "--delete-splits") {
-            arg_found = true;
-            params.delete_splits = true;
         }
 
         if (!arg_found) {
@@ -514,7 +509,6 @@ static void gguf_merge(const split_params & split_params) {
     }
 
     // Write tensors data
-    bool merge_error = false;
     for (int i_split = 0; i_split < n_split; i_split++) {
         llama_split_path(split_path, sizeof(split_path), split_prefix, i_split, n_split);
         std::ifstream f_input(split_path, std::ios::binary);
@@ -560,16 +554,6 @@ static void gguf_merge(const split_params & split_params) {
         ggml_free(ctx_meta);
         f_input.close();
         fprintf(stderr, "\033[3Ddone\n");
-
-        if (!split_params.dry_run && split_params.delete_splits) {
-            int delete_result = std::remove(split_path);
-            if (delete_result != 0) {
-                merge_error = true;
-                fprintf(stderr, "error: failed to delete %s\n", split_path);
-            } else {
-                fprintf(stderr, "%s: deleted file %s\n", __func__, split_path);
-            }
-        }
     }
 
     if (!split_params.dry_run) {
@@ -584,10 +568,6 @@ static void gguf_merge(const split_params & split_params) {
 
     fprintf(stderr, "%s: %s merged from %d split with %d tensors.\n",
             __func__, split_params.output.c_str(), n_split, total_tensors);
-
-    if (merge_error) {
-        exit(EXIT_FAILURE);
-    }
 }
 
 int main(int argc, const char ** argv) {

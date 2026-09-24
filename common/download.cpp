@@ -973,8 +973,7 @@ std::vector<common_cached_model_info> common_list_cached_models() {
             split.prefix.find("mmproj")  != std::string::npos ||
             split.prefix.find("mtp-")    != std::string::npos ||
             split.prefix.find("eagle3-") != std::string::npos ||
-            split.prefix.find("dflash-") != std::string::npos ||
-            split.prefix.find("dspark-") != std::string::npos) {
+            split.prefix.find("dflash-") != std::string::npos) {
             continue;
         }
         if (seen.insert(f.repo_id + ":" + split.tag).second) {

@@ -386,6 +386,14 @@ public:
         return seq_pos[seq_id].rbegin()->first;
     }
 
+    int seq_pos_count(llama_seq_id seq_id, llama_pos p) const {
+        assert(seq_id >= 0 && seq_id < LLAMA_MAX_SEQ);
+        const auto & sp = seq_pos[seq_id];
+        auto lo = sp.lower_bound({ p, 0 });
+        auto hi = sp.upper_bound({ p, std::numeric_limits<uint32_t>::max() });
+        return (int) std::distance(lo, hi);
+    }
+
     // note: call only if the cell is not empty
     llama_pos pos_get(uint32_t i) const {
         assert(i < pos.size());

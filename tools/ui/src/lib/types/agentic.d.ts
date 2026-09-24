@@ -124,8 +124,7 @@ export interface AgenticFlowCallbacks {
 	createToolResultMessage?: (
 		toolCallId: string,
 		content: string,
-		extras?: DatabaseMessageExtra[],
-		toolCwd?: string
+		extras?: DatabaseMessageExtra[]
 	) => Promise<DatabaseMessage>;
 	/** Update an already-created tool result message. Used while a streaming
 	 *  tool (e.g. exec_shell_command) accumulates output chunks before its

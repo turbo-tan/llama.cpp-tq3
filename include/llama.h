@@ -153,6 +153,11 @@ extern "C" {
         //LLAMA_FTYPE_MOSTLY_Q4_0_8_8      = 35, // removed from gguf files, use Q4_0 and runtime repack
         LLAMA_FTYPE_MOSTLY_TQ1_0         = 36, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_TQ2_0         = 37, // except 1d tensors
+        LLAMA_FTYPE_MOSTLY_TQ3_0         = 200, // except 1d tensors
+        // 41-42 reserved for removed TurboQuant Q4 prototypes
+        LLAMA_FTYPE_MOSTLY_TQ3_1S        = 43, // except 1d tensors
+        // 44 reserved for removed TQ3_1S AP1 prototype
+        LLAMA_FTYPE_MOSTLY_TQ3_4S        = 45, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_MXFP4_MOE     = 38, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_NVFP4         = 39, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q1_0          = 40, // except 1d tensors
@@ -389,6 +394,10 @@ extern "C" {
         uint32_t yarn_orig_ctx;    // YaRN original context size
         float    defrag_thold;     // [DEPRECATED] defragment the KV cache if holes/size > thold, <= 0 disabled (default)
 
+        // GPU-resident LRU cache for host-offloaded MoE expert weights [EXPERIMENTAL]
+        int32_t  n_moe_cache_slots;   // cache slots per host-resident expert layer (0 = disabled)
+        int32_t  n_moe_cache_inserts; // max expert uploads per layer per decode step
+
         ggml_backend_sched_eval_callback cb_eval;
         void * cb_eval_user_data;
 
@@ -422,6 +431,9 @@ extern "C" {
         // a source/target/parent context
         // can be utilized in various ways, for example by sharing results or llama_memory between 2 contexts
         struct llama_context * ctx_other;
+
+        // Optional draft-only MTP vocabulary shortlist map. The target context ignores this.
+        const char * draft_vocab_map;
     };
 
     struct llama_model_tensor_override {
@@ -1552,17 +1564,18 @@ extern "C" {
     LLAMA_API struct llama_sampler * llama_sampler_init_penalties(
                              int32_t   n_vocab,
                              int32_t   penalty_last_n,   // last n tokens to penalize (0 = disable penalty)
-                               float   penalty_repeat,   // must be > 0.0, 1.0 = disabled
-                               float   penalty_freq,     // must be finite, 0.0 = disabled
-                               float   penalty_present); // must be finite, 0.0 = disabled
+                               float   penalty_repeat,   // 1.0 = disabled
+                               float   penalty_freq,     // 0.0 = disabled
+                               float   penalty_present); // 0.0 = disabled
 
     ///  @details DRY sampler, designed by p-e-w, as described in: https://github.com/oobabooga/text-generation-webui/pull/5677, porting Koboldcpp implementation authored by pi6am: https://github.com/LostRuins/koboldcpp/pull/982
     LLAMA_API struct llama_sampler * llama_sampler_init_dry(
             const struct llama_vocab *  vocab,
+                             int32_t    n_ctx_train,
                                float    dry_multiplier,
                                float    dry_base,
                              int32_t    dry_allowed_length,
-                             int32_t    dry_penalty_last_n, // last n tokens to penalize (0 = disable penalty)
+                             int32_t    dry_penalty_last_n,
                           const char ** seq_breakers,
                               size_t    num_breakers);
 

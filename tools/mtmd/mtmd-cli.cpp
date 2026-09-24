@@ -109,9 +109,15 @@ struct mtmd_cli_context {
     mtmd_cli_context(common_params & params) : llama_init(common_init_from_params(params)) {
         model = llama_init->model();
         lctx = llama_init->context();
+
         if (!model || !lctx) {
+            // guard before any dereference: load failure leaves model == nullptr,
+            // and llama_model_get_vocab()/common_sampler_init() would segfault
+            // (FAULT-002, fork fault registry 2026-08-07; also present upstream)
             exit(1);
         }
+
+
         vocab = llama_model_get_vocab(model);
         smpl = common_sampler_init(model, params.sampling);
         n_threads = params.cpuparams.n_threads;
@@ -126,6 +132,7 @@ struct mtmd_cli_context {
             exit(1);
         }
 
+
         if (!llama_model_chat_template(model, nullptr) && params.chat_template.empty()) {
             LOG_ERR("Model does not have chat template.\n");
             LOG_ERR("  For old llava models, you may need to use '--chat-template vicuna'\n");
@@ -138,6 +145,8 @@ struct mtmd_cli_context {
         use_jinja = params.use_jinja;
         chat_history.clear();
         LOG_INF("%s: chat template example:\n%s\n", __func__, common_chat_format_example(tmpls.get(), params.use_jinja, params.default_template_kwargs).c_str());
+
+        init_vision_context(params);
 
         // load antiprompt tokens for legacy templates
         if (params.chat_template == "vicuna") {

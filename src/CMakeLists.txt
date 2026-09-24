@@ -36,6 +36,7 @@ set(LLAMA_CORE_SOURCES
     llama-model-loader.cpp
     llama-model-saver.cpp
     llama-model.cpp
+            llama-moecache.cpp
     llama-quant.cpp
     llama-sampler.cpp
     llama-vocab.cpp
@@ -46,6 +47,7 @@ set(LLAMA_CORE_SOURCES
 add_library(llama
             ../include/llama.h
             ${LLAMA_CORE_SOURCES}
+
             unicode.h
             ${LLAMA_MODELS_SOURCES}
             )

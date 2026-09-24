@@ -211,6 +211,151 @@ static __device__ void cpy_blck_f32_iq4_nl(const char * cxi, char * cdsti) {
     quantize_f32_iq4_nl_block((const float *)cxi, (block_iq4_nl *)cdsti);
 }
 
+__constant__ static const float TQ3_0_BOUNDARIES_CUDA[7] = {
+    -1.644041f, -1.015870f, -0.493924f, -0.008701f,
+     0.477664f,  1.001362f,  1.633223f
+};
+
+static __device__ void quantize_f32_tq3_0_block(const float * __restrict__ x, block_tq3_0 * __restrict__ y) {
+    float sum_sq = 0.0f;
+    for (int i = 0; i < QK_TQ3_0; ++i) {
+        sum_sq += x[i] * x[i];
+    }
+
+    float rms = sqrtf(sum_sq / (float) QK_TQ3_0);
+    if (rms < 1e-10f) {
+        rms = 1.0f;
+    }
+    y->d = __float2half(rms);
+
+    const float inv_rms = 1.0f / rms;
+    uint8_t indices[QK_TQ3_0];
+    for (int i = 0; i < QK_TQ3_0; ++i) {
+        const float v = x[i] * inv_rms;
+        uint8_t idx = 0;
+        for (int b = 0; b < 7; ++b) {
+            if (v > TQ3_0_BOUNDARIES_CUDA[b]) {
+                idx = b + 1;
+            }
+        }
+        indices[i] = idx;
+    }
+
+    for (int g = 0; g < QK_TQ3_0 / 8; ++g) {
+        const uint8_t * idx = indices + g * 8;
+        uint8_t * qp = y->qs + g * 3;
+        qp[0] = (idx[0])      | (idx[1] << 3) | (idx[2] << 6);
+        qp[1] = (idx[2] >> 2) | (idx[3] << 1) | (idx[4] << 4) | (idx[5] << 7);
+        qp[2] = (idx[5] >> 1) | (idx[6] << 2) | (idx[7] << 5);
+    }
+}
+
+static __device__ void quantize_f32_turbo3_0_block(const float * __restrict__ x, block_turbo3_0 * __restrict__ y) {
+    static constexpr float centroids[8] = {
+        -0.190207f, -0.118786f, -0.066822f, -0.021663f,
+         0.021663f,  0.066822f,  0.118786f,  0.190207f
+    };
+
+    float sum_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO3; ++i) sum_sq += x[i] * x[i];
+    float norm = sqrtf(sum_sq);
+    if (norm < 1e-10f) norm = 1.0f;
+    const float inv_norm = 1.0f / norm;
+
+    for (int i = 0; i < (int) sizeof(y->qs); ++i) y->qs[i] = 0;
+    for (int i = 0; i < (int) sizeof(y->signs); ++i) y->signs[i] = 0;
+
+    float recon_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO3; ++i) {
+        const float v = x[i] * inv_norm;
+        uint8_t idx = 0;
+        if (v >= -0.154496f) idx = 1;
+        if (v >= -0.092804f) idx = 2;
+        if (v >= -0.044243f) idx = 3;
+        if (v >= 0.0f)       idx = 4;
+        if (v >= 0.044243f)  idx = 5;
+        if (v >= 0.092804f)  idx = 6;
+        if (v >= 0.154496f)  idx = 7;
+        const uint8_t low2 = idx & 0x3;
+        const uint8_t hi1  = (idx >> 2) & 0x1;
+        y->qs[i / 4] |= low2 << ((i % 4) * 2);
+        if (hi1) y->signs[i / 8] |= 1u << (i % 8);
+        recon_sq += centroids[idx] * centroids[idx];
+    }
+
+    const float recon_norm = sqrtf(recon_sq);
+    y->norm = __float2half((recon_norm > 1e-10f) ? norm / recon_norm : norm);
+}
+
+static __device__ void quantize_f32_turbo4_0_block(const float * __restrict__ x, block_turbo4_0 * __restrict__ y) {
+    static constexpr float centroids[16] = {
+        -0.241529f, -0.182877f, -0.143016f, -0.111036f,
+        -0.083292f, -0.058050f, -0.034299f, -0.011349f,
+         0.011349f,  0.034299f,  0.058050f,  0.083292f,
+         0.111036f,  0.143016f,  0.182877f,  0.241529f
+    };
+
+    float norm_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO4; ++i) norm_sq += x[i] * x[i];
+    float norm = sqrtf(norm_sq);
+    if (norm < 1e-10f) norm = 1.0f;
+    const float inv_norm = 1.0f / norm;
+
+    for (int i = 0; i < (int) sizeof(y->qs); ++i) y->qs[i] = 0;
+
+    float recon_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO4; ++i) {
+        const float v = x[i] * inv_norm;
+        uint8_t idx = 0;
+        if (v >= -0.212203f) idx = 1;
+        if (v >= -0.162947f) idx = 2;
+        if (v >= -0.127026f) idx = 3;
+        if (v >= -0.097164f) idx = 4;
+        if (v >= -0.070671f) idx = 5;
+        if (v >= -0.046174f) idx = 6;
+        if (v >= -0.022824f) idx = 7;
+        if (v >= 0.0f)       idx = 8;
+        if (v >= 0.022824f)  idx = 9;
+        if (v >= 0.046174f)  idx = 10;
+        if (v >= 0.070671f)  idx = 11;
+        if (v >= 0.097164f)  idx = 12;
+        if (v >= 0.127026f)  idx = 13;
+        if (v >= 0.162947f)  idx = 14;
+        if (v >= 0.212203f)  idx = 15;
+        y->qs[i / 2] |= (uint8_t)((idx & 0xF) << ((i % 2) * 4));
+        recon_sq += centroids[idx] * centroids[idx];
+    }
+
+    const float recon_norm = sqrtf(recon_sq);
+    y->norm = __float2half((recon_norm > 1e-10f) ? norm / recon_norm : norm);
+}
+
+static __device__ void quantize_f32_turbo2_0_block(const float * __restrict__ x, block_turbo2_0 * __restrict__ y) {
+    static constexpr float centroids[4] = { -0.133462f, -0.039994f, 0.039994f, 0.133462f };
+
+    float norm_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO2; ++i) norm_sq += x[i] * x[i];
+    float norm = sqrtf(norm_sq);
+    if (norm < 1e-10f) norm = 1.0f;
+    const float inv_norm = 1.0f / norm;
+
+    for (int i = 0; i < (int) sizeof(y->qs); ++i) y->qs[i] = 0;
+
+    float recon_sq = 0.0f;
+    for (int i = 0; i < QK_TURBO2; ++i) {
+        const float v = x[i] * inv_norm;
+        uint8_t idx = 0;
+        if (v >= -0.086728f) idx = 1;
+        if (v >= 0.0f)       idx = 2;
+        if (v >= 0.086728f)  idx = 3;
+        y->qs[i / 4] |= (uint8_t)((idx & 0x3) << ((i % 4) * 2));
+        recon_sq += centroids[idx] * centroids[idx];
+    }
+
+    const float recon_norm = sqrtf(recon_sq);
+    y->norm = __float2half((recon_norm > 1e-10f) ? norm / recon_norm : norm);
+}
+
 template<typename src_t, typename dst_t>
 static __device__ void cpy_1_scalar(const char * cxi, char * cdsti) {
     *(dst_t *) cdsti = ggml_cuda_cast<dst_t>(*(const src_t *) cxi);

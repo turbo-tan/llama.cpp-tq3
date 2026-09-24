@@ -4,14 +4,17 @@
 #include "fit.h"
 #include "log.h"
 #include "reasoning-budget.h"
+#include "speculative.h"
 
 #include "ggml.h"
+#include "../src/llama-ext.h"
 
 #include <algorithm>
 #include <cctype>
 #include <climits>
 #include <cmath>
 #include <cstring>
+#include <random>
 #include <unordered_map>
 #include <vector>
 
@@ -121,16 +124,20 @@ struct common_sampler {
 
     llama_token_data_array cur_p;
 
+    uint32_t speculative_seed;
+    std::mt19937 speculative_rng;
+
     void reset() {
         prev.clear();
 
         llama_sampler_reset(chain);
+        speculative_rng.seed(speculative_seed);
     }
 
     void set_logits(struct llama_context * ctx, int idx) {
-        const float *       sampled_probs  = llama_get_sampled_probs_ith     (ctx, idx);
-        const float *       sampled_logits = llama_get_sampled_logits_ith    (ctx, idx);
-        const llama_token * sampled_ids    = llama_get_sampled_candidates_ith(ctx, idx);
+        const float *       sampled_probs  = llama_get_sampled_probs_ith_no_sync     (ctx, idx);
+        const float *       sampled_logits = llama_get_sampled_logits_ith_no_sync    (ctx, idx);
+        const llama_token * sampled_ids    = llama_get_sampled_candidates_ith_no_sync(ctx, idx);
 
         const llama_model * model = llama_get_model(ctx);
         const llama_vocab * vocab = llama_model_get_vocab(model);
@@ -138,19 +145,19 @@ struct common_sampler {
         const int n_vocab = llama_vocab_n_tokens(vocab);
 
         if (sampled_probs) {
-            const uint32_t sampled_probs_count = llama_get_sampled_probs_count_ith(ctx, idx);
+            const uint32_t sampled_probs_count = llama_get_sampled_probs_count_ith_no_sync(ctx, idx);
             cur.resize(sampled_probs_count);
             for (uint32_t i = 0; i < sampled_probs_count; ++i) {
                 cur[i] = llama_token_data{sampled_ids[i], sampled_logits[i], sampled_probs[i]};
             }
         } else if (sampled_logits) {
-            const uint32_t sampled_logits_count = llama_get_sampled_logits_count_ith(ctx, idx);
+            const uint32_t sampled_logits_count = llama_get_sampled_logits_count_ith_no_sync(ctx, idx);
             cur.resize(sampled_logits_count);
             for (uint32_t i = 0; i < sampled_logits_count; i++) {
                 cur[i] = llama_token_data{sampled_ids[i], sampled_logits[i], 0.0f};
             }
         } else {
-            const auto * logits = llama_get_logits_ith(ctx, idx);
+            const auto * logits = llama_get_logits_ith_no_sync(ctx, idx);
             GGML_ASSERT(logits != nullptr);
             cur.resize(n_vocab);
             for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
@@ -184,21 +191,9 @@ std::string common_params_sampling::print() const {
     return std::string(result);
 }
 
-struct common_sampler * common_sampler_init(
-        const struct llama_model * model,
-        struct common_params_sampling & params) {
-    if (!std::isfinite(params.penalty_repeat) ||
-        params.penalty_repeat <= 0.0f ||
-        !std::isfinite(1.0f/params.penalty_repeat)) {
-        throw std::invalid_argument("penalty_repeat must be finite and greater than 0");
-    }
-    if (!std::isfinite(params.penalty_freq)) {
-        throw std::invalid_argument("penalty_freq must be finite");
-    }
-    if (!std::isfinite(params.penalty_present)) {
-        throw std::invalid_argument("penalty_present must be finite");
-    }
+struct common_sampler * common_sampler_init(const struct llama_model * model, struct common_params_sampling & params) {
     const llama_vocab * vocab = llama_model_get_vocab(model);
+
     llama_sampler_chain_params lparams = llama_sampler_chain_default_params();
 
     lparams.no_perf = params.no_perf;
@@ -350,7 +345,7 @@ struct common_sampler * common_sampler_init(
                         for (const auto & str : params.dry_sequence_breakers) {
                             c_breakers.push_back(str.c_str());
                         }
-                        samplers.push_back(llama_sampler_init_dry(vocab, params.dry_multiplier, params.dry_base, params.dry_allowed_length, params.dry_penalty_last_n, c_breakers.data(), c_breakers.size()));
+                        samplers.push_back(llama_sampler_init_dry(vocab, llama_model_n_ctx_train(model), params.dry_multiplier, params.dry_base, params.dry_allowed_length, params.dry_penalty_last_n, c_breakers.data(), c_breakers.size()));
                     }
                     break;
                 case COMMON_SAMPLER_TYPE_TOP_K:
@@ -424,6 +419,8 @@ struct common_sampler * common_sampler_init(
         params.backend_sampling = false;
     }
 
+    // Keep verifier randomness independent from both target and draft sampling.
+    const uint32_t speculative_seed = llama_sampler_get_seed(chain) ^ 0x9e3779b9U;
     auto * result = new common_sampler {
         /* .params  = */ params,
         /* .grmr    = */ grmr,
@@ -432,6 +429,8 @@ struct common_sampler * common_sampler_init(
         /* .prev    = */ ring_buffer<llama_token>(std::max(32, params.n_prev)),
         /* .cur     = */ {},
         /* .cur_p   = */ {},
+        /* .speculative_seed = */ speculative_seed,
+        /* .speculative_rng  = */ std::mt19937(speculative_seed),
     };
 
     return result;
@@ -515,6 +514,8 @@ struct common_sampler * common_sampler_clone(common_sampler * gsmpl) {
         /* .prev    = */ gsmpl->prev,
         /* .cur     = */ gsmpl->cur,
         /* .cur_p   = */ gsmpl->cur_p,
+        /* .speculative_seed = */ gsmpl->speculative_seed,
+        /* .speculative_rng  = */ gsmpl->speculative_rng,
     };
 }
 
@@ -609,7 +610,7 @@ llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_co
     // Check if a backend sampler has already sampled a token in which case we
     // return that token id directly.
     {
-        id = llama_get_sampled_token_ith(ctx, idx);
+        id = llama_get_sampled_token_ith_no_sync(ctx, idx);
 
         if (id != LLAMA_TOKEN_NULL) {
             LOG_DBG("%s: Backend sampler selected token: '%d'. Will not run any CPU samplers\n", __func__, id);
@@ -705,6 +706,79 @@ std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sample
     return result;
 }
 
+std::vector<llama_token> common_sampler_sample_and_accept_n(
+        struct common_sampler * gsmpl,
+        struct llama_context * ctx,
+        const std::vector<int> & idxs,
+        const llama_tokens & draft,
+        const std::vector<common_speculative_token_dist> & dists,
+        bool grammar_first) {
+    GGML_ASSERT(idxs.size() == draft.size() + 1);
+    GGML_ASSERT(dists.size() == draft.size());
+
+    std::vector<llama_token> result;
+    result.reserve(idxs.size());
+
+    std::uniform_real_distribution<float> uniform(0.0f, 1.0f);
+    size_t i = 0;
+    for (; i < draft.size(); ++i) {
+        // Residual sampling needs the target distribution after every constraint.
+        const llama_token fallback = common_sampler_sample(gsmpl, ctx, idxs[i], true);
+        const auto & q = dists[i];
+        GGML_ASSERT(q.ids.size() == q.probs.size());
+
+        std::unordered_map<llama_token, float> q_probs;
+        q_probs.reserve(q.ids.size());
+        for (size_t j = 0; j < q.ids.size(); ++j) {
+            q_probs[q.ids[j]] += q.probs[j];
+        }
+        const auto q_prob = [&](llama_token id) {
+            const auto it = q_probs.find(id);
+            return it == q_probs.end() ? 0.0f : it->second;
+        };
+
+        auto * p = common_sampler_get_candidates(gsmpl, false);
+        float p_draft = 0.0f;
+        const float q_draft = q_prob(draft[i]);
+        for (size_t j = 0; j < p->size; ++j) {
+            if (p->data[j].id == draft[i]) {
+                p_draft = p->data[j].p;
+                break;
+            }
+        }
+
+        if (q_draft > 0.0f && uniform(gsmpl->speculative_rng) * q_draft <= p_draft) {
+            common_sampler_accept(gsmpl, draft[i], true);
+            result.push_back(draft[i]);
+            continue;
+        }
+
+        std::vector<float> residual(p->size);
+        float residual_sum = 0.0f;
+        for (size_t j = 0; j < p->size; ++j) {
+            residual[j] = std::max(0.0f, p->data[j].p - q_prob(p->data[j].id));
+            residual_sum += residual[j];
+        }
+
+        llama_token id = fallback;
+        if (residual_sum > 0.0f) {
+            std::discrete_distribution<size_t> sample(residual.begin(), residual.end());
+            id = p->data[sample(gsmpl->speculative_rng)].id;
+        }
+        common_sampler_accept(gsmpl, id, true);
+        result.push_back(id);
+        break;
+    }
+
+    if (i == draft.size()) {
+        const llama_token id = common_sampler_sample(gsmpl, ctx, idxs[i], grammar_first);
+        common_sampler_accept(gsmpl, id, true);
+        result.push_back(id);
+    }
+
+    return result;
+}
+
 std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const llama_tokens & draft, bool grammar_first) {
     std::vector<int> idxs(draft.size() + 1);
     for (size_t i = 0; i < idxs.size(); ++i) {
@@ -712,6 +786,19 @@ std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sample
     }
 
     return common_sampler_sample_and_accept_n(gsmpl, ctx, idxs, draft, grammar_first);
+}
+
+std::vector<llama_token> common_sampler_sample_and_accept_n(
+        struct common_sampler * gsmpl,
+        struct llama_context * ctx,
+        const llama_tokens & draft,
+        const std::vector<common_speculative_token_dist> & dists,
+        bool grammar_first) {
+    std::vector<int> idxs(draft.size() + 1);
+    for (size_t i = 0; i < idxs.size(); ++i) {
+        idxs[i] = i;
+    }
+    return common_sampler_sample_and_accept_n(gsmpl, ctx, idxs, draft, dists, grammar_first);
 }
 
 uint32_t common_sampler_get_seed(const struct common_sampler * gsmpl) {

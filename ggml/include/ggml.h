@@ -352,6 +352,15 @@ extern "C" {
     // Returns the old callback for chaining
     GGML_API ggml_abort_callback_t ggml_set_abort_callback(ggml_abort_callback_t callback);
 
+    struct ggml_tensor;
+
+    // MoE expert-routing observation callback: invoked by the CPU mul_mat_id
+    // with the op's expert-id tensor (I32 [n_expert_used, n_tokens]). Used by
+    // the llama MoE expert cache to drive LRU placement decisions.
+    typedef void (*ggml_moe_obs_cb_t)(const char * tensor_name, const struct ggml_tensor * ids, void * ud);
+    GGML_API void            ggml_set_moe_obs_callback(ggml_moe_obs_cb_t cb, void * ud);
+    GGML_API ggml_moe_obs_cb_t ggml_get_moe_obs_callback(void ** ud);
+
     GGML_NORETURN GGML_ATTRIBUTE_FORMAT(3, 4)
     GGML_API void ggml_abort(const char * file, int line, const char * fmt, ...);
 
@@ -418,19 +427,27 @@ extern "C" {
         GGML_TYPE_F64     = 28,
         GGML_TYPE_IQ1_M   = 29,
         GGML_TYPE_BF16    = 30,
-        // GGML_TYPE_Q4_0_4_4 = 31, support has been removed from gguf files
-        // GGML_TYPE_Q4_0_4_8 = 32,
-        // GGML_TYPE_Q4_0_8_8 = 33,
+        GGML_TYPE_TQ3_1S_AP1 = 31, // private prototype, not for public gguf interchange
+        GGML_TYPE_Q4_0_TQ    = 32, // private prototype, not for public gguf interchange
+        GGML_TYPE_Q4_1_TQ    = 33, // private prototype, not for public gguf interchange
         GGML_TYPE_TQ1_0   = 34,
         GGML_TYPE_TQ2_0   = 35,
-        // GGML_TYPE_IQ4_NL_4_4 = 36,
-        // GGML_TYPE_IQ4_NL_4_8 = 37,
+        GGML_TYPE_TQ3_4SE  = 36, // private prototype, not for public gguf interchange
+        GGML_TYPE_TQ3_4SV  = 37, // private prototype, not for public gguf interchange
         // GGML_TYPE_IQ4_NL_8_8 = 38,
         GGML_TYPE_MXFP4   = 39, // MXFP4 (1 block)
         GGML_TYPE_NVFP4   = 40, // NVFP4 (4 blocks, E4M3 scale)
-        GGML_TYPE_Q1_0    = 41,
-        GGML_TYPE_Q2_0    = 42,
-        GGML_TYPE_COUNT   = 43,
+        GGML_TYPE_Q2_0    = 41, // restored: fork uses Q2_0 extensively
+        GGML_TYPE_Q1_0    = 42,
+        GGML_TYPE_TQ3_1S  = 44, // TurboQuant 3-bit with two half-block scales
+        GGML_TYPE_TQ3_4S  = 46, // TurboQuant 3-bit with four u8 per-8 scales (4.0 bpw)
+        GGML_TYPE_Q8_0_RHT = 47, // internal: q8_0 activations pre-rotated by the TurboQuant RHT (CPU dot runs in rotated space)
+        // internal-only KV cache types at high IDs to avoid upstream conflicts
+        GGML_TYPE_TQ3_0      = 200,
+        GGML_TYPE_TURBO3_0   = 201,
+        GGML_TYPE_TURBO4_0   = 202,
+        GGML_TYPE_TURBO2_0   = 203,
+        GGML_TYPE_COUNT   = 204,
     };
 
     // [TAG_GGML_PREC]
@@ -600,6 +617,8 @@ extern "C" {
         GGML_OP_OPT_STEP_SGD,
 
         GGML_OP_GLU,
+
+        GGML_OP_TURBO_WHT,
 
         GGML_OP_COUNT,
     };
@@ -2819,6 +2838,10 @@ extern "C" {
             struct ggml_tensor  * a,  // logits
             struct ggml_tensor  * b,  // labels
             struct ggml_tensor  * c); // gradients of cross_entropy_loss result
+
+    GGML_API struct ggml_tensor * ggml_turbo_wht(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * a);
 
     // AdamW optimizer step
     // Paper: https://arxiv.org/pdf/1711.05101v3.pdf

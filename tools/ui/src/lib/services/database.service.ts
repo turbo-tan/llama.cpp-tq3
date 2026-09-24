@@ -429,6 +429,7 @@ export class DatabaseService {
 								enabled: o.enabled,
 								serverId: o.serverId
 							}))
+						: undefined
 						: undefined,
 					name: options.name
 				};

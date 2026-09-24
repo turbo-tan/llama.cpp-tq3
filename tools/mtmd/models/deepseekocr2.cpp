@@ -14,9 +14,8 @@ ggml_cgraph * clip_graph_deepseekocr2::build() {
     {
         ggml_tensor * inp;
 
-        // H*W, C, B
-        inp = ggml_reshape_3d(ctx0, sam_out, sam_out->ne[0] * sam_out->ne[1], sam_out->ne[2], sam_out->ne[3]);
-        inp = ggml_cont(ctx0, ggml_permute(ctx0, inp, 1, 0, 2, 3)); // C, H*W, B
+        inp = ggml_reshape_2d(ctx0, sam_out, sam_out->ne[0] * sam_out->ne[1], sam_out->ne[2]); // H*W, C
+        inp = ggml_cont(ctx0, ggml_permute(ctx0, inp, 1, 0, 2, 3));
 
         auto num_image_tokens = inp->ne[1]; // H*W
         GGML_ASSERT(num_image_tokens == 144 || num_image_tokens == 256);
@@ -33,10 +32,8 @@ ggml_cgraph * clip_graph_deepseekocr2::build() {
             num_queries = 144;
         }
 
-        // repeat the query embedding per batch item, then append: (C, num_image_tokens + num_queries, B)
-        query_embed = ggml_cast(ctx0, query_embed, inp->type);
-        query_embed = ggml_repeat_4d(ctx0, query_embed, query_embed->ne[0], num_queries, inp->ne[2], 1);
-        inp = ggml_concat(ctx0, inp, query_embed, 1);
+        // (B, num_image_tokens + num_queries, C)
+        inp = ggml_concat(ctx0, inp, ggml_cast(ctx0, query_embed, inp->type), 1);
 
         auto seq_len = inp->ne[1];
 
@@ -60,7 +57,7 @@ ggml_cgraph * clip_graph_deepseekocr2::build() {
                                       /* learned_pos_embd */ nullptr, add_rope, vit_opts);
 
         cur = ggml_cont(ctx0,
-                        ggml_view_3d(ctx0, cur, cur->ne[0], num_queries, cur->ne[2], cur->nb[1], cur->nb[2],
+                        ggml_view_2d(ctx0, cur, cur->ne[0], num_queries, cur->nb[1],
                                      cur->nb[1] * (cur->ne[1] - num_queries))); // only take query tokens for output
 
         ggml_build_forward_expand(gf, cur);
@@ -74,8 +71,7 @@ ggml_cgraph * clip_graph_deepseekocr2::build() {
 
     // view_seperator only after the global view
     if (img.add_viewsep) {
-        ggml_tensor * vs = ggml_repeat_4d(ctx0, model.view_seperator, model.view_seperator->ne[0], 1, cur->ne[2], 1);
-        cur = ggml_concat(ctx0, cur, vs, 1); // (n_dim, 257, n_batch)
+        cur = ggml_concat(ctx0, cur, model.view_seperator, 1); // (n_dim, 257)
     }
 
     cb(cur, "dsocr2_output", -1);
