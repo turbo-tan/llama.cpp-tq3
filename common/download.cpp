@@ -652,6 +652,12 @@ static hf_cache::hf_file find_best_dflash(const hf_cache::hf_files & files,
     return find_best_sibling(files, model, "dflash-", tag);
 }
 
+static hf_cache::hf_file find_best_dspark(const hf_cache::hf_files & files,
+                                          const std::string        & model,
+                                          const std::string        & tag = "") {
+    return find_best_sibling(files, model, "dspark-", tag);
+}
+
 static bool gguf_filename_is_model(const std::string & filepath) {
     if (!string_ends_with(filepath, ".gguf")) {
         return false;
@@ -666,7 +672,8 @@ static bool gguf_filename_is_model(const std::string & filepath) {
            filename.find("imatrix") == std::string::npos &&
            filename.find("mtp-")    == std::string::npos &&
            filename.find("eagle3-") == std::string::npos &&
-           filename.find("dflash-") == std::string::npos;
+           filename.find("dflash-") == std::string::npos &&
+           filename.find("dspark-") == std::string::npos;
 }
 
 static hf_cache::hf_file find_best_model(const hf_cache::hf_files & files,
@@ -759,7 +766,7 @@ common_download_hf_plan common_download_get_hf_plan(const common_params_model & 
     } else {
         primary = find_best_model(all, tag);
         // a requested sidecar can resolve on its own, without a full model of the same tag
-        if (primary.path.empty() && !opts.download_mtp && !opts.download_dflash && !opts.download_eagle3) {
+        if (primary.path.empty() && !opts.download_mtp && !opts.download_dflash && !opts.download_eagle3 && !opts.download_dspark) {
             LOG_ERR("%s: no GGUF files found in repository %s\n", __func__, repo.c_str());
             list_available_gguf_files(all);
             return plan;
@@ -783,9 +790,12 @@ common_download_hf_plan common_download_get_hf_plan(const common_params_model & 
     if (opts.download_eagle3) {
         plan.eagle3 = find_best_eagle3(all, primary.path, tag);
     }
+    if (opts.download_dspark) {
+        plan.dspark = find_best_dspark(all, primary.path, tag);
+    }
 
     if (primary.path.empty() &&
-        plan.mtp.local_path.empty() && plan.dflash.local_path.empty() && plan.eagle3.local_path.empty()) {
+        plan.mtp.local_path.empty() && plan.dflash.local_path.empty() && plan.eagle3.local_path.empty() && plan.dspark.local_path.empty()) {
         LOG_ERR("%s: no GGUF files found in repository %s\n", __func__, repo.c_str());
         list_available_gguf_files(all);
     }

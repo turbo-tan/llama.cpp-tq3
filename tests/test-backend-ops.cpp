@@ -4644,113 +4644,7 @@ struct test_ssm_scan_rollback : public test_case {
     }
 };
 
-struct test_ssm_scan_rollback : public test_case {
-    const ggml_type type;
 
-    const int64_t d_state;
-    const int64_t head_dim;
-    const int64_t n_head;
-    const int64_t n_group;
-    const int64_t n_seq_tokens;
-    const int64_t n_seqs;
-    const int64_t K;
-
-    std::string vars() override {
-        return VARS_TO_STR8(type, d_state, head_dim, n_head, n_group, n_seq_tokens, n_seqs, K);
-    }
-
-    std::string op_desc(ggml_tensor * t) override {
-        GGML_UNUSED(t);
-        return "SSM_SCAN_ROLLBACK";
-    }
-
-    bool run_whole_graph() override {
-        return true;
-    }
-
-    double max_err() override {
-        return 1e-6;
-    }
-
-    double err(const float * a, const float * b, size_t n) override {
-        double result = 0.0;
-        for (size_t i = 0; i < n; ++i) {
-            result = std::max(result, (double) fabsf(a[i]));
-            result = std::max(result, (double) fabsf(b[i]));
-        }
-        return result;
-    }
-
-    test_ssm_scan_rollback(ggml_type type = GGML_TYPE_F32,
-            int64_t d_state = 32,
-            int64_t head_dim = 64,
-            int64_t n_head  = 16,
-            int64_t n_group = 2,
-            int64_t n_seq_tokens = 8,
-            int64_t n_seqs = 2,
-            int64_t K = 3)
-        : type(type), d_state(d_state), head_dim(head_dim), n_head(n_head), n_group(n_group),
-          n_seq_tokens(n_seq_tokens), n_seqs(n_seqs), K(K) {}
-
-    ggml_tensor * build_graph(ggml_context * ctx) override {
-        ggml_tensor * s   = ggml_new_tensor_4d(ctx, type, d_state,  head_dim,     n_head,       n_seqs);
-        ggml_tensor * x   = ggml_new_tensor_4d(ctx, type, head_dim, n_head,       n_seq_tokens, n_seqs);
-        ggml_tensor * dt  = ggml_new_tensor_3d(ctx, type, n_head,   n_seq_tokens, n_seqs);
-        ggml_tensor * A   = ggml_new_tensor_2d(ctx, type, 1,        n_head);
-        ggml_tensor * B   = ggml_new_tensor_4d(ctx, type, d_state,  n_group,      n_seq_tokens, n_seqs);
-        ggml_tensor * C   = ggml_new_tensor_4d(ctx, type, d_state,  n_group,      n_seq_tokens, n_seqs);
-        ggml_tensor * ids = ggml_new_tensor_1d(ctx, GGML_TYPE_I32,  n_seqs);
-
-        ggml_tensor * full = ggml_ssm_scan(ctx, s, x, dt, A, B, C, ids, K);
-
-        const int64_t y_elems     = head_dim * n_head * n_seq_tokens * n_seqs;
-        const int64_t state_elems = d_state  * head_dim * n_head      * n_seqs;
-
-        ggml_tensor * out = nullptr;
-        for (int64_t slot = 0; slot < K; ++slot) {
-            const int64_t prefix_tokens = n_seq_tokens - slot;
-
-            ggml_tensor * x_prefix  = ggml_cont(ctx, ggml_view_4d(ctx, x,  head_dim, n_head,  prefix_tokens, n_seqs, x->nb[1],  x->nb[2],  x->nb[3],  0));
-            ggml_tensor * dt_prefix = ggml_cont(ctx, ggml_view_3d(ctx, dt, n_head,   prefix_tokens, n_seqs, dt->nb[1], dt->nb[2], 0));
-            ggml_tensor * B_prefix  = ggml_cont(ctx, ggml_view_4d(ctx, B,  d_state,  n_group, prefix_tokens, n_seqs, B->nb[1],  B->nb[2],  B->nb[3],  0));
-            ggml_tensor * C_prefix  = ggml_cont(ctx, ggml_view_4d(ctx, C,  d_state,  n_group, prefix_tokens, n_seqs, C->nb[1],  C->nb[2],  C->nb[3],  0));
-
-            ggml_tensor * prefix = ggml_ssm_scan(ctx, s, x_prefix, dt_prefix, A, B_prefix, C_prefix, ids, /*K=*/1);
-
-            ggml_tensor * full_state   = ggml_view_1d(ctx, full,   state_elems, (y_elems + slot*state_elems)*ggml_element_size(full));
-            ggml_tensor * prefix_state = ggml_view_1d(ctx, prefix, state_elems, (head_dim*n_head*prefix_tokens*n_seqs)*ggml_element_size(prefix));
-            ggml_tensor * diff         = ggml_sum(ctx, ggml_sqr(ctx, ggml_sub(ctx, full_state, prefix_state)));
-
-            out = out == nullptr ? diff : ggml_add(ctx, out, diff);
-        }
-
-        return out;
-    }
-
-    void initialize_tensors(ggml_context * ctx) override {
-        std::random_device rd;
-        std::default_random_engine rng(rd());
-        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != NULL; t = ggml_get_next_tensor(ctx, t)) {
-            if (t->type == GGML_TYPE_I32) {
-                if (ggml_is_view_op(t->op)) { continue; }
-                for (int64_t r = 0; r < ggml_nrows(t); r++) {
-                    std::vector<int32_t> data(t->ne[0]);
-                    for (int i = 0; i < t->ne[0]; i++) {
-                        data[i] = i;
-                    }
-                    std::shuffle(data.begin(), data.end(), rng);
-                    ggml_backend_tensor_set(t, data.data(), r * t->nb[1], t->ne[0] * sizeof(int32_t));
-                }
-            } else if (ggml_is_view_op(t->op)) {
-                continue;
-            } else if (t->ne[1] == n_head && t->ne[2] == 1) {
-                init_tensor_uniform(t, -1.0f, -0.5f);
-            } else {
-                init_tensor_uniform(t);
-            }
-        }
-    }
-};
 
 // GGML_OP_RWKV_WKV6
 struct test_rwkv_wkv6 : public test_case {
@@ -10069,8 +9963,10 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
         test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F32, GGML_TYPE_F32, 1, n, 2048, {1, 1}, {1, 1}));
     }
     // Batched shapes exercise Blackwell native FP4 MMQ instead of MMVQ.
-    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 2880,  32, 2880, {1, 1}, {1, 1}));
-    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 4096, 128, 4096, {1, 1}, {1, 1}));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 2880,  32, 2880, {1, 1}, {1, 1},
+                {0, 1, 2, 3}, 0, 1, false, "BLACKWELL_NATIVE_FP4"));
+    test_cases.emplace_back(new test_mul_mat(GGML_TYPE_TQ3_4S, GGML_TYPE_F32, 4096, 128, 4096, {1, 1}, {1, 1},
+                {0, 1, 2, 3}, 0, 1, false, "BLACKWELL_NATIVE_FP4"));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 1, 512, 2048, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F16, 1, 512, 2048, {1, 1}, {1, 1}));
     test_cases.emplace_back(new test_mul_mat(GGML_TYPE_F16, GGML_TYPE_F32, 1, 509, 2051, {1, 1}, {1, 1}));

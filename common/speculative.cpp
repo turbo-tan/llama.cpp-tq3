@@ -921,6 +921,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
     llama_batch batch_inject; // target features for KV cache injection
 
     std::vector<common_sampler_ptr> smpls;
+    std::vector<float> features_buf;
 
     // backend sampler chain per seq, attached to ctx_dft (not used by DFlash2; selector path samples on CPU)
     std::vector<llama_sampler *> backend_chains;
@@ -985,7 +986,7 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
             if (llama_model_meta_val_str(model_dft, "dflash.selector_top_k", buf, sizeof(buf)) >= 0) {
                 selector_top_k = std::atoi(buf);
                 is_dflash2 = selector_top_k > 0;
-
+            }
             if (llama_model_meta_val_str(model_dft, "dflash.attention.causal", buf, sizeof(buf)) >= 0) {
                 causal_attn = std::strcmp(buf, "true") == 0;
 
@@ -1799,10 +1800,10 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 const int n_chain = std::min(params.n_max, dp.n_max > 0 ? dp.n_max : params.n_max);
 
                 common_batch_clear(batch);
-                llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, dp.n_past, -1);
+                llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, dp.pos0, -1);
 
                 for (int j = 0; j < n_chain; ++j) {
-                    common_batch_add(batch, j == 0 ? dp.id_last : 0, dp.n_past + j, { seq_id }, true);
+                    common_batch_add(batch, j == 0 ? dp.id_last : 0, dp.pos0 + j, { seq_id }, true);
                     if (j == 0) {
                         std::memcpy(batch.embd + (size_t) j * n_embd, pending_h[seq_id].data(), row_bytes);
                     } else {
@@ -1841,9 +1842,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
                 continue;
             }
 
-            if (process_only && pending_pos[seq_id] != dp.n_past - 1) {
+            if (process_only && pending_pos[seq_id] != dp.pos0 - 1) {
                 SPC_WRN("process-only cannot draft without a target boundary hidden row (seq=%d, pending=%d, n_past=%d)\n",
-                        (int) seq_id, (int) pending_pos[seq_id], (int) dp.n_past);
+                        (int) seq_id, (int) pending_pos[seq_id], (int) dp.pos0);
                 continue;
             }
 
@@ -1852,7 +1853,7 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             common_sampler_reset(smpls[seq_id].get());
 
             if (!is_mem_shared) {
-                llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, dp.n_past, -1);
+                llama_memory_seq_rm(llama_get_memory(ctx_dft), seq_id, dp.pos0, -1);
             }
 
             common_batch_add(batch, dp.id_last, dp.pos0, { seq_id }, true);
