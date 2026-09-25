@@ -872,6 +872,10 @@ void llama_model_dflash::graph<is_enc>::build_post_sampling() const {
         return;
     }
 
+    if (std::getenv("LLAMA_DFLASH_FORK_SELECTOR") == nullptr) {
+        return;
+    }
+
     if (!model.dflash_selector_hidden || !res->t_logits) {
         return;
     }
