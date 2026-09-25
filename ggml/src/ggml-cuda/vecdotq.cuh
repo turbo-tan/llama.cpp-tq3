@@ -1050,6 +1050,54 @@ static __device__ __forceinline__ float vec_dot_q6_K_q8_1(
     return vec_dot_q6_K_q8_1_impl_mmvq(vl, vh, u, scales, bq6_K->d, d8);
 }
 
+// Decode-once form of vec_dot_q6_K_q8_1 for multi-column mmvq (same arithmetic order).
+struct q6_K_decoded {
+    int   vi[QR6_K];
+    int   sc[QR6_K];
+    float d;
+    int   bq8_offset;
+    int   iqs8;
+};
+
+static __device__ __forceinline__ q6_K_decoded q6_K_decode(
+    const void * __restrict__ vbq, const int & kbx, const int & iqs) {
+
+    const block_q6_K * bq6_K = (const block_q6_K *) vbq + kbx;
+
+    const int scale_offset = (QI6_K/4) * (iqs / (QI6_K/2)) + (iqs % (QI6_K/2)) / (QI6_K/8);
+    const int vh_shift = 2 * ((iqs % (QI6_K/2)) / (QI6_K/4));
+
+    const int vl = get_int_b2(bq6_K->ql, iqs);
+    const int vh = get_int_b2(bq6_K->qh, (QI6_K/4) * (iqs / (QI6_K/2)) + iqs % (QI6_K/4)) >> vh_shift;
+    const int8_t * scales = bq6_K->scales + scale_offset;
+
+    q6_K_decoded r;
+#pragma unroll
+    for (int i = 0; i < QR6_K; ++i) {
+        const int vil = (vl >> (4*i)) & 0x0F0F0F0F;
+        const int vih = ((vh >> (4*i)) << 4) & 0x30303030;
+        r.vi[i] = __vsubss4((vil | vih), 0x20202020);
+        r.sc[i] = scales[4*i];
+    }
+    r.d = bq6_K->d;
+    r.bq8_offset = 2 * QR6_K * (iqs / (QI6_K/2)) + (iqs % (QI6_K/2)) / (QI6_K/4);
+    r.iqs8 = iqs % QI8_1;
+    return r;
+}
+
+static __device__ __forceinline__ float q6_K_dot_decoded_q8_1(
+    const q6_K_decoded & w, const block_q8_1 * __restrict__ bq8_1) {
+
+    float sumf = 0.0f;
+#pragma unroll
+    for (int i = 0; i < QR6_K; ++i) {
+        const int   u  = get_int_b4(bq8_1[w.bq8_offset + 2*i].qs, w.iqs8);
+        const float d8 = __low2float(bq8_1[w.bq8_offset + 2*i].ds);
+        sumf += d8 * (ggml_cuda_dp4a(w.vi[i], u, 0) * w.sc[i]);
+    }
+    return w.d*sumf;
+}
+
 #define VDR_IQ2_XXS_Q8_1_MMVQ 2
 #define VDR_IQ2_XXS_Q8_1_MMQ  2
 
