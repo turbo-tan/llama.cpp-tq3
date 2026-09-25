@@ -1,6 +1,15 @@
 #include "mmvq.cuh"
 #include "quantize.cuh"
 #include "tq3-native.cuh"
+#ifndef GGML_CUDA_TQ3_NW4
+#define GGML_CUDA_TQ3_NW4 2
+#endif
+#ifndef GGML_CUDA_TQ3_NW58
+#define GGML_CUDA_TQ3_NW58 2
+#endif
+#ifndef GGML_CUDA_TQ3_RPB58
+#define GGML_CUDA_TQ3_RPB58 8
+#endif
 #include "unary.cuh"
 #include "vecdotq.cuh"
 
@@ -497,8 +506,8 @@ static constexpr __device__ int get_mmvq_mmid_max_batch_for_device() {
 static constexpr __host__ __device__ int calc_nwarps(ggml_type type, int ncols_dst, mmvq_parameter_table_id table_id, bool small_k = false, bool halve_iters = false) {
     if (table_id == MMVQ_PARAMETERS_GENERIC) {
         // TQ3 ncols4 is reduction-bound at four warps on Ampere-class GPUs.
-        if (type == GGML_TYPE_TQ3_4S && ncols_dst == 4) {
-            return 2;
+        if (type == GGML_TYPE_TQ3_4S && ncols_dst >= 4 && ncols_dst <= 8) {
+            return ncols_dst == 4 ? GGML_CUDA_TQ3_NW4 : GGML_CUDA_TQ3_NW58;
         }
         switch (ncols_dst) {
             case 1:
@@ -661,6 +670,9 @@ static constexpr __host__ __device__ int calc_rows_per_block_type(
         // Wide TQ3 verify batches benefit from fewer blocks with more rows per block.
         if (table_id == MMVQ_PARAMETERS_GENERIC && ncols_dst == 4 && nwarps == 2) {
             return 4;
+        }
+        if (table_id == MMVQ_PARAMETERS_GENERIC && ncols_dst >= 5 && ncols_dst <= 8) {
+            return GGML_CUDA_TQ3_RPB58;
         }
     }
     return calc_rows_per_block(ncols_dst, table_id, small_k, nwarps);
