@@ -1574,3 +1574,52 @@ static __device__ __forceinline__ float vec_dot_tq3_4s_q8_1(
 
     return sum * scale;
 }
+
+// Decode-once form of vec_dot_tq3_4s_q8_1 for multi-column mmvq: the weight unpack is
+// the Ampere bottleneck, so it must not be repeated per activation column.
+struct tq3_4s_decoded {
+    int   w[4];
+    float d0;
+    float d1;
+    int   q8;
+};
+
+static __device__ __forceinline__ tq3_4s_decoded tq3_4s_decode(
+    const void * __restrict__ vbq, const int & kbx, const int & iqs) {
+
+    const uint4 b = *(const uint4 *) ((const block_tq3_4s *) vbq + kbx);
+
+    const int g0 = iqs / 4;
+    const bool hi = g0 != 0;
+
+    const uint32_t p0 = __funnelshift_r(hi ? b.z : b.y, hi ? b.w : b.z, hi ? 16 :  0) & 0xFFFFFF;
+    const uint32_t p1 = __funnelshift_r(hi ? b.w : b.y, hi ? b.w : b.z, hi ?  8 : 24) & 0xFFFFFF;
+
+    tq3_4s_decoded r;
+#pragma unroll
+    for (int s = 0; s < 2; ++s) {
+        const uint32_t packed = s == 0 ? p0 : p1;
+        const uint32_t sel_lo = (packed         & 7) | ((packed << 1) & 0x70) | ((packed << 2) & 0x700) | ((packed << 3) & 0x7000);
+        const uint32_t sel_hi = ((packed >> 12) & 7) | ((packed >> 11) & 0x70) | ((packed >> 10) & 0x700) | ((packed >> 9) & 0x7000);
+        r.w[2*s + 0] = __byte_perm(TQ3_4S_LEVELS_LO, TQ3_4S_LEVELS_HI, sel_lo);
+        r.w[2*s + 1] = __byte_perm(TQ3_4S_LEVELS_LO, TQ3_4S_LEVELS_HI, sel_hi);
+    }
+    r.d0 = tq3_4s_ratio4s((b.x >> (8*g0    )) & 0xFF);
+    r.d1 = tq3_4s_ratio4s((b.x >> (8*g0 + 8)) & 0xFF);
+    r.q8 = g0 * 8;
+    return r;
+}
+
+static __device__ __forceinline__ float tq3_4s_dot_decoded_q8_1(
+    const tq3_4s_decoded & w, const block_q8_1 * __restrict__ bq8_1) {
+
+    const int * a = (const int *) &bq8_1->qs[w.q8];
+    int s0 = ggml_cuda_dp4a(w.w[0], a[0], 0);
+    s0     = ggml_cuda_dp4a(w.w[1], a[1], s0);
+    int s1 = ggml_cuda_dp4a(w.w[2], a[2], 0);
+    s1     = ggml_cuda_dp4a(w.w[3], a[3], s1);
+
+    const float2 ds8 = __half22float2(bq8_1->ds);
+    const float scale = (2.1519f / 127.0f) * ds8.x;
+    return ((float) s0 * w.d0 + (float) s1 * w.d1) * scale;
+}

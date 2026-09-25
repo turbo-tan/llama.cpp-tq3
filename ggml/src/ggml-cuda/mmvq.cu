@@ -1018,6 +1018,29 @@ static __global__ void mul_mat_vec_q(
         }
 #endif
 
+        if constexpr (type == GGML_TYPE_TQ3_4S && ncols_dst > 1) {
+#pragma unroll
+            for (int i = 0; i < rows_per_cuda_block; ++i) {
+                const tq3_4s_decoded w = tq3_4s_decode(vx, kbx_offset + i*stride_row_x + kbx, kqs);
+                tq3_4s_decoded wg = w;
+                if constexpr (has_fusion) {
+                    if (use_gate) {
+                        wg = tq3_4s_decode(vgate, kbx_offset + i*stride_row_x + kbx, kqs);
+                    }
+                }
+#pragma unroll
+                for (int j = 0; j < ncols_dst; ++j) {
+                    tmp[j][i] += tq3_4s_dot_decoded_q8_1(w, &y[j*stride_col_y + kby]);
+                    if constexpr (has_fusion) {
+                        if (use_gate) {
+                            tmp_gate[j][i] += tq3_4s_dot_decoded_q8_1(wg, &y[j*stride_col_y + kby]);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
 #pragma unroll
         for (int j = 0; j < ncols_dst; ++j) {
 #pragma unroll
