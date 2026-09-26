@@ -712,8 +712,21 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
                 return env != nullptr ? atoll(env) : 32768;
             }();
 
+            // A calibrated --spec-draft-vocab-map takes precedence: gather only the mapped
+            // head rows, argmax over them, then map the compact index back to a token id.
+            ggml_tensor * vocab_idx_j = nullptr;
             ggml_tensor * logits_j;
-            if (n_sub_env > 0 && n_sub_env < head_w2->ne[1]) {
+            if (draft_vocab_ids != nullptr && draft_vocab_ids->ne[0] < head_w2->ne[1] &&
+                    draft_vocab_ids->ne[0] <= 65535 && (head_s2 == nullptr || ggml_nelements(head_s2) == 1)) {
+                const int64_t n_sel = draft_vocab_ids->ne[0];
+                ggml_tensor * rows = ggml_reshape_3d(ctx0, head_w2, head_w2->ne[0], 1, head_w2->ne[1]);
+                logits_j = ggml_mul_mat_id(ctx0, rows, h_next_j, draft_vocab_ids);
+                logits_j = ggml_reshape_2d(ctx0, logits_j, n_sel, 1);
+                if (head_s2 != nullptr) {
+                    logits_j = ggml_mul(ctx0, logits_j, head_s2);
+                }
+                vocab_idx_j = ggml_argmax(ctx0, logits_j);
+            } else if (n_sub_env > 0 && n_sub_env < head_w2->ne[1]) {
                 ggml_tensor * head_sub = ggml_view_2d(ctx0, head_w2,
                         head_w2->ne[0], n_sub_env, head_w2->nb[1], 0);
                 logits_j = ggml_mul_mat(ctx0, head_sub, h_next_j);
@@ -728,10 +741,14 @@ llama_model_qwen35::graph_mtp::graph_mtp(const llama_model & model, const llm_gr
             // token and its probability. Emit them as a 2-float "logits" row per
             // step: [token id, top prob]. This removes the per-step host sampling
             // pass and the full-width logits transfer.
-            ggml_tensor * id_j = ggml_argmax(ctx0, logits_j);
+            ggml_tensor * idx_j = vocab_idx_j ? vocab_idx_j : ggml_argmax(ctx0, logits_j);
+            ggml_tensor * id_j = vocab_idx_j
+                    ? ggml_reshape_1d(ctx0, ggml_get_rows(ctx0,
+                          ggml_reshape_2d(ctx0, draft_vocab_ids, 1, draft_vocab_ids->ne[0]), vocab_idx_j), 1)
+                    : idx_j;
             ggml_tensor * probs_j = ggml_soft_max(ctx0, logits_j);
             ggml_tensor * p_j = ggml_get_rows(ctx0,
-                    ggml_reshape_2d(ctx0, probs_j, 1, probs_j->ne[0]), id_j);
+                    ggml_reshape_2d(ctx0, probs_j, 1, probs_j->ne[0]), idx_j);
             p_j = ggml_reshape_2d(ctx0, p_j, 1, 1);
             ggml_tensor * id_f = ggml_cast(ctx0, ggml_reshape_2d(ctx0, id_j, 1, 1), GGML_TYPE_F32);
             ggml_tensor * out_j = ggml_concat(ctx0, id_f, p_j, 0);

@@ -510,6 +510,12 @@ static void build_dflash2_selector(llm_graph_context & g, const llama_model & mo
     ggml_tensor * logits_rows = ggml_reshape_3d(ctx0, res->t_logits, 1, res->t_logits->ne[0], n_tokens);
     ggml_tensor * unary       = ggml_reshape_2d(ctx0,
             ggml_get_rows(ctx0, logits_rows, candidates), top_k, n_tokens);
+    // compact (draft-vocab) logits: map candidate indices back to token ids
+    if (g.draft_vocab_ids != nullptr && res->t_logits->ne[0] == g.draft_vocab_ids->ne[0]) {
+        ggml_tensor * ids2d = ggml_reshape_2d(ctx0, g.draft_vocab_ids, 1, g.draft_vocab_ids->ne[0]);
+        candidates = ggml_reshape_2d(ctx0,
+                ggml_get_rows(ctx0, ids2d, ggml_reshape_1d(ctx0, candidates, top_k * n_tokens)), top_k, n_tokens);
+    }
     ggml_tensor * gate        = g.build_lora_mm(model.dflash_selector_hidden, res->t_embd);
 
     // Everything below indexes [.., tokens_per_block, n_blocks]: the block
@@ -820,7 +826,23 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
         output_s = model_other->output_s;
     }
 
-    cur = build_lora_mm(output, cur, output_s);
+    // DFlash2 + calibrated draft vocab map: only the mapped head rows are scored; the
+    // selector maps top-k indices back to token ids. Verification stays full-vocab.
+    if (draft_vocab_ids != nullptr && model.dflash_selector_hidden && !model.d2t &&
+            draft_vocab_ids->ne[0] < output->ne[1] && draft_vocab_ids->ne[0] <= 65535 &&
+            (output_s == nullptr || ggml_nelements(output_s) == 1)) {
+        const int64_t n_sel = draft_vocab_ids->ne[0];
+        ggml_tensor * rows  = ggml_reshape_3d(ctx0, output, output->ne[0], 1, output->ne[1]);
+        ggml_tensor * h3    = ggml_reshape_3d(ctx0, cur, cur->ne[0], 1, cur->ne[1]);
+        cur = ggml_mul_mat_id(ctx0, rows, h3, ggml_repeat_4d(ctx0,
+                ggml_reshape_2d(ctx0, draft_vocab_ids, n_sel, 1), n_sel, cur->ne[1], 1, 1));
+        cur = ggml_reshape_2d(ctx0, cur, n_sel, cur->ne[2]);
+        if (output_s != nullptr) {
+            cur = ggml_mul(ctx0, cur, output_s);
+        }
+    } else {
+        cur = build_lora_mm(output, cur, output_s);
+    }
 
     // DFlash2 feeds these logits to the selector, so they need the target's output
     // transforms; DFlash1 and DSpark read them through the sampler instead
@@ -869,6 +891,10 @@ llama_model_dflash::graph<false>::graph(const llama_model & model, const llm_gra
 template <bool is_enc>
 void llama_model_dflash::graph<is_enc>::build_post_sampling() const {
     if constexpr (is_enc) {
+        return;
+    }
+
+    if (std::getenv("LLAMA_DFLASH_FORK_SELECTOR") == nullptr) {
         return;
     }
 

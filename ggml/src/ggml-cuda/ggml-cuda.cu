@@ -4295,6 +4295,9 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
         }
     };
 
+    [[maybe_unused]] int n_seg_computed = 0;
+    [[maybe_unused]] std::vector<cudaGraph_t> new_segments;
+
     while (!graph_evaluated_or_captured) {
         // Only perform the graph execution if CUDA graphs are not enabled, or we are capturing the graph.
         // With the use of CUDA graphs, the execution will be performed by the graph launch.
@@ -4439,6 +4442,17 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 if (!is_concurrent_event_active) {
                     try_launch_concurrent_event(node);
                }
+#ifdef USE_CUDA_GRAPH
+                // segmented capture: close the current segment at a point with no multi-stream region open
+                if (use_cuda_graph && cuda_graph_update_required && ggml_cuda_graph::seg_nodes() > 0 &&
+                        !is_concurrent_event_active && ++n_seg_computed >= ggml_cuda_graph::seg_nodes() && i + 1 < cgraph->n_nodes) {
+                    cudaGraph_t seg = nullptr;
+                    CUDA_CHECK(cudaStreamEndCapture(cuda_ctx->stream(), &seg));
+                    new_segments.push_back(seg);
+                    CUDA_CHECK(cudaStreamBeginCapture(cuda_ctx->stream(), cudaStreamCaptureModeRelaxed));
+                    n_seg_computed = 0;
+                }
+#endif
             }
         }
 
@@ -4452,6 +4466,14 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
             CUDA_CHECK(cudaStreamEndCapture(cuda_ctx->stream(), &graph->graph));
             graph_evaluated_or_captured = true; // CUDA graph has been captured
 
+            graph->clear_segments();
+            if (!new_segments.empty()) {
+                // segmented: graph->graph holds the last segment; keep all segments in order
+                graph->seg_graphs = std::move(new_segments);
+                graph->seg_graphs.push_back(graph->graph);
+                graph->graph = nullptr;
+            }
+
             std::lock_guard<std::mutex> lock(ggml_cuda_lock);
             if (ggml_cuda_lock_counter.fetch_sub(1, std::memory_order_relaxed) == 1) {
                 ggml_cuda_lock_cv.notify_all();
@@ -4461,7 +4483,19 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
         }
     }
 
-    if (use_cuda_graph) {
+    if (use_cuda_graph && !graph->seg_graphs.empty()) {
+        if (graph->seg_instances.size() != graph->seg_graphs.size()) {
+            for (auto & e : graph->seg_instances) { if (e) { CUDA_CHECK(cudaGraphExecDestroy(e)); } }
+            graph->seg_instances.assign(graph->seg_graphs.size(), nullptr);
+            for (size_t k = 0; k < graph->seg_graphs.size(); ++k) {
+                CUDA_CHECK(cudaGraphInstantiate(&graph->seg_instances[k], graph->seg_graphs[k], NULL, NULL, 0));
+            }
+            if (graph->instance != nullptr) { CUDA_CHECK(cudaGraphExecDestroy(graph->instance)); graph->instance = nullptr; }
+        }
+        for (auto & e : graph->seg_instances) {
+            CUDA_CHECK(cudaGraphLaunch(e, cuda_ctx->stream()));
+        }
+    } else if (use_cuda_graph) {
         if (graph->instance == nullptr) { // Create executable graph from captured graph.
             CUDA_CHECK(cudaGraphInstantiate(&graph->instance, graph->graph, NULL, NULL, 0));
         }
@@ -4528,7 +4562,7 @@ static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, 
                     GGML_LOG_DEBUG("%s: CUDA graph warmup reset\n", __func__);
                 } else {
                     use_cuda_graph = true;
-                    cuda_graph_update_required = graph->instance == nullptr;
+                    cuda_graph_update_required = graph->instance == nullptr && graph->seg_instances.empty();
                 }
             }
         }

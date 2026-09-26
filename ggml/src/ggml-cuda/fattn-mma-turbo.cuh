@@ -29,7 +29,7 @@ void ggml_cuda_flash_attn_ext_mma_turbo_case(ggml_backend_cuda_context & ctx, gg
     constexpr int ncols = ncols1 * ncols2;
 
     const int  nthreads       = ggml_cuda_fattn_mma_get_nthreads      (DKQ, DV, ncols, cc);
-    const int  nbatch_fa      = ggml_cuda_fattn_mma_get_nbatch_fa     (DKQ, DV, ncols, cc);
+    const int  nbatch_fa      = GGML_CUDA_FA_Q_NBATCH; // must match the kernel's quantized-KV override
     const int  nbatch_K2      = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols, cc);
     const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols, cc);
     const int  nbatch_combine = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols, cc);
@@ -50,9 +50,15 @@ void ggml_cuda_flash_attn_ext_mma_turbo_case(ggml_backend_cuda_context & ctx, gg
 
     const size_t nbytes_shared_KV = nbytes_shared_KV_1stage;
 
+    // q4_0/q8_0: packed raw-row staging buffer placed after the (16-byte padded) mask tile.
+    constexpr bool   is_q_kv            = type_K == GGML_TYPE_Q4_0 || type_K == GGML_TYPE_Q8_0;
+    const size_t     nbytes_shared_mask_p = is_q_kv ? GGML_PAD(nbytes_shared_mask, 16) : nbytes_shared_mask;
+    const size_t     nbytes_shared_stage  = is_q_kv ?
+        16 + (size_t) nbatch_fa * std::max(fattn_q_row_bytes<type_K, DKQ>(), fattn_q_row_bytes<type_V, DV>()) : 0;
+
     const size_t nbytes_shared_total = std::max(nbytes_shared_combine, Q_in_reg ?
-        std::max(nbytes_shared_Q,  nbytes_shared_KV + nbytes_shared_mask) :
-                 nbytes_shared_Q + nbytes_shared_KV + nbytes_shared_mask);
+        std::max(nbytes_shared_Q,  nbytes_shared_KV + nbytes_shared_mask_p + nbytes_shared_stage) :
+                 nbytes_shared_Q + nbytes_shared_KV + nbytes_shared_mask_p + nbytes_shared_stage);
 
     float logit_softcap;
     memcpy(&logit_softcap, (const float *) KQV->op_params + 2, sizeof(float));
@@ -91,7 +97,7 @@ void ggml_cuda_flash_attn_ext_mma_turbo_case(ggml_backend_cuda_context & ctx, gg
     // the kernel receives raw quantized KV + the true byte pitch. stream_k = true.
     launch_fattn<DV, ncols1, ncols2>
         (ctx, dst, fattn_kernel, nwarps, nbytes_shared_total, nbatch_fa,
-         /*need_f16_K=*/false, /*need_f16_V=*/false, /*stream_k=*/true, warp_size_host);
+         /*need_f16_K=*/false, /*need_f16_V=*/false, /*stream_k=*/true, /*use_sparse=*/false, warp_size_host);
 }
 
 
