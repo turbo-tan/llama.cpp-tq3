@@ -1058,10 +1058,7 @@ static __global__ void mul_mat_vec_q(
                     }
                 }
             }
-            continue;
-        }
-
-        if constexpr (type == GGML_TYPE_Q6_K && ncols_dst > 1 && !has_fusion) {
+        } else if constexpr (type == GGML_TYPE_Q6_K && ncols_dst > 1 && !has_fusion) {
 #pragma unroll
             for (int i = 0; i < rows_per_cuda_block; ++i) {
                 const q6_K_decoded w = q6_K_decode(vx, kbx_offset + i*stride_row_x + kbx, kqs);
@@ -1070,9 +1067,7 @@ static __global__ void mul_mat_vec_q(
                     tmp[j][i] += q6_K_dot_decoded_q8_1(w, &y[j*stride_col_y + kby]);
                 }
             }
-            continue;
-        }
-
+        } else {
 #pragma unroll
         for (int j = 0; j < ncols_dst; ++j) {
 #pragma unroll
@@ -1085,6 +1080,7 @@ static __global__ void mul_mat_vec_q(
                             vgate, &y[j*stride_col_y + kby], kbx_offset + i*stride_row_x + kbx, kqs);
                     }
                 }
+            }
             }
         }
     }
