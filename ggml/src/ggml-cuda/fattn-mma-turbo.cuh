@@ -29,7 +29,7 @@ void ggml_cuda_flash_attn_ext_mma_turbo_case(ggml_backend_cuda_context & ctx, gg
     constexpr int ncols = ncols1 * ncols2;
 
     const int  nthreads       = ggml_cuda_fattn_mma_get_nthreads      (DKQ, DV, ncols, cc);
-    const int  nbatch_fa      = ggml_cuda_fattn_mma_get_nbatch_fa     (DKQ, DV, ncols, cc);
+    const int  nbatch_fa      = GGML_CUDA_FA_Q_NBATCH; // must match the kernel's quantized-KV override
     const int  nbatch_K2      = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols, cc);
     const int  nbatch_V2      = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols, cc);
     const int  nbatch_combine = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols, cc);

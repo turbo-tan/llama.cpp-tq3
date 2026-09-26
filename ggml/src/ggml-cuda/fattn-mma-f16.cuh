@@ -1,4 +1,10 @@
 #pragma once
+#ifndef GGML_CUDA_FA_Q_NBATCH
+#define GGML_CUDA_FA_Q_NBATCH 64   // KV rows per tile on the fused-dequant (quantized KV) path
+#endif
+#ifndef GGML_CUDA_FA_Q_MINBLOCKS
+#define GGML_CUDA_FA_Q_MINBLOCKS 2 // __launch_bounds__ min blocks/SM on the fused-dequant path
+#endif
 
 #include "common.cuh"
 #include "cp-async.cuh"
@@ -812,7 +818,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_iter(
     constexpr int  cols_per_warp   = T_B_KQ::I;
     constexpr int  cols_per_thread = get_cols_per_thread();
     constexpr int  np              = cols_per_warp > ncols ? nwarps : nwarps * cols_per_warp/ncols; // Number of parallel CUDA warps per Q column.
-    constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
+    constexpr int  nbatch_fa       = type_K != GGML_TYPE_F16 ? GGML_CUDA_FA_Q_NBATCH : ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2(DKQ, DV, ncols);
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2(DKQ, DV, ncols);
     constexpr bool Q_in_reg        = ggml_cuda_fattn_mma_get_Q_in_reg (DKQ, DV, ncols);
@@ -1516,7 +1522,7 @@ static __device__ __forceinline__ void flash_attn_ext_f16_process_tile(
     constexpr int  cols_per_warp   = T_B_KQ::I;
     constexpr int  cols_per_thread = get_cols_per_thread();
     constexpr int  np              = cols_per_warp > ncols ? nwarps : nwarps * cols_per_warp/ncols; // Number of parallel CUDA warps per Q column.
-    constexpr int  nbatch_fa       = ggml_cuda_fattn_mma_get_nbatch_fa     (DKQ, DV, ncols);
+    constexpr int  nbatch_fa       = type_K != GGML_TYPE_F16 ? GGML_CUDA_FA_Q_NBATCH : ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
     constexpr int  nbatch_K2       = ggml_cuda_fattn_mma_get_nbatch_K2     (DKQ, DV, ncols);
     constexpr int  nbatch_V2       = ggml_cuda_fattn_mma_get_nbatch_V2     (DKQ, DV, ncols);
     constexpr int  nbatch_combine  = ggml_cuda_fattn_mma_get_nbatch_combine(DKQ, DV, ncols);
@@ -2095,7 +2101,7 @@ static constexpr __host__ __device__ bool ggml_cuda_flash_attn_ext_mma_f16_may_u
 
 template<int DKQ, int DV, int ncols1, int ncols2, bool use_logit_softcap, bool V_is_K_view, bool use_sparse,
     ggml_type type_K = GGML_TYPE_F16, ggml_type type_V = GGML_TYPE_F16>
-__launch_bounds__(ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2), ggml_cuda_fattn_mma_get_occupancy(DKQ, DV, ncols1*ncols2))
+__launch_bounds__(ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols1*ncols2), type_K != GGML_TYPE_F16 ? GGML_CUDA_FA_Q_MINBLOCKS : ggml_cuda_fattn_mma_get_occupancy(DKQ, DV, ncols1*ncols2))
 static __global__ void flash_attn_ext_f16(
         const char * Q_ptr,
         const char * K_ptr,
@@ -2175,7 +2181,7 @@ static __global__ void flash_attn_ext_f16(
 
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int ncols     = ncols1 * ncols2;
-    constexpr int nbatch_fa = ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
+    constexpr int nbatch_fa = type_K != GGML_TYPE_F16 ? GGML_CUDA_FA_Q_NBATCH : ggml_cuda_fattn_mma_get_nbatch_fa(DKQ, DV, ncols);
     constexpr int nthreads  = ggml_cuda_fattn_mma_get_nthreads(DKQ, DV, ncols);
     constexpr int nwarps    = nthreads / warp_size;
 

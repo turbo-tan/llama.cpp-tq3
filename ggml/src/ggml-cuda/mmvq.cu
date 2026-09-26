@@ -7,6 +7,9 @@
 #ifndef GGML_CUDA_TQ3_NW58
 #define GGML_CUDA_TQ3_NW58 2
 #endif
+#ifndef GGML_CUDA_Q6K_RPB58
+#define GGML_CUDA_Q6K_RPB58 2
+#endif
 #ifndef GGML_CUDA_TQ3_RPB58
 #define GGML_CUDA_TQ3_RPB58 8
 #endif
@@ -666,6 +669,11 @@ static constexpr __host__ __device__ int calc_rows_per_block(int ncols_dst, int 
 template <ggml_type type>
 static constexpr __host__ __device__ int calc_rows_per_block_type(
         int ncols_dst, int table_id, bool small_k = false, int nwarps = 1) {
+    if constexpr (type == GGML_TYPE_Q6_K) {
+        if (table_id == MMVQ_PARAMETERS_GENERIC && ncols_dst >= 5 && ncols_dst <= 8) {
+            return GGML_CUDA_Q6K_RPB58;
+        }
+    }
     if constexpr (type == GGML_TYPE_TQ3_4S) {
         // Wide TQ3 verify batches benefit from fewer blocks with more rows per block.
         if (table_id == MMVQ_PARAMETERS_GENERIC && ncols_dst == 4 && nwarps == 2) {
