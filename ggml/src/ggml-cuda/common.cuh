@@ -1361,6 +1361,7 @@ struct ggml_cuda_graph_key_hash {
 struct ggml_cuda_graph {
 #ifdef USE_CUDA_GRAPH
     ~ggml_cuda_graph() {
+        clear_segments();
         if (instance != nullptr) {
             CUDA_CHECK(cudaGraphExecDestroy(instance));
         }
@@ -1370,6 +1371,10 @@ struct ggml_cuda_graph {
     }
     cudaGraph_t graph = nullptr;
     cudaGraphExec_t instance = nullptr;
+    // Optional segmented form (GGML_CUDA_GRAPH_SEG_NODES > 0): the capture is split into several graphs launched
+    // back-to-back, so the GPU starts on the first segment while the host is still launching the rest.
+    std::vector<cudaGraph_t>     seg_graphs;
+    std::vector<cudaGraphExec_t> seg_instances;
     size_t num_nodes = 0;
     std::vector<cudaGraphNode_t> nodes;
     bool disable_due_to_gpu_arch = false;
@@ -1383,6 +1388,18 @@ struct ggml_cuda_graph {
         size_t   node_src_nb[GGML_MAX_SRC][GGML_MAX_DIMS];
     };
     std::vector<node_properties> node_props;
+
+    void clear_segments() {
+        for (auto & e : seg_instances) { if (e) { CUDA_CHECK(cudaGraphExecDestroy(e)); } }
+        for (auto & g : seg_graphs)    { if (g) { CUDA_CHECK(cudaGraphDestroy(g)); } }
+        seg_instances.clear();
+        seg_graphs.clear();
+    }
+
+    static int seg_nodes() {
+        static const int n = [] { const char * e = getenv("GGML_CUDA_GRAPH_SEG_NODES"); return e ? atoi(e) : 0; }();
+        return n;
+    }
 
     bool is_enabled() const {
         static const bool disable_cuda_graphs_due_to_env = (getenv("GGML_CUDA_DISABLE_GRAPHS") != nullptr);
