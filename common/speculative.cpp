@@ -1298,6 +1298,16 @@ struct common_speculative_impl_draft_dflash : public common_speculative_impl {
                     } else {
                         predecessor = (int32_t) std::distance(scores,
                                 std::max_element(scores, scores + selector_top_k));
+                        if (params.p_min > 0.0f) {
+                            // softmax(scores) at the argmax: stop drafting a low-confidence tail
+                            float sum = 0.0f;
+                            for (int32_t k = 0; k < selector_top_k; ++k) {
+                                sum += std::exp(scores[k] - scores[predecessor]);
+                            }
+                            if (1.0f / sum < params.p_min) {
+                                break;
+                            }
+                        }
                         result.push_back((llama_token) row[predecessor]);
                     }
 

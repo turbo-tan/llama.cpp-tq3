@@ -468,7 +468,7 @@ llama_context::llama_context(
             LLAMA_LOG_INFO("%s: pipeline parallelism enabled\n", __func__);
         }
 
-        if (cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP) {
+        if (cparams.ctx_type == LLAMA_CONTEXT_TYPE_MTP || model.arch == LLM_ARCH_DFLASH) {
             const char * path = params.draft_vocab_map;
             if (path == nullptr || path[0] == '\0') {
                 path = std::getenv("LLAMA_SPEC_DRAFT_VOCAB");
@@ -517,6 +517,10 @@ void llama_context::init_draft_vocab(const char * path) {
         if (nextn.shared_head_head) {
             head = nextn.shared_head_head;
         }
+    }
+    if (head == nullptr && cparams.ctx_other != nullptr) {
+        // DFlash drafters borrow the target model's output projection
+        head = llama_get_model(cparams.ctx_other)->output;
     }
     if (head == nullptr || head->buffer == nullptr) {
         throw std::runtime_error("draft vocabulary map: model has no allocated output head");

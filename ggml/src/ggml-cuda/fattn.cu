@@ -852,6 +852,13 @@ size_t ggml_cuda_flash_attn_ext_get_alloc_size(int device, const ggml_tensor * d
 template <ggml_type type_KV>
 static bool ggml_cuda_flash_attn_ext_fused_q_case(ggml_backend_cuda_context & ctx, ggml_tensor * dst, const int ncols2) {
     const ggml_tensor * Q = dst->src[0];
+    if (ncols2 == 8) {
+        // all GQA heads of a KV head in one block: K/V are loaded and dequantized once
+        if (Q->ne[1] <= 2) { ggml_cuda_flash_attn_ext_mma_turbo_case<256, 256, 2, 8, type_KV, type_KV>(ctx, dst); return true; }
+        if (Q->ne[1] <= 4) { ggml_cuda_flash_attn_ext_mma_turbo_case<256, 256, 4, 8, type_KV, type_KV>(ctx, dst); return true; }
+        ggml_cuda_flash_attn_ext_mma_turbo_case<256, 256, 8, 8, type_KV, type_KV>(ctx, dst);
+        return true;
+    }
     if (ncols2 == 2) {
         if (Q->ne[1] <= 4) { ggml_cuda_flash_attn_ext_mma_turbo_case<256, 256, 4, 2, type_KV, type_KV>(ctx, dst); return true; }
         ggml_cuda_flash_attn_ext_mma_turbo_case<256, 256, 8, 2, type_KV, type_KV>(ctx, dst);
@@ -882,7 +889,8 @@ static bool ggml_cuda_flash_attn_ext_try_fused_q(ggml_backend_cuda_context & ctx
         return false;
     }
     const int gqa_ratio = Q->ne[2] / K->ne[2];
-    const int ncols2 = gqa_ratio % 4 == 0 ? 4 : (gqa_ratio % 2 == 0 ? 2 : 1);
+    static const int ncols2_env = [] { const char * e = getenv("GGML_CUDA_FA_FUSED_NCOLS2"); return e ? atoi(e) : 8; }();
+    const int ncols2 = gqa_ratio > 4 && gqa_ratio <= 8 && ncols2_env == 8 ? 8 : (gqa_ratio % 2 == 0 ? 2 : 1);
     if (K->type == GGML_TYPE_Q4_0) {
         return ggml_cuda_flash_attn_ext_fused_q_case<GGML_TYPE_Q4_0>(ctx, dst, ncols2);
     }
