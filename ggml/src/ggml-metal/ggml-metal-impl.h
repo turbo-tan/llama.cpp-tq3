@@ -117,6 +117,15 @@
 #define OP_FLASH_ATTN_EXT_VEC_NQPSG 1
 #define OP_FLASH_ATTN_EXT_VEC_NCPSG 32
 
+// upstream 28cc92e2b-era constants; our Phase-1 replay kept the users in
+// ggml-metal-device.m / ggml-metal.metal but dropped these defines
+#define OP_LIGHTNING_INDEXER_DK    128
+#define OP_LIGHTNING_INDEXER_NH     64
+#define OP_LIGHTNING_INDEXER_NHPTG   8
+#define OP_LIGHTNING_INDEXER_NKPSG   8
+#define OP_LIGHTNING_INDEXER_NSG     8
+#define OP_LIGHTNING_INDEXER_NBPTG   8
+
 #define OP_UNARY_NUM_SCALE      10
 #define OP_UNARY_NUM_FILL       11
 #define OP_UNARY_NUM_CLAMP      12
