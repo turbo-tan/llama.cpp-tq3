@@ -1249,4 +1249,75 @@ typedef struct {
     int64_t  np;
 } ggml_metal_kargs_opt_step_sgd;
 
+// --- restored verbatim from upstream: the Phase-1 replay kept every kernel that
+// uses these in ggml-metal.metal but dropped the declarations themselves.
+// Without them the embedded Metal library fails to compile at runtime, so the
+// backend builds and links fine and then dies in ggml_metal_library_init.
+typedef struct {
+    int32_t  n_kv;
+    int32_t  n_batch;
+    int32_t  mask_ne3;
+    uint64_t nb1;
+    uint64_t nb3;
+    uint64_t nbq1;
+    uint64_t nbq2;
+    uint64_t nbq3;
+    uint64_t nbk2;
+    uint64_t nbk3;
+    uint64_t nbw1;
+    uint64_t nbw3;
+    uint64_t nbm1;
+    uint64_t nbm3;
+} ggml_metal_kargs_lightning_indexer;
+
+typedef struct {
+    int32_t  n_tokens;
+    int32_t  n_iter;
+    uint64_t nb_m0;
+    uint64_t nb_m1;
+    uint64_t nb_s0;
+    uint64_t nb_b0;
+    uint64_t nb_d0;
+    uint64_t nb_d1;
+    uint64_t nb_d2;
+    float    eps;
+} ggml_metal_kargs_dsv4_hc_comb;
+
+typedef struct {
+    int32_t  n_embd;
+    int32_t  n_tokens;
+    uint64_t nb_x0;
+    uint64_t nb_x1;
+    uint64_t nb_x2;
+    uint64_t nb_w0;
+    uint64_t nb_w1;
+    uint64_t nb_w2;
+    uint64_t nb_d0;
+    uint64_t nb_d1;
+    float    scale;
+} ggml_metal_kargs_dsv4_hc_pre;
+
+typedef struct {
+    int32_t  n_embd;
+    int32_t  n_tokens;
+    uint64_t nb_x0;
+    uint64_t nb_x1;
+    uint64_t nb_r0;
+    uint64_t nb_r1;
+    uint64_t nb_r2;
+    uint64_t nb_p0;
+    uint64_t nb_p1;
+    uint64_t nb_c0;
+    uint64_t nb_c1;
+    uint64_t nb_c2;
+    uint64_t nb_d0;
+    uint64_t nb_d1;
+    uint64_t nb_d2;
+} ggml_metal_kargs_dsv4_hc_post;
+
+typedef struct {
+    int64_t ne;
+} ggml_metal_kargs_silu_back;
+// --- end restored block
+
 #endif // GGML_METAL_IMPL
