@@ -274,6 +274,31 @@ class Qwen3MoeModel(Qwen2MoeModel):
         super().set_vocab()
 
 
+def _resolve_mtp_layer_count(declared: int, observed_layers: int, observed_tensors: int) -> int:
+    """How many extra blocks the MTP/NextN head actually contributes.
+
+    The checkpoint is the authority, not the config. A release may declare
+    `mtp_num_hidden_layers` while shipping zero `mtp.*` tensors (MiniCPM-V 4.7);
+    extending block_count on the declaration alone writes metadata for a block
+    that was never exported, and the loader then hard-fails at load time with
+    `missing tensor 'blk.N.attn_norm.weight'` for every derived artifact.
+
+    observed_layers  = highest `mtp.layers.<i>` index seen, +1
+    observed_tensors = count of `mtp.*` tensors kept from the checkpoint
+    """
+    if observed_tensors == 0:
+        # No MTP weights at all -> no MTP block, whatever the config claims.
+        return 0
+    if declared > 0:
+        return declared
+    if observed_layers > 0:
+        # Qwen3-Next omits `mtp_num_hidden_layers`; derive it from the tensors.
+        return observed_layers
+    # Only the non-layered head tensors (fc/enorm/hnorm/norm) are present; they
+    # still remap onto layer index `_original_block_count`, so that block must exist.
+    return 1
+
+
 class _QwenMtpMixin:
     """Shared MTP wiring for Qwen3-Next and Qwen3.5/3.6 text variants. The HF
     config carries the MTP block under `mtp_num_hidden_layers` (computed from
@@ -292,16 +317,21 @@ class _QwenMtpMixin:
     mtp_only: bool
     _original_block_count: int | None = None
     opt_num_mtp_layers: int = 0
+    _observed_mtp_tensors: int = 0
 
     def __init__(self, *args, **kwargs):
+        # super().__init__ indexes the checkpoint first, so the observed MTP
+        # counters below already describe what this file really contains.
         super().__init__(*args, **kwargs)
         self.block_count = self.hparams["num_hidden_layers"]
         if not self.no_mtp:
-            n_mtp = self.hparams.get("mtp_num_hidden_layers", 0)
-            # Qwen-3-Next doesn't include `mtp_num_hidden_layers` in config.
-            if n_mtp == 0:
-                assert self.opt_num_mtp_layers != 0
-                n_mtp = self.opt_num_mtp_layers
+            declared = self.hparams.get("mtp_num_hidden_layers", 0)
+            n_mtp = _resolve_mtp_layer_count(declared, self.opt_num_mtp_layers, self._observed_mtp_tensors)
+            if n_mtp == 0 and declared > 0:
+                logger.warning(
+                    f"config declares mtp_num_hidden_layers={declared} but the checkpoint contains "
+                    f"no mtp.* tensors; exporting {self.block_count} blocks without an MTP head"
+                )
             self.block_count += n_mtp
         self.tensor_map = gguf.get_tensor_name_map(self.model_arch, self.block_count)
 
@@ -310,6 +340,7 @@ class _QwenMtpMixin:
         key = next((k for k in ["n_layers", "num_hidden_layers", "n_layer", "num_layers"] if k in hparams), None)
         type(self)._original_block_count = hparams.get(key)
         type(self).opt_num_mtp_layers = 0
+        type(self)._observed_mtp_tensors = 0
         return super().index_tensors(remote_hf_model_id=remote_hf_model_id)  # ty: ignore[unresolved-attribute]
 
     @classmethod
@@ -337,6 +368,9 @@ class _QwenMtpMixin:
                 cls.opt_num_mtp_layers = max(cls.opt_num_mtp_layers, mtp_idx + 1)
             elif len(parts) == 3 and parts[1] in remapper:
                 name = f"model.layers.{cls._original_block_count}.{remapper[parts[1]]}.{parts[2]}"
+            # Any mtp.* tensor we keep is evidence the head exists, including
+            # layouts the two shapes above don't rename.
+            cls._observed_mtp_tensors += 1
         elif cls.mtp_only:
             keep = name in (
                 "model.embed_tokens.weight", "model.norm.weight", "lm_head.weight",
