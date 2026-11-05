@@ -15,6 +15,20 @@
 
 LLM inference in C/C++
 
+> **Looking for TurboQuant (TQ) weights? Use [tqLLM](https://github.com/turbo-tan/tqllm) ([tqllm.com](https://tqllm.com)).**
+> The TQ weight formats started in this fork. They are now developed in tqLLM, an Apache-2.0 inference server built
+> around them: faster TQ kernels, the newer TQ_XS to TQ_L files, Qwen3.8 27B and Flash-Next, exact speculative decoding,
+> long context and several users on one GPU. New features land in tqLLM first; this fork stays for llama.cpp users.
+
+## Credit: the TurboQuant (TQ) weight formats
+
+The TQ weight formats are the work of **David Y. Tan** ([turbo-tan](https://github.com/turbo-tan)): TQ3_1S in March
+2026, then TQ3_4S and the later TQ files. They apply the transform-quantization ideas of Google Research's TurboQuant
+(arXiv 2504.19874, a KV-cache and vector quantization method) to model weights. Tom Turney credits this origin in
+[turboquant_plus](https://github.com/TheTom/turboquant_plus/blob/main/docs/papers/weight-compression-tq4.md)
+("David Y. Tan's original TQ3_1S weight-compression direction ... and later ... TQ3_4S"). If you copy or port the TQ formats, keep the copyright line for them in
+[LICENSE](LICENSE) and credit "David Y. Tan, TurboQuant (TQ) weight formats".
+
 ## TurboQuant TQ3_4S Blackwell FP4
 
 This fork includes TurboQuant TQ3_4S CUDA paths. On Blackwell GPUs, the prompt
